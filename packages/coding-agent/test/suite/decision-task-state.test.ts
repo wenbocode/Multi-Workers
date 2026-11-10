@@ -3,12 +3,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { copyTaskState, isTaskStateSnapshot } from "../../src/extensions/agent-team-loop/pm/decision-task-state.ts";
 import {
-	buildDecisionToolMeta,
 	type DecideRunner as AsyncDecideRunner,
+	buildDecisionToolMeta,
 	type LifecycleRunner,
-	registerAskDecisionTool,
 	runAskDecision,
+	writeDecisionLifecycle,
 } from "../../src/extensions/agent-team-loop/pm/decision-tool.ts";
 import {
 	type DecideRunner,
@@ -50,6 +51,19 @@ it("keeps the before observation in local metadata and freezes its lists", () =>
 	expect(meta).toHaveProperty("task_before", before);
 	input.taskBefore.completed.push("later");
 	expect(meta.task_before?.completed).toEqual(["synthetic progress"]);
+});
+
+it("rejects normalized invalid calendar dates and preserves null versus an explicit empty list", () => {
+	expect(isTaskStateSnapshot({ ...before, observed_at: "0000-01-01T00:00:00Z" })).toBe(false);
+	expect(isTaskStateSnapshot({ ...before, observed_at: "2026-11-08T24:00:00Z" })).toBe(false);
+	expect(isTaskStateSnapshot({ ...before, observed_at: "2026-02-30T08:00:00Z" })).toBe(false);
+	expect(isTaskStateSnapshot({ ...before, observed_at: "2026-13-01T08:00:00Z" })).toBe(false);
+	expect(isTaskStateSnapshot({ ...before, observed_at: "2026-02-28T08:00:00.123+08:00" })).toBe(true);
+
+	const copied = copyTaskState({ ...before, completed: [], remaining: null, blockers: [] });
+	expect(copied.completed).toEqual([]);
+	expect(copied.remaining).toBeNull();
+	expect(copied.blockers).toEqual([]);
 });
 
 it("captures only the exact owning task row, without writing the queue", async () => {
@@ -135,6 +149,10 @@ async function dispatch(
 	const owner = "owner";
 	const task = "new-task";
 	const keyDir = path.join(root, owner);
+	fs.writeFileSync(
+		path.join(root, "_index.parallel"),
+		`| ${owner} | active | EXECUTE | ${os.hostname()}:${process.pid} | — | fixture | now |\n`,
+	);
 	fs.mkdirSync(path.join(keyDir, "tasks"), { recursive: true });
 	fs.writeFileSync(path.join(root, "goal.md"), "# synthetic goal\n");
 	fs.writeFileSync(path.join(keyDir, "spec.md"), `# Spec\n${"x".repeat(600)}\n| AC-001 | test |\n`);
@@ -185,14 +203,17 @@ async function dispatch(
 	}
 	const run: DecideRunner = (request) => {
 		calls.push(request);
+		const { meta } = JSON.parse(request.input) as { meta: { logical_id: string } };
 		return {
 			status: 0,
 			stdout: JSON.stringify({
 				available: true,
 				mode: "suggest",
 				acted: false,
-				decision_id: "dp1-dispatch-type:synthetic",
-				answers: { triage_type: { value: "coding", confidence: 0.9 } },
+				dp: request.dp,
+				logical_id: meta.logical_id,
+				decision_id: `${request.dp}:${meta.logical_id}`,
+				answers: { triage_type: { value: "coding", confidence: 0.9 }, basis_id: { value: "card-requirement" } },
 				confidence_source: "api",
 			}),
 			stderr: "",
@@ -235,6 +256,17 @@ async function dispatch(
 				task_key: task,
 				card_path: card,
 				description: "synthetic task",
+				decision_preparation: {
+					prepared_at: "2026-10-24T08:00:01Z",
+					basis_catalog: [
+						{
+							id: "card-requirement",
+							text: "Implement the change specified by the card",
+							material_refs: ["task_requirements"],
+							applies_to: ["coding"],
+						},
+					],
+				},
 				type: "coding",
 				key: owner,
 			}),
@@ -252,14 +284,20 @@ it("generic material producer preserves a local before report and rejects task-l
 	const calls: DecideRunRequest[] = [];
 	const runner: AsyncDecideRunner = async (request) => {
 		calls.push(request);
+		const envelope = JSON.parse(request.input) as { meta: { logical_id: string } };
 		return {
 			status: 0,
 			stdout: JSON.stringify({
 				available: true,
 				mode: "suggest",
 				acted: false,
-				decision_id: "dp2-checkpoint-split:synthetic",
-				answers: { checkpoint_action: { value: "narrow", confidence: 0.9 } },
+				dp: "dp-pm-steer",
+				logical_id: envelope.meta.logical_id,
+				decision_id: `dp-pm-steer:${envelope.meta.logical_id}`,
+				answers: {
+					checkpoint_action: { value: "narrow", confidence: 0.9 },
+					basis_id: { value: "basis-1" },
+				},
 				confidence_source: "api",
 			}),
 			stderr: "",
@@ -275,13 +313,24 @@ it("generic material producer preserves a local before report and rejects task-l
 	const request = {
 		...input,
 		projectDir: project(),
-		dp: "dp2-checkpoint-split",
+		dp: "dp-pm-steer",
 		trigger: "task",
 		material: {
 			task_goal: "synthetic",
 			task_requirements: "synthetic",
 			task_deliverables: "synthetic",
 			pm_decision_background: "synthetic",
+		},
+		preparation: {
+			prepared_at: "2026-10-24T08:00:01Z",
+			basis_catalog: [
+				{
+					id: "basis-1",
+					text: "Synthetic basis",
+					material_refs: ["task_goal"],
+					applies_to: ["narrow"],
+				},
+			],
 		},
 		runner,
 		lifecycleRunner,
@@ -299,20 +348,26 @@ it("generic material producer preserves a local before report and rejects task-l
 	expect(calls).toHaveLength(1);
 });
 
-it("explicit receipt carries an Agent after report on the same decision, without replaying a model or action", async () => {
+it("explicit lifecycle receipt carries an Agent after report on the same decision without replaying the model", async () => {
 	const root = project();
 	const feedback: Record<string, unknown>[] = [];
 	let modelCalls = 0;
-	const runner: AsyncDecideRunner = async () => {
+	const runner: AsyncDecideRunner = async (request) => {
 		modelCalls++;
+		const envelope = JSON.parse(request.input) as { meta: { logical_id: string } };
 		return {
 			status: 0,
 			stdout: JSON.stringify({
 				available: true,
 				mode: "suggest",
 				acted: false,
-				decision_id: "dp2-checkpoint-split:synthetic",
-				answers: { checkpoint_action: { value: "narrow", confidence: 0.9 } },
+				dp: "dp-pm-steer",
+				logical_id: envelope.meta.logical_id,
+				decision_id: `dp-pm-steer:${envelope.meta.logical_id}`,
+				answers: {
+					checkpoint_action: { value: "narrow", confidence: 0.9 },
+					basis_id: { value: "basis-1" },
+				},
 				confidence_source: "api",
 			}),
 			stderr: "",
@@ -329,48 +384,48 @@ it("explicit receipt carries an Agent after report on the same decision, without
 			timedOut: false,
 		};
 	};
-	const harness = await createHarness({
-		extensionFactories: [
-			(pi) => {
-				registerAskDecisionTool(pi, {
-					projectDir: root,
-					key: "owner",
-					initiatorRole: "pm",
-					runner,
-					lifecycleRunner,
-				});
-			},
-		],
-	});
-	harnesses.push(harness);
-	harness.setResponses([
-		fauxAssistantMessage(
-			fauxToolCall("ask_decision", {
-				dp: "dp2-checkpoint-split",
-				trigger: "task",
-				task_key: "task",
-				task_before: before,
-				material: {
-					task_goal: "synthetic",
-					task_requirements: "synthetic",
-					task_deliverables: "synthetic",
-					pm_decision_background: "synthetic",
+	const decision = await runAskDecision({
+		projectDir: root,
+		dp: "dp-pm-steer",
+		trigger: "task",
+		key: "owner",
+		taskKey: "task",
+		taskBefore: before,
+		initiatorRole: "pm",
+		material: {
+			task_goal: "synthetic",
+			task_requirements: "synthetic",
+			task_deliverables: "synthetic",
+			pm_decision_background: "synthetic",
+		},
+		preparation: {
+			prepared_at: "2026-10-24T08:00:01Z",
+			basis_catalog: [
+				{
+					id: "basis-1",
+					text: "Synthetic basis",
+					material_refs: ["task_goal"],
+					applies_to: ["narrow"],
 				},
-			}),
-			{ stopReason: "toolUse" },
-		),
-		fauxAssistantMessage(
-			fauxToolCall("decision_receipt", {
-				decision_id: "dp2-checkpoint-split:synthetic",
-				stage: "settled",
-				outcome: "ok",
-				task_after: before,
-			}),
-			{ stopReason: "toolUse" },
-		),
-		fauxAssistantMessage("done"),
-	]);
-	await harness.session.prompt("synthetic report only");
+			],
+		},
+		runner,
+		lifecycleRunner,
+	});
+	if (!decision.payload.available || !decision.meta) throw new Error("Expected a bound, available fixture decision");
+	await writeDecisionLifecycle(
+		root,
+		{
+			meta: decision.meta,
+			decision_id: decision.payload.decision_id,
+			dp: "dp-pm-steer",
+			stage: "settled",
+			event_id: "synthetic-settled",
+			outcome: "ok",
+			task_after: before,
+		},
+		lifecycleRunner,
+	);
 	expect(modelCalls).toBe(1);
 	expect(feedback).toHaveLength(2);
 	expect(feedback[0]).not.toHaveProperty("task_after");

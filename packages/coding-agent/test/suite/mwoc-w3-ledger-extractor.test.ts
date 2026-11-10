@@ -215,8 +215,7 @@ function cachedRq1BlockedCommands(): readonly string[] | undefined {
 	if (
 		write1?.includes("--glob") &&
 		write1.includes("[System.IO.File]::WriteAllText") &&
-		write2 !== undefined &&
-		write2.includes("--glob") &&
+		write2?.includes("--glob") &&
 		write2.includes("[System.IO.File]::WriteAllText") &&
 		nonWrite === "cd H:\\git\\Multi-Workers\nWrite-Output a <term> --glob x"
 	) {

@@ -155,6 +155,41 @@ guessed from a key or a timestamp.
   ``file_verified=false`` until the T05 verification API exists.
 * ``facets`` = ``{keys, dps}`` computed from the whole snapshot *before*
   filtering/paging, so a filtered request cannot shrink a dropdown.
+
+Eight-entry read-only projection (T27, AC-007/013/014/049/050/051)
+-----------------------------------------------------------------
+``HistoryRecord.entry`` is one more block over the *same* folded
+facts (no second store, no second writer), so the observation API and the
+window can read the eight entries without re-deriving anything:
+
+* ``registry_status`` is the *current* registry's answer (``active`` /
+  ``retired`` / ``unknown`` / ``unrecorded``) and ``rerun_available`` follows it.
+  A retired id keeps ``readonly=true`` and ``rerun_available=false``: the
+  retired directory only explains what happened to the old id and never becomes
+  a callable alias, and the reader never maps an old id onto its successor.
+  The record's own bytes and values stay as recorded; no current contract is
+  projected onto a retired or unknown id.
+* ``note`` and ``basis`` are two independent sources: the PM's pre-submission
+  note (``ledger.note.pm_note`` + its own ``prepared_at``) and the PM-prepared
+  catalogue item the model selected in the same request
+  (``ledger.request.basis_id``/``basis_text``). A failure ``reason``, a
+  confidence or a note never becomes the selected basis, and the basis never
+  becomes the note (AC-007).
+* ``request`` / ``parent`` / ``successors`` project the real prepared request
+  and the recorded ``parent_ref`` links: requested, transport refusal reason,
+  returned choice, actual executed actions and settled outcome stay separate.
+  A recorded successor never releases the parent gate and never proves that a
+  repair happened; a cross-key link is reported, never followed (AC-049).
+* ``task`` keeps the recorded snapshots as recorded: an unrecorded axis is
+  ``None`` (visibility ``unrecorded``), a producer's real "none" stays ``[]``,
+  and the observed order is exposed instead of normalised. The task terminal is
+  its own row, so neither ``settled`` nor a successor link is read as "done"
+  (AC-050/051).
+* The list page carries the compact block (presence flags, the selected
+  choice/basis id, the successor rows and the task terminal); the detail read
+  adds the note text, the selected basis text, the request row and the task
+  snapshots. The ten-node DAG keeps its geometry and its existing keys; the
+  action node additionally shows the recorded task terminal.
 """
 
 from __future__ import annotations
@@ -269,6 +304,18 @@ NODE_STATUSES: tuple[str, ...] = ("observed", "missing", "failed")
 #: answer for a record without a v2 creation fact - never a default.
 WORKBENCH_STATES: tuple[str, ...] = ("processing", "completed", "failed", "legacy")
 
+#: What the *current* registry says about a record's dp (T27): a definition,
+#: never a record fact. ``unrecorded`` = the record has no dp value at all.
+ENTRY_STATUSES: tuple[str, ...] = ("active", "retired", "unknown", "unrecorded")
+
+#: What a recorded selection can mean for the entry that produced it. A route
+#: selection only names the next entry (no business choice, no execution); a
+#: business choice is consumable by that entry's own rules only.
+ENTRY_SELECTION_EFFECTS: tuple[str, ...] = ("business-choice", "entry-target")
+
+#: The one entry kind whose recorded answer is a route target (design §4.6).
+_ROUTE_ENTRY_KIND = "route-targets"
+
 #: The managed failure sidecar of a lifecycle ledger (T02: ``<ledger>-errors.jsonl``).
 LIFECYCLE_ERROR_SUFFIX = "-errors.jsonl"
 
@@ -278,7 +325,8 @@ _PENDING_OUTCOMES = frozenset({"pending"})
 _FAILED_OUTCOMES = frozenset({"rework", "rollback", "inconclusive"})
 #: ``decision-end`` statuses that mean the local decide interface refused/failed.
 _DECIDE_FAILURE_STATUSES = frozenset({"disabled", "unavailable", "failed", "error"})
-#: The dp whose completion proof is a written signoff file (design §4.4).
+#: Current signing entry; the old prefix is read-only historical explanation.
+_SIGNOFF_DP_ID = "dp-sign-key"
 _SIGNOFF_DP_PREFIX = "dp25"
 #: Actions that end a dp25 round *without* a signoff (spec §1.3 / AC-009).
 _NO_SIGNOFF_COMPLETION_ACTIONS = frozenset({"continue", "user-confirm"})
@@ -470,6 +518,89 @@ class WorkbenchNode:
 
 
 @dataclass(frozen=True)
+class EntryFacts:
+    """The eight-entry read-only projection of one record (T27).
+
+    Every value is either a recorded fact (with its carrier named in
+    ``sources``) or a *current registry definition* (``registry_status`` /
+    ``kind`` / ``retired``), never a composed value. ``note`` and ``basis`` are
+    two separate sources; a failure reason is only ever ``request.reason``.
+    ``task`` keeps ``None`` (unrecorded) and ``[]`` (a real "none") distinct.
+
+    ``as_dict(detail=False)`` is the compact list-page form: presence flags, the
+    selected choice/basis id, the request/terminal facts and the successor
+    rows. ``as_dict(detail=True)`` adds the note text, the selected basis text,
+    the request row and the task snapshots for the single-record read.
+    """
+
+    dp_id: str | None
+    registry_status: str
+    readonly: bool
+    rerun_available: bool
+    kind: str | None
+    role_scope: str | None
+    selection_effect: str | None
+    retired: Mapping[str, object] | None
+    note_count: int
+    note: Mapping[str, object] | None
+    basis: Mapping[str, object] | None
+    request: Mapping[str, object] | None
+    request_count: int
+    parent_ref: str | None
+    parent_refs: tuple[str, ...]
+    successors: tuple[Mapping[str, object], ...]
+    task: Mapping[str, object]
+    sources: tuple[str, ...]
+
+    def as_dict(self, *, detail: bool = False) -> dict[str, object]:
+        basis = self.basis
+        request = self.request
+        task = self.task
+        terminal = task.get("terminal")
+        terminal_word = terminal.get("terminal") if isinstance(terminal, Mapping) else None
+        payload: dict[str, object] = {
+            "dp_id": self.dp_id,
+            "registry_status": self.registry_status,
+            "readonly": self.readonly,
+            "rerun_available": self.rerun_available,
+            "kind": self.kind,
+            "role_scope": self.role_scope,
+            "selection_effect": self.selection_effect,
+            "retired": dict(self.retired) if self.retired is not None else None,
+            "has_pm_note": self.note is not None,
+            "note_count": self.note_count,
+            "has_selected_basis": basis is not None,
+            "selected_basis_id": basis.get("basis_id") if basis is not None else None,
+            "selected_choice": basis.get("choice") if basis is not None else None,
+            "requested": request is not None,
+            "request_count": self.request_count,
+            "request_refusal": request.get("reason") if request is not None else None,
+            "parent_ref": self.parent_ref,
+            "parent_refs": list(self.parent_refs),
+            "successors": [dict(item) for item in self.successors],
+            "task_terminal": terminal_word,
+            "task_observation_order": task.get("observation_order"),
+            "sources": list(self.sources),
+        }
+        if detail:
+            payload["note"] = dict(self.note) if self.note is not None else None
+            payload["basis"] = dict(basis) if basis is not None else None
+            payload["request"] = dict(request) if request is not None else None
+            payload["task"] = {
+                "before": task.get("before"),
+                "before_visibility": task.get("before_visibility"),
+                "after": task.get("after"),
+                "after_visibility": task.get("after_visibility"),
+                "after_stage": task.get("after_stage"),
+                "terminal": dict(terminal) if isinstance(terminal, Mapping) else None,
+                "observations": [dict(item) for item in task.get("observations", ())],
+                "observation_order": task.get("observation_order"),
+                "sources": list(task.get("sources", ())),
+            }
+        return payload
+
+
+@dataclass(frozen=True)
 class Workbench:
     """The pure projection the workbench table/DAG renders (AC-011/012/016).
 
@@ -562,6 +693,11 @@ class HistoryRecord:
     #: store, never a guessed link. Built from the recorded v2 creation fact and
     #: the lifecycle facts of the same ``logical_id``.
     workbench: Workbench
+    #: The T27 eight-entry read-only block (registry status, PM note, selected
+    #: basis, request, parent/successor links, task snapshots). It is a separate
+    #: payload block on purpose: the frozen T06 ``workbench`` shape is unchanged.
+    #: ``None`` only for a caller that builds a record by hand in a test.
+    entry: EntryFacts | None = None
     #: The injected known-secret set, kept so ``as_dict`` can scan every emitted
     #: string (including structural values and mapping keys) on each call. It is
     #: never serialised and never read by a join.
@@ -597,6 +733,7 @@ class HistoryRecord:
             "missing": list(self.missing),
             "redaction": self.redaction.as_dict(),
             "workbench": self.workbench.as_dict(include_nodes=detail),
+            "entry": self.entry.as_dict(detail=detail) if self.entry is not None else None,
         }
         if detail:
             payload["archive"] = dict(self.archive) if self.archive is not None else None
@@ -2290,6 +2427,567 @@ def _task_state_fact(value: object, sanitizer: _Sanitizer) -> tuple[dict[str, ob
         return None, "invalid"
 
 
+# ---------------------------------------------------------------------------
+# T27: eight-entry read-only projection (note / basis / request / successors /
+# task snapshots / current registry status)
+# ---------------------------------------------------------------------------
+
+
+def _entry_definition(
+    dp_id: str | None,
+) -> tuple[str, dict[str, object] | None, dict[str, object] | None]:
+    """``(registry_status, definition, retired)`` of the current registry.
+
+    The definition/retired records describe today's callable set only: they are
+    never merged into a recorded fact, and a retired id is never translated into
+    its successor (that mapping would be a callable alias).
+    """
+    if not dp_id:
+        return "unrecorded", None, None
+    retired = decision_points.retired_dp(dp_id)
+    if retired is not None:
+        return (
+            "retired",
+            None,
+            {
+                "tier": retired.tier,
+                "description": retired.description,
+                "disposition": retired.disposition,
+                "migrated_to": retired.migrated_to,
+                "note": retired.note,
+            },
+        )
+    try:
+        point = decision_points.get_decision_point(dp_id)
+    except ValueError:
+        return "unknown", None, None
+    return (
+        "active",
+        {
+            "kind": point.kind,
+            "role_scope": point.role_scope,
+            "target_entries": list(point.target_entries),
+        },
+        None,
+    )
+
+
+def _entry_note_fact(row: Mapping[str, Any], sanitizer: _Sanitizer) -> dict[str, object]:
+    """The PM's pre-submission note as its own fact (never the model basis)."""
+    return {
+        "ts": _struct_text(row.get("ts"), "ts"),
+        "event_id": _struct_text(row.get("event_id"), "token"),
+        "pm_note": _free("entry", "note.pm_note", row.get("pm_note"), sanitizer),
+        "prepared_at": _struct_text(row.get("prepared_at"), "ts"),
+        "note_source": _struct_text(row.get("note_source"), "token"),
+        "parent_ref": _struct_text(row.get("parent_ref"), "decision_id"),
+    }
+
+
+def _entry_count(value: object) -> int | None:
+    """A recorded non-negative counter (``None`` = not recorded, never 0)."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _entry_reason(value: object, sanitizer: _Sanitizer) -> str | None:
+    """The frozen refusal reason; unproven prose takes the free-text policy.
+
+    A failure reason is never promoted to a selected basis - this helper only
+    renders the request's own recorded reason field.
+    """
+    if isinstance(value, str):
+        token = _struct_text(value, "token")
+        if token is not None:
+            return token
+    return _free("entry", "request.reason", value, sanitizer)
+
+
+def _entry_request_fact(
+    row: Mapping[str, Any], sanitizer: _Sanitizer
+) -> dict[str, object]:
+    """One recorded prepared request: transport facts and business choice apart."""
+    business = _entry_count(row.get("business_decisions"))
+    return {
+        "ts": _struct_text(row.get("ts"), "ts"),
+        "event_id": _struct_text(row.get("event_id"), "token"),
+        "dp": _struct_text(row.get("dp"), "token"),
+        "available": row.get("available") if isinstance(row.get("available"), bool) else None,
+        "replayed": row.get("replayed") if isinstance(row.get("replayed"), bool) else None,
+        "business_decisions": business,
+        "transport_attempts": _entry_count(row.get("transport_attempts")),
+        "attempts": _entry_count(row.get("attempts")),
+        "reason": _entry_reason(row.get("reason"), sanitizer),
+        "prepared_at": _struct_text(row.get("prepared_at"), "ts"),
+        "parent_ref": _struct_text(row.get("parent_ref"), "decision_id"),
+        "choice": _struct_text(row.get("choice"), "token") if business == 1 else None,
+        "basis_id": _struct_text(row.get("basis_id"), "token") if business == 1 else None,
+        "basis_source": _struct_text(row.get("basis_source"), "token") if business == 1 else None,
+        "basis_catalog_sha256": _struct_text(row.get("basis_catalog_sha256"), "sha256")
+        if business == 1
+        else None,
+    }
+
+
+def _entry_basis_fact(
+    row: Mapping[str, Any] | None, sanitizer: _Sanitizer
+) -> dict[str, object] | None:
+    """The model's selected PM-prepared basis, or ``None`` (never a stand-in).
+
+    It exists only for a request that recorded exactly one business decision
+    *and* a complete choice/basis pair. A refused request keeps its frozen
+    ``reason`` in ``request`` and has no basis; the PM note, a confidence and a
+    failure reason are different fields and can never fill this one.
+    """
+    if row is None or _entry_count(row.get("business_decisions")) != 1:
+        return None
+    choice = _struct_text(row.get("choice"), "token")
+    basis_id = _struct_text(row.get("basis_id"), "token")
+    raw_text = row.get("basis_text")
+    if choice is None or basis_id is None or not isinstance(raw_text, str) or not raw_text.strip():
+        return None
+    return {
+        "ts": _struct_text(row.get("ts"), "ts"),
+        "event_id": _struct_text(row.get("event_id"), "token"),
+        "choice": choice,
+        "basis_id": basis_id,
+        "basis_text": _free("entry", "basis.basis_text", raw_text, sanitizer),
+        "basis_source": _struct_text(row.get("basis_source"), "token"),
+        "prepared_at": _struct_text(row.get("prepared_at"), "ts"),
+        "basis_catalog_sha256": _struct_text(row.get("basis_catalog_sha256"), "sha256"),
+    }
+
+
+def _entry_successor_facts(
+    rows: Sequence[Mapping[str, Any]],
+    parent_key: str | None,
+    sanitizer: _Sanitizer,
+) -> tuple[dict[str, object], ...]:
+    """Successor rows whose recorded ``parent_ref`` names this decision.
+
+    Grouped by ``(decision_id, logical_id)`` in ledger order. Each group keeps
+    its own facts: whether a request was really recorded, whether the transport
+    was available (and its frozen refusal reason otherwise), the returned
+    choice, the actual executed actions and the settled outcome / task terminal.
+    Nothing here releases the parent or proves that a repair happened.
+    """
+    groups: dict[tuple[str, str], dict[str, list[Mapping[str, Any]]]] = {}
+    order: list[tuple[str, str]] = []
+    dp_by_group: dict[tuple[str, str], str | None] = {}
+    key_by_group: dict[tuple[str, str], str | None] = {}
+    parent_by_group: dict[tuple[str, str], str | None] = {}
+    for row in rows:
+        decision_id = row.get("decision_id")
+        if not _valid_decision_id(decision_id):
+            continue
+        raw_logical = row.get("logical_id")
+        logical = raw_logical if _struct_text(raw_logical, "token") is not None else ""
+        group_key = (str(decision_id), logical)
+        if group_key not in groups:
+            groups[group_key] = {
+                "request": [],
+                "note": [],
+                "executed": [],
+                "settled": [],
+                "terminal": [],
+            }
+            order.append(group_key)
+            dp_by_group[group_key] = _struct_text(row.get("dp"), "token")
+            key_by_group[group_key] = _struct_text(row.get("key"), "key")
+            parent_by_group[group_key] = _struct_text(row.get("parent_ref"), "decision_id")
+        parent = _struct_text(row.get("parent_ref"), "decision_id")
+        if parent_by_group[group_key] is None and parent is not None:
+            parent_by_group[group_key] = parent
+        kind = row.get("kind")
+        if kind == "lifecycle":
+            word = row.get("lifecycle")
+            if word in ("executed", "settled"):
+                groups[group_key][str(word)].append(row)
+        elif kind in ("request", "note", "terminal"):
+            groups[group_key][str(kind)].append(row)
+
+    out: list[dict[str, object]] = []
+    for group_key in order:
+        decision_id, logical = group_key
+        group = groups[group_key]
+        request_row = group["request"][-1] if group["request"] else None
+        executed_actions: list[str] = []
+        for row in group["executed"]:
+            action = _struct_text(row.get("action"), "token")
+            if action is not None and action not in executed_actions:
+                executed_actions.append(action)
+        settled_outcome: str | None = None
+        if group["settled"]:
+            row = group["settled"][-1]
+            outcome = row.get("outcome")
+            if isinstance(outcome, str) and outcome in decision_lifecycle.OUTCOMES:
+                settled_outcome = outcome
+        terminal: str | None = None
+        if group["terminal"]:
+            word = group["terminal"][-1].get("terminal")
+            if isinstance(word, str) and word in decision_lifecycle.TASK_TERMINALS:
+                terminal = word
+        recorded_stages: list[str] = []
+        if group["note"]:
+            recorded_stages.append("note")
+        if request_row is not None:
+            recorded_stages.append("request")
+        if group["executed"]:
+            recorded_stages.append("executed")
+        if group["settled"]:
+            recorded_stages.append("settled")
+        if group["terminal"]:
+            recorded_stages.append("terminal")
+        dp_id = dp_by_group[group_key] or decision_id.split(":", 1)[0]
+        row_key = key_by_group[group_key]
+        sources: list[str] = []
+        if request_row is not None:
+            sources.append(
+                "ledger.request of the successor (a real prepared request, not a declared intent)"
+            )
+        else:
+            sources.append(
+                "no successor request was recorded: the parent link alone is not a request"
+            )
+        if executed_actions:
+            sources.append("ledger.lifecycle.executed of the successor (the actual repair)")
+        if settled_outcome is not None:
+            sources.append("ledger.lifecycle.settled of the successor (its own round)")
+        sources.append(
+            "a successor never releases the parent gate and never proves the parent's repair"
+        )
+        out.append(
+            {
+                "decision_id": decision_id,
+                "logical_id": logical or None,
+                "dp": dp_id,
+                "key": row_key,
+                "same_key": (row_key == parent_key) if row_key is not None else None,
+                "parent_ref": parent_by_group[group_key],
+                "requested": request_row is not None,
+                "available": (
+                    request_row.get("available")
+                    if request_row is not None and isinstance(request_row.get("available"), bool)
+                    else None
+                ),
+                "business_decisions": (
+                    _entry_count(request_row.get("business_decisions"))
+                    if request_row is not None
+                    else None
+                ),
+                "choice": (
+                    _struct_text(request_row.get("choice"), "token")
+                    if request_row is not None
+                    else None
+                ),
+                "reason": (
+                    _entry_reason(request_row.get("reason"), sanitizer)
+                    if request_row is not None
+                    else None
+                ),
+                "executed_actions": executed_actions,
+                "settled_outcome": settled_outcome,
+                "terminal": terminal,
+                "recorded_stages": recorded_stages,
+                "sources": sources,
+            }
+        )
+    return tuple(out)
+
+
+def _entry_observation_order(observations: Sequence[Mapping[str, object]]) -> str:
+    """The recorded order of the observable snapshots (a verifiable fact).
+
+    ``non-decreasing`` / ``out-of-order`` / ``not-comparable`` (fewer than two
+    parseable snapshots). The reader reports the recorded order; it never
+    normalises or drops an observation to make the sequence look ordered.
+    """
+    instants = []
+    for item in observations:
+        stamp = item.get("observed_at")
+        if not isinstance(stamp, str):
+            continue
+        try:
+            instants.append(decision_task_state.observation_time({"observed_at": stamp}))
+        except (decision_task_state.TaskStateInputError, KeyError):
+            continue
+    if len(instants) < 2:
+        return "not-comparable"
+    return "non-decreasing" if instants == sorted(instants) else "out-of-order"
+
+
+def _entry_task_facts(
+    *, start: Mapping[str, Any] | None, events: Sequence[Mapping[str, Any]],
+    starts: Sequence[Mapping[str, Any]], has_task: bool, sanitizer: _Sanitizer,
+) -> dict[str, object]:
+    """The recorded task snapshots: before, per-round after, and the terminal.
+
+    A snapshot that was not recorded stays ``None`` with ``unrecorded``; a
+    producer's real "no items" stays ``[]``. No later snapshot is copied into
+    ``before``, and an out-of-order or cross-task ``after`` is shown as
+    ``invalid`` rather than accepted.
+    """
+
+    def associated(row: Mapping[str, Any] | None) -> bool:
+        if row is None or start is None or len(starts) != 1:
+            return False
+        return all(row.get(name) == start.get(name) for name in ("logical_id", "key", "task_key"))
+
+    before, before_visibility = _task_state_fact(
+        start.get("task_before") if start is not None and has_task else None, sanitizer
+    )
+    observations: list[dict[str, object]] = []
+    if start is not None and has_task:
+        observations.append(
+            {
+                "stage": "record-start",
+                "event_id": _struct_text(start.get("event_id"), "token"),
+                "ts": _struct_text(start.get("ts"), "ts"),
+                "observed_at": before.get("observed_at") if before is not None else None,
+                "visibility": before_visibility,
+            }
+        )
+    per_stage: dict[str, list[dict[str, object]]] = {"executed": [], "settled": [], "terminal": []}
+    #: The writer's own rule, replayed once per recorded observation: an
+    #: observation may not precede any snapshot recorded before it. Checking it
+    #: in ledger order (never against a *later* row) keeps a legal terminal that
+    #: was appended before a later settled round visible.
+    floor = before
+    for row in events:
+        kind = row.get("kind")
+        stage: str | None = None
+        if kind == "lifecycle" and row.get("lifecycle") in ("executed", "settled"):
+            stage = str(row.get("lifecycle"))
+        elif kind == "terminal":
+            stage = "terminal"
+        if stage is None:
+            continue
+        snapshot, visibility = _task_state_fact(
+            row.get("task_after") if has_task else None, sanitizer
+        )
+        if snapshot is not None:
+            if not associated(row):
+                sanitizer.invalid_field(f"workbench.entry.task.{stage}.observed_at")
+                snapshot = None
+                visibility = "invalid"
+            else:
+                try:
+                    decision_task_state.validate_observation_order(floor, snapshot)
+                except decision_task_state.TaskStateInputError:
+                    sanitizer.invalid_field(f"workbench.entry.task.{stage}.observed_at")
+                    snapshot = None
+                    visibility = "invalid"
+                else:
+                    floor = snapshot
+        item = {
+            "stage": stage,
+            "event_id": _struct_text(row.get("event_id"), "token"),
+            "ts": _struct_text(row.get("ts"), "ts"),
+            "observed_at": snapshot.get("observed_at") if snapshot is not None else None,
+            "visibility": visibility,
+            "row": row,
+            "snapshot": snapshot,
+        }
+        observations.append(
+            {name: item[name] for name in ("stage", "event_id", "ts", "observed_at", "visibility")}
+        )
+        per_stage[stage].append(item)
+
+    sources: list[str] = [
+        "ledger.record-start.task_before (the creation fact's snapshot; a later before never replaces it)",
+        "null = not recorded, [] = the producer's real none; the two are never conflated",
+    ]
+    after_item = (
+        per_stage["settled"][-1]
+        if per_stage["settled"]
+        else (per_stage["executed"][-1] if per_stage["executed"] else None)
+    )
+    after = after_item.get("snapshot") if after_item is not None else None
+    after_visibility = str(after_item.get("visibility")) if after_item is not None else "unrecorded"
+    after_stage = after_item.get("stage") if after_item is not None else None
+    if after_item is not None:
+        sources.append(
+            "ledger.lifecycle.executed/settled.task_after (this round's post observation)"
+        )
+
+    terminal_fact: dict[str, object] | None = None
+    if per_stage["terminal"]:
+        item = per_stage["terminal"][-1]
+        row = item.get("row")
+        if not isinstance(row, Mapping):  # never true for a recorded row; keeps types honest
+            row = {}
+        terminal_fact = {
+            "terminal": row.get("terminal")
+            if isinstance(row.get("terminal"), str)
+            and row.get("terminal") in decision_lifecycle.TASK_TERMINALS
+            else None,
+            "reason": _free("entry", "task.terminal.reason", row.get("reason"), sanitizer),
+            "evidence": _free("entry", "task.terminal.evidence", row.get("evidence"), sanitizer),
+            "parent_ref": _struct_text(row.get("parent_ref"), "decision_id"),
+            "ts": item.get("ts"),
+            "event_id": item.get("event_id"),
+            "task_after": item.get("snapshot"),
+            "task_after_visibility": item.get("visibility"),
+        }
+        sources.append(
+            "ledger.terminal (this task's own terminal observation; a settled round and a "
+            "successor link never produce one)"
+        )
+
+    return {
+        "before": before,
+        "before_visibility": before_visibility,
+        "after": after,
+        "after_visibility": after_visibility,
+        "after_stage": after_stage,
+        "terminal": terminal_fact,
+        "observations": observations,
+        "observation_order": _entry_observation_order(observations),
+        "sources": sources,
+    }
+
+
+def _entry_for(
+    *,
+    dp: str | None,
+    decision_id: str | None,
+    key: str | None,
+    facts: _WorkbenchFacts,
+    successor_rows: Sequence[Mapping[str, Any]],
+    node_task: str | None,
+    sanitizer: _Sanitizer,
+) -> EntryFacts:
+    """Build the T27 eight-entry block of one record (pure, read-only)."""
+    status, definition, retired = _entry_definition(dp)
+    selection_effect = None
+    if definition is not None:
+        selection_effect = (
+            "entry-target"
+            if definition.get("kind") == _ROUTE_ENTRY_KIND
+            else "business-choice"
+        )
+    attributed = facts.logical_id is not None and not facts.ambiguous
+    sources: list[str] = [
+        f"registry: decision_points (current callable set; status={status}) - a definition, not a record fact",
+    ]
+    if status == "retired":
+        sources.append(
+            "the retired directory explains the old id only: readonly, not a callable alias, "
+            "and no successor contract is applied to this record"
+        )
+    elif status in ("unknown", "unrecorded"):
+        sources.append(
+            "no current registry entry exists for this dp: no definition or rerun capability is guessed"
+        )
+    if selection_effect == "entry-target":
+        sources.append(
+            "this entry only selects a target entry: its recorded selection carries no business "
+            "choice, action or release"
+        )
+    if facts.ambiguous:
+        sources.append(
+            "the logical association is ambiguous: no note/basis/task fact is attributed to this record"
+        )
+
+    note: dict[str, object] | None = None
+    basis: dict[str, object] | None = None
+    request: dict[str, object] | None = None
+    note_count = 0
+    request_count = 0
+    parent_refs: list[str] = []
+    start = facts.starts[-1] if facts.starts else None
+    if attributed:
+        note_rows = [event for event in facts.events if event.get("kind") == "note"]
+        note_count = len(note_rows)
+        if note_rows:
+            note = _entry_note_fact(note_rows[-1], sanitizer)
+            sources.append(
+                "ledger.note.pm_note (the PM's pre-submission note, stored as its own fact; "
+                "it is never the model's basis)"
+            )
+        request_rows = [event for event in facts.events if event.get("kind") == "request"]
+        request_count = len(request_rows)
+        if request_rows:
+            request = _entry_request_fact(request_rows[-1], sanitizer)
+            basis = _entry_basis_fact(request_rows[-1], sanitizer)
+            sources.append("ledger.request (the real prepared request: transport and business choice apart)")
+            if basis is not None:
+                sources.append(
+                    "ledger.request.basis_id/basis_text (the PM-prepared catalogue item the model "
+                    "selected in the same request)"
+                )
+            else:
+                sources.append(
+                    "the recorded request carried no valid business decision: its frozen reason is a "
+                    "transport/business refusal and is never promoted to the selected basis"
+                )
+        for event in facts.events:
+            if event.get("kind") not in ("note", "request", "terminal"):
+                continue
+            parent = _struct_text(event.get("parent_ref"), "decision_id")
+            if parent is not None and parent not in parent_refs:
+                parent_refs.append(parent)
+        if parent_refs:
+            sources.append(
+                "ledger.note/request/terminal.parent_ref (a recorded link; it is not a release or a repair)"
+            )
+
+    successors: tuple[dict[str, object], ...] = ()
+    if _valid_decision_id(decision_id):
+        successors = _entry_successor_facts(successor_rows, key, sanitizer)
+        if successors:
+            sources.append(
+                "ledger.parent_ref rows of later records (each successor's request/choice/action/"
+                "settlement comes from its own rows)"
+            )
+
+    if attributed:
+        task = _entry_task_facts(
+            start=start,
+            events=facts.events,
+            starts=facts.starts,
+            has_task=node_task is not None,
+            sanitizer=sanitizer,
+        )
+    else:
+        task = {
+            "before": None,
+            "before_visibility": "unrecorded",
+            "after": None,
+            "after_visibility": "unrecorded",
+            "after_stage": None,
+            "terminal": None,
+            "observations": [],
+            "observation_order": "not-comparable",
+            "sources": [
+                "no unambiguous creation fact: no task snapshot is attributed to this record"
+            ],
+        }
+    sources.extend(str(item) for item in task.get("sources", ()))
+
+    return EntryFacts(
+        dp_id=dp,
+        registry_status=status,
+        readonly=True,
+        rerun_available=status == "active",
+        kind=(definition or {}).get("kind") if definition is not None else None,
+        role_scope=(definition or {}).get("role_scope") if definition is not None else None,
+        selection_effect=selection_effect,
+        retired=retired,
+        note_count=note_count,
+        note=note,
+        basis=basis,
+        request=request,
+        request_count=request_count,
+        parent_ref=parent_refs[0] if len(parent_refs) == 1 else None,
+        parent_refs=tuple(parent_refs),
+        successors=successors,
+        task=task,
+        sources=tuple(sources),
+    )
+
+
 def _signoff_fact(
     row: Mapping[str, Any] | None,
     *,
@@ -2661,13 +3359,16 @@ def _workbench_for(
     key: str | None,
     key_dir: pathlib.Path | None,
     task_key: str | None,
+    successor_rows: Sequence[Mapping[str, Any]] = (),
     sanitizer: _Sanitizer,
-) -> Workbench:
-    """Build the workbench projection of one record (pure, read-only).
+) -> tuple[Workbench, EntryFacts]:
+    """Build the workbench + T27 eight-entry projection of one record (read-only).
 
     Only an explicitly linked v2 record gets nodes: a legacy row keeps
     ``nodes=[]`` even on the detail read, and an ambiguous association is
-    reported as such (never resolved by key or timestamp).
+    reported as such (never resolved by key or timestamp). The eight-entry block
+    is built for every record (a retired or legacy row has no recorded T10 facts
+    to attribute, but it still shows its current registry status read-only).
     """
     start = facts.starts[-1] if facts.starts else None
     recorded_version: int | None = None
@@ -2681,32 +3382,59 @@ def _workbench_for(
     legacy = facts.logical_id is None or not versioned
     summary = _question_summary(dp)
 
+    # The creation fact's association (never used as a path). It is computed
+    # before the early returns so the T27 entry block exists on every record,
+    # including a retired/legacy row that only has an archive or ledger carrier.
+    start_key = start.get("key") if start is not None else None
+    start_task = start.get("task_key") if start is not None else None
+    start_retry = start.get("retry_of") if start is not None else None
+    node_key = key if valid_key(start_key) else None
+    node_task: str | None = None
+    if start_task is not None and _struct_text(start_task, "token") is not None:
+        node_task = start_task
+    node_retry = _struct_text(start_retry, "token")
+    entry = _entry_for(
+        dp=dp,
+        decision_id=decision_id,
+        key=key,
+        facts=facts,
+        successor_rows=successor_rows,
+        node_task=node_task,
+        sanitizer=sanitizer,
+    )
+
     if facts.ambiguous:
         # Two logical records claim this decision: report it, never attribute.
         selection = _selection(facts.events, archive, sanitizer, allow_lifecycle=False)
-        return Workbench(
-            record_version=None,
-            processing_state="failed",
-            key=key,
-            task_key=task_key,
-            question_summary=summary,
-            dp_id=dp,
-            selection=selection,
-            initiator_role=None,
-            nodes=(),
+        return (
+            Workbench(
+                record_version=None,
+                processing_state="failed",
+                key=key,
+                task_key=task_key,
+                question_summary=summary,
+                dp_id=dp,
+                selection=selection,
+                initiator_role=None,
+                nodes=(),
+            ),
+            entry,
         )
     if legacy:
         selection = _selection(facts.events, archive, sanitizer, allow_lifecycle=False)
-        return Workbench(
-            record_version=recorded_version,
-            processing_state="legacy",
-            key=key,
-            task_key=task_key,
-            question_summary=summary,
-            dp_id=dp,
-            selection=selection,
-            initiator_role=None,
-            nodes=(),
+        return (
+            Workbench(
+                record_version=recorded_version,
+                processing_state="legacy",
+                key=key,
+                task_key=task_key,
+                question_summary=summary,
+                dp_id=dp,
+                selection=selection,
+                initiator_role=None,
+                nodes=(),
+            ),
+            entry,
         )
 
     events = facts.events
@@ -2715,26 +3443,19 @@ def _workbench_for(
     book_row = _last_kind_row(events, "book-snapshot")
 
     # -- key / role: the creation fact -------------------------------------
-    start_key = start.get("key") if start is not None else None
-    start_task = start.get("task_key") if start is not None else None
-    start_retry = start.get("retry_of") if start is not None else None
     key_basis = ["record-start.record_version"] if recorded_version is not None else [
         "the creation fact carries no valid record_version"
     ]
-    node_key = key if valid_key(start_key) else None
     if node_key is not None:
         key_basis.append("record-start.key")
     else:
         key_basis.append("record-start.key is not a directory name (never used as a path)")
-    node_task: str | None = None
     if start_task is None:
         key_basis.append("record-start.task_key is null (a PM decision without a task; not inferred)")
-    elif _struct_text(start_task, "token") is not None:
-        node_task = start_task
+    elif node_task is not None:
         key_basis.append("record-start.task_key")
     else:
         key_basis.append("record-start.task_key is not a ledger token")
-    node_retry = _struct_text(start_retry, "token")
     if node_retry is not None:
         key_basis.append("record-start.retry_of")
     nodes: list[WorkbenchNode] = [
@@ -3078,7 +3799,7 @@ def _workbench_for(
         }
     signoff: dict[str, object] | None = None
     signoff_rows = _lifecycle_rows(events, "signoff")
-    if (dp or "").startswith(_SIGNOFF_DP_PREFIX):
+    if dp == _SIGNOFF_DP_ID or (dp or "").startswith(_SIGNOFF_DP_PREFIX):
         # dp25: the *file* is the authority, so the read validates it even when
         # no signoff row was written at all (a failed feedback write must not
         # hide a successful, exact file).
@@ -3094,7 +3815,9 @@ def _workbench_for(
         )
     if signoff is not None:
         signoff["basis"] = [
-            "ledger.lifecycle.signoff (the recorded file write: path + sha256)",
+            *(["ledger.lifecycle.signoff (the recorded file write: path + sha256)"]
+              if signoff.get("recorded") is not None else
+              ["no signoff write feedback recorded; file verification is an independent read"]),
             "decision_signoff_result.validate_signoff: the file was opened and "
             "checked against this logical_id and the snapshot recorded for it "
             "(a hash or id never exempts the parent chain)",
@@ -3177,17 +3900,16 @@ def _workbench_for(
         }
     elif outcome is not None:
         settled = {"ts": None, "outcome": outcome, "reason": None}
-    task_before, task_before_visibility = _task_state_fact(start.get("task_before") if start is not None and node_task is not None else None, sanitizer)
-    after_row = settled_rows[-1] if settled_rows else executed_rows[-1] if executed_rows else None
-    task_after, task_after_visibility = _task_state_fact(after_row.get("task_after") if after_row is not None and node_task is not None else None, sanitizer)
-    try:
-        if task_after is not None and (start is None or after_row is None or len(facts.starts) != 1 or any(after_row.get(name) != start.get(name) for name in ("logical_id", "key", "task_key"))):
-            raise decision_task_state.TaskStateInputError("task after creation association is invalid")
-        decision_task_state.validate_observation_order(task_before, task_after)
-    except decision_task_state.TaskStateInputError:
-        sanitizer.invalid_field("workbench.action.task_after.observed_at")
-        task_after = None
-        task_after_visibility = "invalid"
+    # The task snapshots were validated exactly once by the entry projection;
+    # the action node reuses those values (no second sanitisation pass, and the
+    # same association/order rules). ``terminal`` is this task's own row: it is
+    # never derived from ``settled`` and never reads as a settlement.
+    task = entry.task
+    task_before = task.get("before")
+    task_before_visibility = task.get("before_visibility")
+    task_after = task.get("after")
+    task_after_visibility = task.get("after_visibility")
+    task_terminal = task.get("terminal")
     action_errors = _failure_rows(events, frozenset({"executed", "settled"}))
     errors_action: list[dict[str, object]] = []
     for row in action_errors:
@@ -3207,6 +3929,11 @@ def _workbench_for(
         action_basis.append("ledger.lifecycle.executed (a declared action really happened)")
     if settled is not None:
         action_basis.append(f"settled outcome from {outcome_basis}")
+    if task_terminal is not None:
+        action_basis.append(
+            "ledger.terminal (this task's own terminal observation: settled stays this "
+            "round's outcome and never means the task is done)"
+        )
     if action_errors:
         action_basis.append("a feedback write failed: the action stays unproven, not completed")
     if not action_basis:
@@ -3215,7 +3942,7 @@ def _workbench_for(
         _node(
             "action",
             "failed" if action_failed else ("observed" if (executed or settled is not None) else "missing"),
-            {"executed": executed, "settled": settled, "task_before": task_before, "task_after": task_after, "task_before_visibility": task_before_visibility, "task_after_visibility": task_after_visibility, "errors": errors_action, "basis": action_basis},
+            {"executed": executed, "settled": settled, "terminal": task_terminal, "task_before": task_before, "task_after": task_after, "task_before_visibility": task_before_visibility, "task_after_visibility": task_after_visibility, "errors": errors_action, "basis": action_basis},
         )
     )
 
@@ -3228,7 +3955,7 @@ def _workbench_for(
     signoff_errors = bool(receipt_errors) and any(
         row.get("stage") == "signoff" for row in receipt_errors
     )
-    finalize_dp = dp is not None and dp.startswith(_SIGNOFF_DP_PREFIX)
+    finalize_dp = dp == _SIGNOFF_DP_ID or (dp is not None and dp.startswith(_SIGNOFF_DP_PREFIX))
     state_basis: list[str] = []
     if signoff_verified:
         processing_state = "completed"
@@ -3254,12 +3981,12 @@ def _workbench_for(
         elif outcome == "ok":
             processing_state = "failed" if signoff_errors else "processing"
             state_basis.append(
-                "dp25 completion needs the validated sign-off file; a settled ok "
+                "signoff completion needs the validated sign-off file; a settled ok "
                 "alone is not proof"
             )
         elif outcome in _PENDING_OUTCOMES or outcome is None:
             processing_state = "failed" if (action_errors or decide_failed) else "processing"
-            state_basis.append("dp25 finalize is still open")
+            state_basis.append("signoff finalize is still open")
         else:
             processing_state = "failed"
             state_basis.append(f"the recorded settled outcome is {outcome!r}")
@@ -3288,16 +4015,19 @@ def _workbench_for(
         processing_state = "processing"
         state_basis.append("no settlement/failure fact was recorded for this record")
 
-    return Workbench(
-        record_version=recorded_version,
-        processing_state=processing_state,
-        key=node_key if node_key is not None else key,
-        task_key=node_task,
-        question_summary=summary,
-        dp_id=dp,
-        selection=_selection(events, archive, sanitizer, allow_lifecycle=True),
-        initiator_role=role,
-        nodes=tuple(nodes),
+    return (
+        Workbench(
+            record_version=recorded_version,
+            processing_state=processing_state,
+            key=node_key if node_key is not None else key,
+            task_key=node_task,
+            question_summary=summary,
+            dp_id=dp,
+            selection=_selection(events, archive, sanitizer, allow_lifecycle=True),
+            initiator_role=role,
+            nodes=tuple(nodes),
+        ),
+        entry,
     )
 
 
@@ -3323,6 +4053,7 @@ def _finalize(
     *,
     redact: decision_wire.SecretRedactor | None,
     facts: _WorkbenchFacts | None = None,
+    successor_rows: Sequence[Mapping[str, Any]] = (),
     control_root: pathlib.Path | None = None,
     root_real: pathlib.Path | None = None,
 ) -> HistoryRecord:
@@ -3400,7 +4131,7 @@ def _finalize(
     # after the carriers (so the recorded answer is the already-sanitised one)
     # and before the marks (so node free text is counted and withheld like every
     # other free text).
-    workbench = _workbench_for(
+    workbench, entry = _workbench_for(
         facts=facts if facts is not None else _WorkbenchFacts(),
         folded=folded,
         archive=archive,
@@ -3410,6 +4141,7 @@ def _finalize(
         key=key,
         key_dir=key_dir,
         task_key=task_key,
+        successor_rows=successor_rows,
         sanitizer=sanitizer,
     )
 
@@ -3481,6 +4213,7 @@ def _finalize(
         missing=missing,
         redaction=marks,
         workbench=workbench,
+        entry=entry,
         redactor=redact,
     )
     return _with_output_policy(record)
@@ -3783,6 +4516,16 @@ def load_history(
     logical_errors: dict[tuple[str, str], list[dict[str, Any]]] = {}
     decision_to_logical: dict[tuple[str, str], set[str]] = {}
     logical_to_decision: dict[tuple[str, str], set[str]] = {}
+    #: T27 successor links: every row that records a ``parent_ref`` is kept by
+    #: ``(scope, parent decision_id)`` so the parent's projection can show what
+    #: was really requested/executed afterwards. The link is recorded, never
+    #: followed as an alias or a release.
+    children_by_parent: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    #: Every ledger row of one decision (by ``(scope, decision_id)``), used only to
+    #: expand a recorded successor link into that successor's own request/
+    #: executed/settled/terminal rows. A feedback row does not repeat the parent
+    #: link, so the link is resolved through the explicit decision id it carries.
+    events_by_decision: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
     def builder_for(scope: str, identity: str) -> _Builder:
         key = (scope, identity)
@@ -3972,6 +4715,20 @@ def load_history(
                     continue
             submission_id = event.get("submission_id")
             call_id = event.get("call_id")
+            parent_ref = event.get("parent_ref")
+            if (
+                isinstance(parent_ref, str)
+                and _valid_decision_id(parent_ref)
+                and isinstance(decision_id, str)
+                and _valid_decision_id(decision_id)
+            ):
+                children_by_parent.setdefault((event_scope, parent_ref), []).append(
+                    dict(event)
+                )
+            if isinstance(decision_id, str) and _valid_decision_id(decision_id):
+                events_by_decision.setdefault((event_scope, decision_id), []).append(
+                    dict(event)
+                )
             if isinstance(decision_id, str) and decision_id:
                 identity = "decision|" + decision_id
                 builder = builder_for(event_scope, identity)
@@ -4151,6 +4908,26 @@ def load_history(
             events=tuple(merged),
         )
 
+    def successor_rows_for(builder: _Builder) -> tuple[dict[str, Any], ...]:
+        """Every recorded row of the decisions whose ``parent_ref`` names this one.
+
+        The child decision ids come from the recorded links (read order); each
+        child's own rows are then taken from the same ledger, so its request,
+        executed, settled and terminal facts are visible without repeating the
+        parent link on every row. Nothing is inferred from a key or a clock.
+        """
+        if not isinstance(builder.decision_id, str):
+            return ()
+        child_ids: list[str] = []
+        for row in children_by_parent.get((builder.scope, builder.decision_id), ()):
+            child = row.get("decision_id")
+            if isinstance(child, str) and _valid_decision_id(child) and child not in child_ids:
+                child_ids.append(child)
+        rows: list[dict[str, Any]] = []
+        for child in child_ids:
+            rows.extend(events_by_decision.get((builder.scope, child), ()))
+        return tuple(rows)
+
     facts_by_identity = {
         (builder.scope, builder.identity): facts_for(builder) for builder in builders.values()
     }
@@ -4160,6 +4937,7 @@ def load_history(
             project_id,
             redact=redact,
             facts=facts_by_identity[(builder.scope, builder.identity)],
+            successor_rows=successor_rows_for(builder),
             control_root=control_root,
             root_real=root_real,
         )

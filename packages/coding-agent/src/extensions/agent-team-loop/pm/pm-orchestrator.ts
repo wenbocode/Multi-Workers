@@ -2,12 +2,15 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
 import { autoStartMonitor, registerAutopilotCommands } from "../autopilot/console.ts";
 import { stopMonitor } from "../autopilot/monitor.ts";
-import { readConfig, readGateReminders } from "../autopilot/status-model.ts";
+import { gatesDir, parseGateFile, readConfig, readGateReminders } from "../autopilot/status-model.ts";
 import { registerRagTools } from "../rag/tools.ts";
 import { AckStore } from "../shared/ack-store.ts";
+import { claimedPmKey, preparationProblems, validateDecisionMaterial } from "../shared/decide-policy.ts";
+import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.ts";
 import {
 	ENVELOPE_SECTION_LABELS,
 	ENVELOPE_SECTIONS,
@@ -16,6 +19,7 @@ import {
 	typeExtrasMissing,
 } from "../shared/dispatch-card.ts";
 import { registerMainWindowModel } from "../shared/dispatch-models.ts";
+import { acquireLock } from "../shared/file-lock.ts";
 import { formatHeartbeatAge, readTaskProgress } from "../shared/heartbeat.ts";
 import {
 	conductorClaimState,
@@ -49,9 +53,17 @@ import {
 } from "../shared/run-store.ts";
 import { readTaskHeaderScalar, readTaskType } from "../shared/task-frontmatter.ts";
 import { type WorkerEntry, type WorkerStatus, WorkerStore, workerOwnerKey } from "../shared/worker-store.ts";
+import {
+	type DecisionFollowupIntent,
+	markDecisionFollowupExecuted,
+	resumeDecisionFollowup,
+} from "./decision-followup.ts";
+import { captureDecisionTaskState } from "./decision-task-state.ts";
+import { ASK_DECISION_PARAMETERS, type AskDecisionInput, runAskDecision } from "./decision-tool.ts";
 import { isGoalEstablished, readGoal } from "./goal-reader.ts";
 import { StateManager } from "./state-manager.ts";
 import { type DispatchRefusal, dispatchTask } from "./task-dispatcher.ts";
+import { canonicalStateJson } from "./triage-client.ts";
 import {
 	applyWatchWidget,
 	claimState,
@@ -59,6 +71,7 @@ import {
 	deliverPmAlert,
 	deliverWorkerResult,
 	displaySummary,
+	extractCardSections,
 	makeScopedDocGateNotifier,
 	ownerKeyOf,
 	type PmUiHolder,
@@ -1944,10 +1957,10 @@ export function recordDroppedGateReminder(
 // initiated dp2 call can use; it has no caller in the machine loop.
 
 /** Decision-point id (registry authority: packages/multi-workers/decision_points.py). */
-export const DP2_CHECKPOINT_ID = "dp2-checkpoint-split";
+export const DP2_CHECKPOINT_ID = "dp-pm-steer";
 
 /** Registry question id whose value carries the dp2 answer. */
-export const DP2_CHECKPOINT_QUESTION = "checkpoint_action";
+export const DP2_CHECKPOINT_QUESTION = DECIDE_REGISTRY[DP2_CHECKPOINT_ID].businessQuestionId;
 
 /** Steer request file the PM writes into the worker's task dir. The worker
  * consumes it at its next checkpoint tick (design §5.3: file transport keeps
@@ -1964,19 +1977,7 @@ export const DP2_NARROW_MARKER = "[mw dp2-narrow]";
  * machine loop no longer writes the file itself (T03). */
 export const DP2_STEER_REQUEST_HEADER = "[dp2-narrow-request]";
 
-/** dp2 question set in the canonical form Python hashes: `json.dumps(list(
- * questions), ensure_ascii=False, sort_keys=True, separators=(",", ":"))`
- * (decision_points.py::_questions_version). */
-const DP2_QUESTIONS_CANONICAL =
-	'[{"choices":["narrow","split","direct-exec","escalate"],"id":"checkpoint_action","type":"choice"}]';
-
-/** `questions_version` for dp2 = `q-<sha256(canonical questions)[:8]>`, i.e. the
- * exact short code the Python registry derives (D-026). The suite re-derives it
- * from the registry source so a question-set edit cannot drift silently. */
-export const DP2_QUESTIONS_VERSION = `q-${createHash("sha256")
-	.update(DP2_QUESTIONS_CANONICAL, "utf8")
-	.digest("hex")
-	.slice(0, 8)}`;
+export const DP2_QUESTIONS_VERSION = DECIDE_REGISTRY[DP2_CHECKPOINT_ID].questionsVersion;
 
 /** One `[CHECKPOINT]` line reduced to the trend counters. The design's dp2
  * input asks for "最近 ≤3 条 (elapsed_s, reads, writes)" — enough to tell "still
@@ -2412,8 +2413,325 @@ export const PARALLEL_PROTOCOL = [
 	"6. 引用图片/截图/mockup 的任务用 type: vision 派发（视觉角色，worker 读取图片文件并受 image 能力门禁约束）。",
 ].join("\n");
 
-export function pmActivate(pi: ExtensionAPI): void {
-	const projectDir = process.cwd();
+const STEER_NEXT = {
+	narrow: "Continue the original deliverables within the prepared main-line scope.",
+	split: "Dispatch independent approved work units through dispatch_worker after its claim and write-scope checks.",
+	"direct-exec": "Use the current PM window's context. Coordinate all live writers before touching their files.",
+	escalate: "Ask the concrete human question identified by the selected basis. Leave the gated work pending.",
+};
+
+function controlledPath(root: string, file: string): boolean {
+	return (
+		!fs.lstatSync(root).isSymbolicLink() &&
+		path.resolve(file).startsWith(path.resolve(root) + path.sep) &&
+		fs.realpathSync(file) === path.join(fs.realpathSync(root), path.relative(root, file))
+	);
+}
+
+function followupWorkerEvidence(doc: string, workers: WorkerStore, key: string, task: string): string | undefined {
+	if (!/^[\w-][\w.-]*$/.test(task) || task.includes("..")) return undefined;
+	const observation = captureDecisionTaskState(workers, key, task);
+	if (observation.status === "not-queued" || observation.status === "unknown") return undefined;
+	const dir = path.join(doc, key, "workers", task);
+	const taskFile = path.join(dir, "task.md");
+	if (!controlledPath(doc, taskFile) || !controlledPath(doc, path.join(dir, "trace.log"))) return undefined;
+	const progress = readTaskProgress(dir);
+	if (
+		!progress ||
+		!(progress.startTs || progress.heartbeat || progress.checkpoint || progress.lastAction || progress.endTs)
+	)
+		return undefined;
+	// Persisted observations have a stable version across idle polls. Elapsed
+	// wall-clock time changes even when no new worker evidence exists.
+	const { startTs, endTs, exitCode, lastAction, checkpoint } = progress;
+	const writeFace = extractCardSections(fs.readFileSync(taskFile, "utf8")).extras.find(
+		(extra) => extra.title === "写入允许面",
+	)?.body;
+	return canonicalStateJson({
+		task_key: task,
+		status: observation.status,
+		startTs,
+		endTs,
+		exitCode,
+		lastAction,
+		checkpoint,
+		lastHeartbeat: progress.heartbeat?.lastTs,
+		writeFace,
+	});
+}
+
+/** Register only in a PM window. The tool coordinates a prepared request; the
+ * normal task tools and the T10 writer remain the only authorities for work. */
+export function registerPmGateFollowup(
+	pi: ExtensionAPI,
+	projectDir: string,
+	workers: WorkerStore,
+	watch: PmWatchState,
+	decide: (input: AskDecisionInput) => ReturnType<typeof runAskDecision> = runAskDecision,
+): void {
+	const doc = resolveAgenticdocRoot(projectDir);
+	const reply = (value: Record<string, unknown>) => ({
+		content: [{ type: "text" as const, text: JSON.stringify(value) }],
+		details: value,
+	});
+	const refuse = (reason: string) => reply({ state: "blocked", reason, parent_released: false });
+	pi.registerTool({
+		name: "pm_gate_followup",
+		label: "PM gate follow-up",
+		description:
+			"Resume a PM-prepared steer/need_fix gate in the currently claimed key. Supply the prepared material and basis. Use source_card for a task's original text, and action_event only after the already-authorized action was recorded.",
+		parameters: Type.Object(
+			{
+				gate_id: Type.String({ pattern: "^gate-[0-9]+$" }),
+				source_card: Type.Optional(Type.String({ description: "Original task card stem within the claimed key" })),
+				source_worker: Type.Optional(
+					Type.String({ description: "Existing worker whose progress and write scope inform the PM decision" }),
+				),
+				task_key: Type.Optional(
+					Type.String({
+						description: "Actual task associated with the successor; omit for a task-less PM decision",
+					}),
+				),
+				restricted_action: Type.String({ minLength: 1, maxLength: 128 }),
+				material: Type.Record(Type.String(), Type.Unknown()),
+				preparation: ASK_DECISION_PARAMETERS.properties.preparation,
+				action_event: Type.Optional(Type.String({ description: "An existing T10 executed event id" })),
+				request_ref: Type.Optional(
+					Type.String({ description: "The actual successor decision id for the action receipt" }),
+				),
+			},
+			{ additionalProperties: false },
+		),
+		executionMode: "sequential",
+		execute: async (_id, params, signal) => {
+			const key = claimedPmKey(projectDir, watch.key);
+			if (!key || key !== watch.key) return refuse("pm-claim-missing");
+			const preparation = params.preparation;
+			if (!preparation) return refuse("successor-not-prepared");
+			if (Boolean(params.action_event) !== Boolean(params.request_ref)) return refuse("action-reference-missing");
+			if (!/^gate-\d+$/.test(params.gate_id)) return refuse("invalid-gate-id");
+			const gatePath = path.join(gatesDir(projectDir), `${params.gate_id}.md`);
+			const ownerDir = path.join(doc, key);
+			const window = windowClaimId();
+			const bound = { role: "pm" as const, key, window_id: window };
+			const readParent = () => {
+				const config = readConfig(projectDir);
+				if (
+					claimedPmKey(projectDir, key) !== key ||
+					watch.key !== key ||
+					!config.ok ||
+					!config.config.enabled ||
+					config.config.paused ||
+					config.config.auto_gate_mode !== "live" ||
+					!controlledPath(doc, gatePath)
+				)
+					return undefined;
+				const gate = parseGateFile(fs.readFileSync(gatePath, "utf8"), gatePath);
+				const decision = gate.decision;
+				const stageScoped =
+					gate.key === null &&
+					(gate.kind === "stage-confirm" || gate.kind === "stage-close") &&
+					gate.stage !== null &&
+					Number.isSafeInteger(gate.stage) &&
+					gate.stage > 0;
+				if (
+					gate.id !== params.gate_id ||
+					(gate.key !== key && !stageScoped) ||
+					!decision ||
+					decision.transport !== "answered" ||
+					(decision.business !== "steer" && decision.business !== "need_fix") ||
+					!decision.decisionRef?.startsWith("dp-gate-approve:") ||
+					!decision.pmNote ||
+					!decision.modelBasis ||
+					(decision.effect !== "not-started" && decision.effect !== "blocked")
+				)
+					return undefined;
+				const stageNoteEvent = stageScoped
+					? `nt:stage-gate:${createHash("sha256")
+							.update(
+								JSON.stringify([
+									key,
+									gate.id,
+									gate.stage,
+									decision.matterRef,
+									decision.substantiveVersion,
+									decision.decisionRef,
+								]),
+							)
+							.digest("hex")}`
+					: undefined;
+				return { ...decision, ...(stageNoteEvent ? { stageNoteEvent } : {}) };
+			};
+			try {
+				const parent = readParent();
+				if (!parent?.decisionRef || !parent.modelBasis || !controlledPath(doc, ownerDir))
+					return refuse("gate-or-authority-unavailable");
+				const parentRef = parent.decisionRef;
+				const target = parent.business === "steer" ? "dp-pm-steer" : "dp-auto";
+				const taskKey = params.task_key ?? null;
+				if (taskKey !== null && (!/^[\w-][\w.-]*$/.test(taskKey) || taskKey.includes("..")))
+					return refuse("invalid-task-key");
+				const material = { ...params.material };
+				let sourcePath: string | undefined;
+				let originalTask: string | undefined;
+				if (params.source_card) {
+					if (!/^[\w-][\w.-]*$/.test(params.source_card) || params.source_card.includes(".."))
+						return refuse("invalid-source-card");
+					sourcePath = path.join(ownerDir, "tasks", `${params.source_card}.md`);
+					if (!controlledPath(doc, sourcePath)) return refuse("unbound-source-card");
+					originalTask = fs.readFileSync(sourcePath, "utf8");
+					if (target === "dp-pm-steer") {
+						const source = extractCardSections(originalTask);
+						Object.assign(material, {
+							task_goal: source.context,
+							task_requirements: source.requirements,
+							task_deliverables: source.deliverables,
+						});
+					}
+				}
+				const sourceWorker =
+					params.source_worker ??
+					(target === "dp-pm-steer" && "worker_execution" in material ? taskKey : undefined);
+				if (params.source_worker || "worker_execution" in material) {
+					if (target !== "dp-pm-steer" || !sourceWorker) return refuse("worker-evidence-unbound");
+					const observations = followupWorkerEvidence(doc, workers, key, sourceWorker);
+					if (!observations) return refuse("worker-evidence-missing");
+					material.worker_execution = observations;
+				}
+				const validated = validateDecisionMaterial(target, material);
+				if (!validated.ok || preparationProblems(target, material, preparation, undefined).length) {
+					return refuse("successor-not-prepared");
+				}
+				const digest = (data: unknown) => createHash("sha256").update(canonicalStateJson(data)).digest("hex");
+				const binding = {
+					parent_ref: parent.matterRef,
+					parent_decision_id: parentRef,
+					parent_logical_id: parentRef.slice("dp-gate-approve:".length),
+					parent_matter_version: parent.substantiveVersion,
+					target_dp: target as "dp-pm-steer" | "dp-auto",
+					material_version: digest(material),
+					basis_version: digest(preparation),
+					owner_key: key,
+					task_key: taskKey,
+					restricted_action: params.restricted_action,
+					restricted_executor: `pm:${window}`,
+				};
+				let dir = ownerDir;
+				for (const part of ["evidence", "decision-followups"]) {
+					dir = path.join(dir, part);
+					if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+					if (!controlledPath(doc, dir)) return refuse("intent-path-unbound");
+				}
+				// A single path per owner/matter/version across gate ids and labels.
+				const file = path.join(dir, `${digest([key, parent.matterRef, parent.substantiveVersion])}.json`);
+				const unlock = await acquireLock(`${file}.lock`);
+				try {
+					if (!fs.existsSync(file)) {
+						if (params.action_event) return refuse("intent-missing");
+						const intent: DecisionFollowupIntent = {
+							schema_version: 1,
+							...binding,
+							prepared_by: bound,
+							status: "prepared",
+							request_ref: null,
+							answer: null,
+							failure_reason: null,
+						};
+						fs.writeFileSync(file, `${JSON.stringify(intent)}\n`, { flag: "wx", mode: 0o600 });
+					}
+					if (!controlledPath(doc, file)) return refuse("intent-path-unbound");
+				} finally {
+					unlock();
+				}
+				const common = {
+					intent_path: file,
+					expected: binding,
+					bound_pm: bound,
+					lifecycle: {
+						projectDir,
+						parentEvidence: {
+							pmNote: parent.pmNote,
+							modelBasis: parent.modelBasis,
+							...(parent.stageNoteEvent ? { stageNoteEvent: parent.stageNoteEvent } : {}),
+						},
+					},
+				};
+				const stillCurrent = () => {
+					const now = readParent();
+					return (
+						now !== undefined &&
+						canonicalStateJson(now) === canonicalStateJson(parent) &&
+						(!sourceWorker ||
+							followupWorkerEvidence(doc, workers, key, sourceWorker) === material.worker_execution) &&
+						(!sourcePath ||
+							(controlledPath(doc, sourcePath) && fs.readFileSync(sourcePath, "utf8") === originalTask))
+					);
+				};
+				if (params.action_event && params.request_ref) {
+					if (!stillCurrent()) return refuse("gate-or-authority-changed");
+					const action = await markDecisionFollowupExecuted({
+						...common,
+						request_ref: params.request_ref,
+						action_evidence: params.action_event,
+					});
+					return reply({ ...action, gate_id: params.gate_id, target });
+				}
+				let taskBefore: ReturnType<typeof captureDecisionTaskState> | undefined;
+				const outcome = await resumeDecisionFollowup({
+					...common,
+					observe_task: () => {
+						if (!stillCurrent()) return "unknown";
+						if (!taskKey) return "not-queued";
+						taskBefore = captureDecisionTaskState(workers, key, taskKey);
+						return taskBefore.status;
+					},
+					request: async () => {
+						if (!stillCurrent()) return { available: false, reason: "unauthorized" };
+						const outcome = await decide({
+							projectDir,
+							key,
+							taskKey,
+							dp: target,
+							initiatorRole: "pm",
+							trigger: params.gate_id,
+							parentDecisionRef: parentRef,
+							material,
+							preparation,
+							taskBefore,
+							signal,
+						});
+						if (!stillCurrent()) return { available: false, reason: "unauthorized" };
+						if (!outcome.payload.available) return { available: false, reason: outcome.payload.unavailable };
+						const answer = outcome.payload.selection?.id;
+						return answer
+							? { available: true, request_ref: outcome.payload.decision_id, answer }
+							: { available: false, reason: "bad-response" };
+					},
+				});
+				if (!stillCurrent()) return refuse("gate-or-authority-changed");
+				const branch = outcome.answer;
+				const choiceBasis = preparation.basis_catalog.find((item) => item.id === outcome.basis_id)?.text;
+				const next =
+					target === "dp-pm-steer" && branch && Object.hasOwn(STEER_NEXT, branch)
+						? STEER_NEXT[branch as keyof typeof STEER_NEXT]
+						: undefined;
+				return reply({
+					...outcome,
+					gate_id: params.gate_id,
+					target,
+					pm_note: parent.pmNote,
+					parent_model_basis: parent.modelBasis,
+					...(outcome.state === "answered" && choiceBasis ? { selected_basis: choiceBasis } : {}),
+					...(next ? { next } : {}),
+				});
+			} catch {
+				return refuse("gate-evidence-unavailable");
+			}
+		},
+	});
+}
+
+export function pmActivate(pi: ExtensionAPI, projectDir = process.cwd()): void {
 	const agenticdocRoot = resolveAgenticdocRoot(projectDir);
 	const workerStore = new WorkerStore(agenticdocRoot);
 	const ackStore = new AckStore(agenticdocRoot);
@@ -2443,6 +2761,7 @@ export function pmActivate(pi: ExtensionAPI): void {
 	registerMwTools(pi, projectDir);
 	registerAdvancePhaseTool(pi, projectDir, indexStore);
 	registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, projectDir);
+	registerPmGateFollowup(pi, projectDir, workerStore, watch);
 	registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agenticdocRoot);
 	registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch, projectDir);
 	// RAG tool surface (D-002): registration is structural — an empty enabled

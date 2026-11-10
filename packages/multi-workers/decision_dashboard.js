@@ -488,6 +488,8 @@
       openRecord(record.opaque_id, "log");
     });
     actions.appendChild(logButton);
+    const entryRow = renderEntryRowFacts(record);
+    if (entryRow) keyCell.appendChild(entryRow);
     keyCell.appendChild(actions);
     row.appendChild(keyCell);
 
@@ -796,22 +798,22 @@
     if (source && typeof source === "object" && !Array.isArray(source)) {
       const material = source.material;
       if (material && typeof material === "object" && !Array.isArray(material)) {
-        const inner =
-          material.state && typeof material.state === "object" && !Array.isArray(material.state)
-            ? material.state
-            : material;
-        return { state: inner, note: null };
+        return { state: material, note: null };
       }
       const book = source.book;
       if (book && typeof book === "object" && typeof book.text === "string") {
         const parsedBook = parseJson(book.text);
         const value = parsedBook.ok ? parsedBook.value : null;
         if (value && typeof value === "object" && !Array.isArray(value)) {
-          const state = value.state;
-          if (state && typeof state === "object" && !Array.isArray(state)) {
-            return { state: state, note: "材料来自旧 book 快照的 state（原样读取，不补造）" };
+          const inner = value.material;
+          if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+            return { state: inner, note: null };
           }
-          return { state: null, note: "旧 book 快照里没有可读的 state：未记录（不猜正文）" };
+          const legacy = value.state;
+          if (legacy && typeof legacy === "object" && !Array.isArray(legacy)) {
+            return { state: legacy, note: "材料来自旧 book 快照的 state（原样读取，不补造）" };
+          }
+          return { state: null, note: "旧 book 快照里没有可读的 material：未记录（不猜正文）" };
         }
         return { state: null, note: "旧 book 快照不是可解析的 JSON：未记录（不猜正文）" };
       }
@@ -1137,6 +1139,483 @@
     holder.appendChild(card);
   }
 
+  // -- eight-entry semantics (T29): one fact per recorded source -------------
+
+  // The registry status is today's definition, never a fact of the record; the
+  // page shows it labelled as such and never starts a new run of an entry.
+  const ENTRY_STATUS_LABELS = {
+    active: "active（当前注册表有可调用入口）",
+    retired: "retired（已退役，只读历史）",
+    unknown: "unknown（当前注册表没有该 id，不猜定义）",
+    unrecorded: "unrecorded（记录未标注入口）",
+  };
+  const ENTRY_EFFECT_LABELS = {
+    "business-choice": "业务选择（不授权、不执行、不代表完成）",
+    "entry-target": "仅指定目标入口（不是业务选择，不释放任何动作）",
+  };
+  const SUCCESSOR_STAGE_LABELS = {
+    note: "PM说明",
+    request: "请求",
+    executed: "已执行行动",
+    settled: "本轮结算",
+    terminal: "任务终态",
+  };
+
+  //: Controls rendered by the generated entry form (reset on every render).
+  const entryFormState = { controls: [] };
+
+  function entryOf(record) {
+    const entry = record && record.entry;
+    return entry && typeof entry === "object" && !Array.isArray(entry) ? entry : null;
+  }
+
+  function entryListText(values) {
+    // null (not recorded) and [] (the producer's real "none") stay distinct.
+    if (!Array.isArray(values)) return NOT_RECORDED;
+    if (!values.length) return "无（真实空列表）";
+    return values.map(function (item) { return formatFree(item); }).join("; ");
+  }
+
+  function entryFact(holder, field, label, value) {
+    holder.appendChild(el("p", {
+      class: "meta entry-fact",
+      "data-testid": "entry-fact",
+      "data-field": field,
+    }, [
+      el("strong", { text: label + "：" }),
+      el("span", { text: isMissing(value) || value === "" ? NOT_RECORDED : String(value) }),
+    ]));
+  }
+
+  function renderEntrySnapshot(holder, title, snapshot, visibility) {
+    const box = el("div", { class: "entry-snapshot", "data-testid": "entry-snapshot" });
+    box.appendChild(el("h6", { text: title }));
+    if (visibility === "withheld") {
+      box.appendChild(el("p", { class: "muted", text: "当时快照已记录，但安全过滤暂不显示" }));
+      holder.appendChild(box);
+      return;
+    }
+    if (visibility === "invalid") {
+      box.appendChild(el("p", { class: "muted", text: "当时快照未通过读取校验或已被安全过滤，不补猜" }));
+      holder.appendChild(box);
+      return;
+    }
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      box.appendChild(el("p", { class: "muted", text: "任务状态未记录（没有当时快照，不用任务现在的状态补填）" }));
+      holder.appendChild(box);
+      return;
+    }
+    const status = typeof snapshot.status === "string" ? snapshot.status : "unknown";
+    box.appendChild(el("p", { class: "meta", text:
+      "状态：" + (TASK_STATE_LABELS[status] || "任务状态未知") +
+      " · 来源：" + (TASK_STATE_SOURCES[snapshot.source] || NOT_RECORDED) +
+      " · 当时记录时间：" + missing(snapshot.observed_at) }));
+    box.appendChild(line("已完成", entryListText(snapshot.completed)));
+    box.appendChild(line("待处理", entryListText(snapshot.remaining)));
+    box.appendChild(line("阻塞", entryListText(snapshot.blockers)));
+    holder.appendChild(box);
+  }
+
+  function renderEntryFacts(container, record) {
+    // Read-only rendering of record.entry (T27). Every block names its own
+    // carrier; a selection, a settlement and a task terminal never stand in
+    // for one another, and nothing here is derived from the current config.
+    const entry = entryOf(record);
+    if (!entry) return false;
+    const status = typeof entry.registry_status === "string" ? entry.registry_status : "unknown";
+    const holder = el("section", {
+      class: "entry-facts",
+      "data-testid": "entry-facts",
+      "data-registry-status": status,
+      "data-rerun-available": entry.rerun_available === true ? "true" : "false",
+    });
+    holder.appendChild(el("h4", { text: "八入口语义（只读）：入口 / PM 说明 / 模型选择的依据 / 请求 / 后继 / 任务快照" }));
+    entryFact(holder, "registry-status", "入口状态", ENTRY_STATUS_LABELS[status] || status);
+    entryFact(holder, "readonly", "只读查看", entry.readonly === true ? "是（本页只观察，不发起运行）" : flag(entry.readonly));
+    if (entry.rerun_available === true) {
+      holder.appendChild(el("p", { class: "meta", "data-testid": "entry-rerun-available",
+        text: "入口当前可运行；本页只读观察，仍不发起任何新运行。" }));
+    } else {
+      holder.appendChild(el("p", { class: "warn", "data-testid": "entry-rerun-unavailable",
+        text: "不可发起新运行：当前注册表没有可调用的该入口（退役/未知只保留历史事实，不当作别名重跑）。" }));
+    }
+    entryFact(holder, "kind", "入口类型（定义）", entry.kind);
+    entryFact(holder, "role-scope", "可发起角色（定义）", entry.role_scope);
+    entryFact(holder, "selection-effect", "选择效果",
+      ENTRY_EFFECT_LABELS[entry.selection_effect] || entry.selection_effect);
+    const retired = entry.retired && typeof entry.retired === "object" && !Array.isArray(entry.retired)
+      ? entry.retired
+      : null;
+    if (retired) {
+      entryFact(holder, "retired-disposition", "退役处置", retired.disposition);
+      entryFact(holder, "retired-migrated-to", "责任迁移到", retired.migrated_to);
+      entryFact(holder, "retired-note", "退役说明", retired.note);
+      holder.appendChild(el("p", { class: "notes", "data-testid": "entry-retired-note",
+        text: "退役 id 只解释旧记录：不是可调用别名，也不按当前注册表给该记录补造问题、选择或完成事实。" }));
+    }
+
+    const note = entry.note && typeof entry.note === "object" && !Array.isArray(entry.note) ? entry.note : null;
+    const noteBlock = el("div", { class: "entry-block", "data-testid": "entry-note" });
+    noteBlock.appendChild(el("h5", { text: "PM 提交前预备说明（note；与模型选择的依据是两个来源）" }));
+    if (entry.has_pm_note === true && note) {
+      noteBlock.appendChild(el("p", { class: "entry-text", "data-testid": "entry-note-text", text: missing(note.pm_note) }));
+      noteBlock.appendChild(line("说明来源", missing(note.note_source)));
+      noteBlock.appendChild(line("预备时间", missing(note.prepared_at)));
+      noteBlock.appendChild(line("记录时间", missing(note.ts)));
+    } else {
+      noteBlock.appendChild(el("p", { class: "muted", "data-testid": "entry-note-text",
+        text: NOT_RECORDED + "（没有 PM 预备说明；不由模型依据或失败原因补填）" }));
+    }
+    noteBlock.appendChild(line("说明条数", missing(entry.note_count)));
+    holder.appendChild(noteBlock);
+
+    const basis = entry.basis && typeof entry.basis === "object" && !Array.isArray(entry.basis) ? entry.basis : null;
+    const basisBlock = el("div", { class: "entry-block", "data-testid": "entry-basis" });
+    basisBlock.appendChild(el("h5", { text: "模型选择的 PM 预备依据（basis）" }));
+    if (entry.has_selected_basis === true && basis) {
+      basisBlock.appendChild(el("p", { class: "entry-text", "data-testid": "entry-basis-text", text: missing(basis.basis_text) }));
+      basisBlock.appendChild(line("依据 id", missing(basis.basis_id)));
+      basisBlock.appendChild(line("本次选择", missing(basis.choice)));
+      basisBlock.appendChild(line("依据来源", missing(basis.basis_source)));
+      basisBlock.appendChild(line("预备时间", missing(basis.prepared_at)));
+      basisBlock.appendChild(el("p", { class: "notes", "data-testid": "entry-basis-note",
+        text: "basis_text 是 PM 在提交前预备、由模型在本次请求中选择的文字；不是模型自然产生的理由，也不是失败原因。" }));
+    } else {
+      basisBlock.appendChild(el("p", { class: "muted", "data-testid": "entry-basis-text",
+        text: NOT_RECORDED + "（本次请求没有可核的业务选择；拒绝原因只在该请求里，不升级为依据）" }));
+    }
+    holder.appendChild(basisBlock);
+
+    const request = entry.request && typeof entry.request === "object" && !Array.isArray(entry.request)
+      ? entry.request
+      : null;
+    const requestBlock = el("div", { class: "entry-block", "data-testid": "entry-request" });
+    requestBlock.appendChild(el("h5", { text: "实际请求（prepared request）" }));
+    requestBlock.appendChild(line("是否已请求",
+      entry.requested === true ? "是（有真实请求记录）" : "未记录（声明不是请求）"));
+    requestBlock.appendChild(line("请求条数", missing(entry.request_count)));
+    requestBlock.appendChild(line("请求记录的拒绝原因", missing(entry.request_refusal)));
+    if (request) {
+      requestBlock.appendChild(line("接口可用", flag(request.available)));
+      requestBlock.appendChild(line("业务决策数", missing(request.business_decisions)));
+      requestBlock.appendChild(line("传输 attempts", missing(request.transport_attempts)));
+      requestBlock.appendChild(line("本次选择", missing(request.choice)));
+      requestBlock.appendChild(line("选择依据 id", missing(request.basis_id)));
+      requestBlock.appendChild(line("拒绝原因（不是模型依据）", request.reason));
+    }
+    holder.appendChild(requestBlock);
+
+    const successors = Array.isArray(entry.successors) ? entry.successors : [];
+    const successorBlock = el("div", { class: "entry-block", "data-testid": "entry-successors" });
+    successorBlock.appendChild(el("h5", { text: "后继请求与真实处理（共 " + String(successors.length) + " 条）" }));
+    if (!successors.length) {
+      successorBlock.appendChild(el("p", { class: "muted", "data-testid": "entry-successors-empty",
+        text: "无记录的后继请求（声明不等于发起）。" }));
+    }
+    successors.forEach(function (raw, index) {
+      const item = raw && typeof raw === "object" ? raw : {};
+      const box = el("div", {
+        class: "entry-successor",
+        "data-testid": "entry-successor",
+        "data-decision-id": missing(item.decision_id),
+        "data-requested": item.requested === true ? "true" : "false",
+      });
+      box.appendChild(el("h6", { text: "后继 #" + String(index + 1) + " · " + missing(item.decision_id) + " · " + missing(item.dp) }));
+      box.appendChild(line("已发起请求", item.requested === true ? "是" : "否（只登记了关联，不是请求）"));
+      box.appendChild(line("接口可用", flag(item.available)));
+      box.appendChild(line("业务决策数", missing(item.business_decisions)));
+      box.appendChild(line("返回选择", missing(item.choice)));
+      box.appendChild(line("拒绝原因", missing(item.reason)));
+      const executedActions = Array.isArray(item.executed_actions) ? item.executed_actions : [];
+      box.appendChild(line("实际已执行行动", executedActions.length
+        ? executedActions.join(", ")
+        : "未记录（没有行动回执）"));
+      box.appendChild(line("本轮结算", missing(item.settled_outcome)));
+      box.appendChild(line("任务终态", missing(item.terminal)));
+      box.appendChild(line("记录到的阶段", Array.isArray(item.recorded_stages) && item.recorded_stages.length
+        ? item.recorded_stages.map(function (stage) { return SUCCESSOR_STAGE_LABELS[stage] || String(stage); }).join(" → ")
+        : NOT_RECORDED));
+      box.appendChild(line("同 key 关联", flag(item.same_key)));
+      box.appendChild(el("p", { class: "notes", text: "该后继只说明它自己的请求/动作/结算；不解除父 gate，也不证明已整改。" }));
+      successorBlock.appendChild(box);
+    });
+    holder.appendChild(successorBlock);
+
+    const task = entry.task && typeof entry.task === "object" && !Array.isArray(entry.task) ? entry.task : null;
+    const taskBlock = el("div", { class: "entry-block", "data-testid": "entry-task" });
+    taskBlock.appendChild(el("h5", { text: "任务前后快照（null=未记录，[]=真实无项）" }));
+    if (task) {
+      renderEntrySnapshot(taskBlock, "决策前（创建事实，永不回填）", task.before, task.before_visibility);
+      renderEntrySnapshot(taskBlock,
+        "本轮之后" + (isMissing(task.after_stage) ? "" : "（" + String(task.after_stage) + "）"),
+        task.after, task.after_visibility);
+      entryFact(taskBlock, "observation-order", "观察顺序", task.observation_order);
+      const terminal = task.terminal && typeof task.terminal === "object" ? task.terminal : null;
+      entryFact(taskBlock, "task-terminal", "任务终态", terminal
+        ? missing(terminal.terminal) + " · 原因：" + formatFree(terminal.reason) + " · 证据：" + formatFree(terminal.evidence)
+        : NOT_RECORDED);
+    }
+    entryFact(taskBlock, "task-terminal-word", "任务终态值（entry）", entry.task_terminal);
+    taskBlock.appendChild(el("p", { class: "notes", "data-testid": "entry-settlement-note",
+      text: "本块没有执行/完成字段：执行只看行动回执，完成只看任务终态；本轮结算（settled）不代表任务完成。" }));
+    holder.appendChild(taskBlock);
+
+    const sources = Array.isArray(entry.sources) ? entry.sources : [];
+    const audit = el("details", { class: "basis-audit", "data-testid": "entry-sources" });
+    audit.appendChild(el("summary", { text: "入口事实出处（按需查看）" }));
+    audit.appendChild(el("pre", { class: "copy-text", text: sources.length ? sources.join("\n") : NOT_RECORDED }));
+    holder.appendChild(audit);
+
+    container.appendChild(holder);
+    return true;
+  }
+
+  function renderEntryRowFacts(record) {
+    // Compact list-page form: status + presence flags only, never a stored body.
+    const entry = entryOf(record);
+    if (!entry) return null;
+    const status = typeof entry.registry_status === "string" ? entry.registry_status : "unknown";
+    const successors = Array.isArray(entry.successors) ? entry.successors.length : 0;
+    return el("div", {
+      class: "basis",
+      "data-testid": "entry-row-state",
+      "data-registry-status": status,
+      "data-rerun-available": entry.rerun_available === true ? "true" : "false",
+      text: "入口=" + status +
+        (entry.readonly === true ? " · 只读" : "") +
+        (entry.rerun_available === true ? " · 可运行（本页不运行）" : " · 不可发起新运行") +
+        " · PM说明=" + (entry.has_pm_note === true ? "有" : NOT_RECORDED) +
+        " · 依据=" + (entry.has_selected_basis === true ? missing(entry.selected_basis_id) : NOT_RECORDED) +
+        " · 后继=" + String(successors),
+    });
+  }
+
+  // -- the generated entry form (one per served entry description) ----------
+
+  //: Field kind from the served description only (never from a local table).
+  function entryFieldKind(field) {
+    const type = typeof field.type === "string" ? field.type : "";
+    if (Array.isArray(field.enum) && field.enum.length) return "enum";
+    if (type === "boolean") return "boolean";
+    if (type === "integer" || type === "number") return "number";
+    if (type === "array" || type === "object") return "json";
+    return "text";
+  }
+
+  function entryValueAt(source, dotted) {
+    if (!source || typeof source !== "object" || Array.isArray(source) || !dotted) return null;
+    let node = source;
+    const parts = String(dotted).split(".");
+    for (let index = 0; index < parts.length; index += 1) {
+      if (!node || typeof node !== "object" || Array.isArray(node)) return null;
+      node = node[parts[index]];
+    }
+    return node === undefined ? null : node;
+  }
+
+  function entrySetPath(target, dotted, value) {
+    const parts = String(dotted).split(".");
+    let node = target;
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      const key = parts[index];
+      if (!node[key] || typeof node[key] !== "object" || Array.isArray(node[key])) node[key] = {};
+      node = node[key];
+    }
+    node[parts[parts.length - 1]] = value;
+  }
+
+  function entryFormRow(field, required, current) {
+    const name = typeof field.name === "string" ? field.name : String(field.name || "");
+    const kind = entryFieldKind(field);
+    const label = el("label", { class: "entry-field" });
+    label.appendChild(el("span", { text: name + (required ? "（必填）" : "（可选）") + " · " + missing(field.type) }));
+    let control = null;
+    let text = "";
+    if (!isMissing(current)) {
+      text = typeof current === "object" ? JSON.stringify(current, null, 2) : String(current);
+    }
+    if (kind === "enum" || kind === "boolean") {
+      control = el("select", {
+        "data-testid": "pg-entry-input",
+        "data-field": name,
+        "data-required": required ? "true" : "false",
+        "data-kind": kind,
+      });
+      control.appendChild(el("option", { value: "", text: "（未填）" }));
+      const values = kind === "enum" ? field.enum.map(String) : ["true", "false"];
+      values.forEach(function (value) { control.appendChild(el("option", { value: value, text: value })); });
+      control.value = values.indexOf(text) === -1 ? "" : text;
+    } else if (kind === "json") {
+      control = el("textarea", {
+        rows: "3",
+        spellcheck: "false",
+        autocomplete: "off",
+        "data-testid": "pg-entry-input",
+        "data-field": name,
+        "data-required": required ? "true" : "false",
+        "data-kind": kind,
+      });
+      control.value = text;
+    } else {
+      control = el("input", {
+        type: "text",
+        autocomplete: "off",
+        "data-testid": "pg-entry-input",
+        "data-field": name,
+        "data-required": required ? "true" : "false",
+        "data-kind": kind,
+      });
+      control.value = text;
+    }
+    label.appendChild(control);
+    if (typeof field.description === "string" && field.description) {
+      label.appendChild(el("span", { class: "notes", text: field.description }));
+    }
+    entryFormState.controls.push({ field: name, required: required, kind: kind, type: field.type, node: control });
+    return label;
+  }
+
+  function entryChoiceGroup(question) {
+    const qid = typeof question.id === "string" ? question.id : "";
+    const group = el("div", { class: "entry-choices", "data-testid": "pg-entry-choices", "data-question": qid });
+    group.appendChild(el("h4", { text: "本次可选结论（" + (qid || NOT_RECORDED) + "；只读展示，随观察提交的问题发送）" }));
+    if (Array.isArray(question.choices) && question.choices.length) {
+      const labels = question.labels && typeof question.labels === "object" ? question.labels : {};
+      const list = el("ul", { class: "entry-choice-list" });
+      question.choices.forEach(function (choice) {
+        const value = String(choice);
+        list.appendChild(el("li", {
+          "data-testid": "pg-entry-choice",
+          "data-choice": value,
+          "data-question": qid,
+          text: value + (labels[choice] ? " · " + String(labels[choice]) : ""),
+        }));
+      });
+      group.appendChild(list);
+    } else if (typeof question.dynamic_choices === "string") {
+      group.appendChild(el("p", {
+        class: "notes",
+        "data-testid": "pg-entry-dynamic",
+        "data-field": question.dynamic_choices,
+        text: "候选只在 material." + question.dynamic_choices + " 维护一次；本表单不另设菜单，也不补固定 2..5 个候选。",
+      }));
+    } else {
+      group.appendChild(el("p", { class: "muted", "data-testid": "pg-entry-choices-empty",
+        text: "可选结论：未记录（服务端未返回该问题的结论集合）" }));
+    }
+    return group;
+  }
+
+  function renderEntryForm(point) {
+    const holder = document.getElementById("pg-entry-form");
+    if (!holder) return;
+    holder.replaceChildren();
+    entryFormState.controls = [];
+    if (!point) {
+      setText("pg-entry-form-status", "尚未选择决策点。");
+      return;
+    }
+    const current = editorState();
+    const required = Array.isArray(point.required_state_fields) ? point.required_state_fields : [];
+    const optional = Array.isArray(point.optional_state_fields) ? point.optional_state_fields : [];
+    const questions = Array.isArray(point.questions) ? point.questions : [];
+    const form = el("form", {
+      class: "entry-form",
+      "data-testid": "pg-entry-form-body",
+      "data-dp": missing(point.id),
+    });
+    form.addEventListener("submit", function (event) {
+      if (event && typeof event.preventDefault === "function") event.preventDefault();
+      applyEntryForm();
+    });
+    if (!required.length && !optional.length) {
+      form.appendChild(el("p", { class: "muted", "data-testid": "pg-entry-fields-empty",
+        text: "业务字段：未记录（服务端未返回该入口的字段描述，不按其他入口的字段补造）" }));
+    }
+    [["required", required, true], ["optional", optional, false]].forEach(function (group) {
+      if (!group[1].length) return;
+      const box = el("fieldset", {
+        class: "entry-field-group",
+        "data-testid": "pg-entry-fieldset",
+        "data-required": group[2] ? "true" : "false",
+      });
+      box.appendChild(el("legend", { text: group[2] ? "必填业务字段（来自服务端描述）" : "可选业务字段（来自服务端描述）" }));
+      group[1].forEach(function (raw) {
+        const field = raw && typeof raw === "object" ? raw : { name: String(raw) };
+        box.appendChild(entryFormRow(field, group[2], entryValueAt(current, String(field.name || ""))));
+      });
+      form.appendChild(box);
+    });
+    if (!questions.length) {
+      form.appendChild(el("p", { class: "muted", "data-testid": "pg-entry-choices-empty",
+        text: "可选结论：未记录（服务端未返回该入口的问题描述）" }));
+    }
+    questions.forEach(function (question) {
+      if (question && typeof question === "object" && !Array.isArray(question)) form.appendChild(entryChoiceGroup(question));
+    });
+    holder.appendChild(form);
+    setText("pg-entry-form-status",
+      "表单由服务端返回的入口描述生成：" + String(required.length) + " 个必填字段、" +
+      String(optional.length) + " 个可选字段、问题 " + String(questions.length) +
+      " 个；只填充本页材料，未发起任何请求。");
+  }
+
+  function entryCoerced(kind, type, text) {
+    if (kind === "number") {
+      const number = Number(text);
+      if (!Number.isFinite(number)) return undefined;
+      return type === "integer" ? Math.trunc(number) : number;
+    }
+    if (kind === "boolean") {
+      if (text === "true") return true;
+      if (text === "false") return false;
+      return undefined;
+    }
+    if (kind === "json") {
+      const parsed = parseJson(text);
+      return parsed.ok ? parsed.value : undefined;
+    }
+    return text;
+  }
+
+  function applyEntryForm() {
+    if (!entryFormState.controls.length) {
+      operationFeedback("入口表单", "拒绝：表单尚未生成，未写入材料");
+      return;
+    }
+    const current = editorState();
+    const merged = current ? cloneJson(current) : {};
+    const problems = [];
+    entryFormState.controls.forEach(function (control) {
+      const raw = control.node && control.node.value;
+      const text = typeof raw === "string" ? raw : String(raw === null || raw === undefined ? "" : raw);
+      if (!text.trim()) return; // an empty control never erases or invents a value
+      const value = entryCoerced(control.kind, control.type, text);
+      if (value === undefined) {
+        problems.push(control.field);
+        return;
+      }
+      entrySetPath(merged, control.field, value);
+    });
+    const material = document.getElementById("material-editor");
+    if (material) material.value = JSON.stringify(merged, null, 2);
+    const bookNode = document.getElementById("book-editor");
+    if (bookNode) {
+      const parsed = parseJson(bookNode.value);
+      if (parsed.ok && parsed.value && typeof parsed.value === "object" && !Array.isArray(parsed.value)) {
+        parsed.value.material = merged;
+        bookNode.value = JSON.stringify(parsed.value, null, 2);
+      }
+    }
+    if (problems.length) {
+      operationFeedback("入口表单", "部分字段未写入（不是合法类型）：" + problems.join(", ") + "；0 请求");
+      setText("pg-entry-form-status", "已写入其余字段；以下字段类型不合法未写入：" + problems.join(", ") + "（0 请求）");
+      return;
+    }
+    operationFeedback("入口表单", "已写入本页业务材料；未发起任何请求");
+    setText("pg-entry-form-status", "表单值已写入本页材料（0 请求；不写生产记录、不校验、不调用模型）。");
+  }
+
   function renderActionFacts(holder, detail) {
     if (detail.observe_only === true) holder.appendChild(line("观察路径", "未执行任何业务行动；不写生产接收/签收反馈"));
     renderTaskState(holder, "决策前", detail.task_before, detail.task_before_visibility);
@@ -1292,6 +1771,7 @@
         ["DP", missing(record.dp)],
         ["处理状态", processingLabel(record)],
       ]));
+      renderEntryFacts(section, record);
     }));
 
     body.appendChild(logSection("实际请求与返回", "captures", function (section) {
@@ -1816,7 +2296,7 @@
 
   function renderLocalTest(label, status, book, preview) {
     renderSubmissionDetail({dp: pg().selected, local_operation: label, local_status: status,
-      local_material: book && book.state, request_preview: preview || null,
+      local_material: book && book.material, request_preview: preview || null,
       observe_only: true, zero_call: true, attempts: []});
   }
 
@@ -1978,19 +2458,19 @@
     const path = typeof issue.path === "string" ? issue.path : "";
     const code = typeof issue.code === "string" ? issue.code : "";
     const evidence = path.indexOf("notes.evidence") === 0;
-    const business = path.indexOf("state.") === 0;
+    const business = path.indexOf("material.") === 0 || path.indexOf(".") === -1;
     const questions = path.indexOf("questions") === 0;
     let text = "未识别的拒绝类型：按原始原因检查对应字段；不要猜填，修正后重新点击校验。";
     if (code === "book-placeholder") {
       text = evidence
         ? "展开“高级：决策本与来源标注”，将此 notes.evidence 占位符替换为真实来源 path:line 或验证命令；来源标注不会作为模型材料读取。"
-        : "在“业务材料 state”中将此字段的占位符替换为真实原文/事实，不要保留 <string…>；目标、要求、交付物按任务原文填写，PM 背景填写当前需要判断的原因与约束。";
+        : "在“业务材料 material”中将此字段的占位符替换为真实原文/事实，不要保留 <string…>；目标、要求、交付物按任务原文填写，PM 背景填写当前需要判断的原因与约束。";
     } else if (code.indexOf("secret") !== -1) {
       text = "删除或脱敏该字段中的凭证/敏感信息，再重新校验；不要复制密钥到来源标注或问题中。";
     } else if (code.indexOf("budget") !== -1) {
       text = "材料超过预算：整理为预算内完整且必要的业务事实；不要截断事实或只用文件路径代替正文，再重新校验。";
     } else if (code.indexOf("question") !== -1 || questions) {
-      text = "在“完整问题与选项”中检查说明与 criteria 格式；问题 id、类型和允许选项不可改。dp3 候选只在业务材料 handling_options 修改，之后重新校验。";
+      text = "在“完整问题与选项”中检查说明与 criteria 格式；问题 id、类型和允许选项不可改。dp-auto 候选只在业务材料 handling_options 修改，之后重新校验。";
     } else if (code.indexOf("required") !== -1 || code.indexOf("type") !== -1) {
       text = "按“业务输入契约”补齐此字段并修正 JSON 类型；使用真实事实，未知不要猜填，之后重新校验。";
     }
@@ -2011,7 +2491,7 @@
       ["state_bytes / max_state_bytes", missing(report.state_bytes) + " / " + missing(report.max_state_bytes)],
       ["state_digest", missing(report.state_digest)],
       ["context_slots（校验过）", flagsText(report.context_slots)],
-      ["context_sent", flag(report.context_sent) + "（context 原文不发送，只校验槽位）"],
+      ["context_sent", flag(report.context_sent) + "（本次校验未发送；观察提交是否携带上下文以完整请求预览为准）"],
       ["observe_only", flag(report.observe_only)],
       ["传输状态", (report.transport && report.transport.state ? String(report.transport.state) : NOT_RECORDED) + " · " + (report.transport && report.transport.detail ? String(report.transport.detail) : NOT_RECORDED)],
     ]));
@@ -2156,6 +2636,7 @@
     pgAppend("pg-fields", fieldTable(required, true));
     pgAppend("pg-fields", el("h3", { text: "业务输入契约（optional，typed）" }));
     pgAppend("pg-fields", fieldTable(optional, false));
+    renderEntryForm(point);
   }
 
   function renderDpOptions() {
@@ -2466,7 +2947,7 @@
       return;
     }
     pg().materialInvalid = false;
-    book.value.state = value.value;
+    book.value.material = value.value;
     editor.value = JSON.stringify(book.value, null, 2);
     refreshDerivedCriteria();
   }
@@ -2610,7 +3091,7 @@
     const book = readBook();
     if (!book) return;
     refreshDerivedCriteria();
-    const gathered = collectQuestions(dp);
+    const gathered = collectQuestions();
     if (!gathered.ok) {
       operationFeedback("校验并预览", "拒绝：问题编辑无效，未发起请求");
       renderLocalTest("校验并预览", "拒绝", book, null);
@@ -2713,7 +3194,7 @@
     const book = readBook();
     if (!book) return;
     refreshDerivedCriteria();
-    const gathered = collectQuestions(pg().selected);
+    const gathered = collectQuestions();
     if (!gathered.ok) {
       operationFeedback("观察提交", "拒绝：问题编辑无效，未发起请求");
       renderLocalTest("观察提交", "拒绝", book, null);
@@ -2744,7 +3225,7 @@
     const book = readBook();
     if (!book) return;
     refreshDerivedCriteria();
-    const gathered = collectQuestions(pg().selected);
+    const gathered = collectQuestions();
     if (!gathered.ok) {
       operationFeedback("新 id 重试", "拒绝：问题编辑无效，未发起请求");
       renderLocalTest("新 id 重试", "拒绝", book, null);
@@ -2803,7 +3284,7 @@
       }).join(" / ");
     }
     if (typeof question.dynamic_choices === "string") {
-      return "choices：来自 state." + question.dynamic_choices + "（候选只在那里维护一次）";
+      return "choices：来自 material." + question.dynamic_choices + "（候选只在那里维护一次）";
     }
     return "choices：未记录";
   }
@@ -2816,11 +3297,11 @@
     if (!parsed.ok) return null;
     const book = parsed.value;
     if (!book || typeof book !== "object" || Array.isArray(book)) return null;
-    const state = book.state;
-    return state && typeof state === "object" && !Array.isArray(state) ? state : null;
+    const material = book.material;
+    return material && typeof material === "object" && !Array.isArray(material) ? material : null;
   }
 
-  function deriveDp3Criteria(options) {
+  function deriveCandidateCriteria(options) {
     const list = Array.isArray(options) ? options : [];
     const lines = list.map(function (option) {
       const item = option && typeof option === "object" ? option : {};
@@ -2830,8 +3311,8 @@
       return id + (label ? " · " + label : "") + "：" + description;
     });
     return (
-      "只读派生（唯一来源：state.handling_options；不写入 questions，最终以 server 预览为准）\n" +
-      (lines.length ? lines.join("\n") : "state.handling_options 未记录或为空")
+      "只读派生（唯一来源：material.handling_options；不写入 questions，最终以 server 预览为准）\n" +
+      (lines.length ? lines.join("\n") : "material.handling_options 未记录或为空")
     );
   }
 
@@ -2849,8 +3330,7 @@
       setText("pg-questions-status", "未记录（本 case 未提供 questions；后端发布后即可查看/编辑）");
       return;
     }
-    const dp = pg().selected;
-    const state = editorState();
+    const material = editorState();
     setText(
       "pg-questions-status",
       "已载入 " + String(questions.length) +
@@ -2884,15 +3364,15 @@
 
       let criteriaInput = null;
       let derived = null;
-      if (dp === "dp3-worker-clarify") {
+      if (typeof question.dynamic_choices === "string") {
         block.appendChild(el("p", {
           class: "notes",
-          text: "criteria（只读派生：候选只在 state.handling_options 维护一次）",
+          text: "criteria（只读派生：候选只在 material.handling_options 维护一次）",
         }));
         derived = el("div", {
           class: "derived",
           "data-testid": "pg-question-criteria-derived",
-          text: deriveDp3Criteria(state ? state.handling_options : null),
+          text: deriveCandidateCriteria(material ? material[question.dynamic_choices] : null),
         });
         block.appendChild(derived);
       } else if (!isMissing(question.criteria) || question.labels) {
@@ -2922,14 +3402,14 @@
   }
 
   function refreshDerivedCriteria() {
-    const state = editorState();
+    const material = editorState();
     pg().questionNodes.forEach(function (entry) {
       if (!entry.derived) return;
-      entry.derived.textContent = deriveDp3Criteria(state ? state.handling_options : null);
+      entry.derived.textContent = deriveCandidateCriteria(material ? material[entry.question.dynamic_choices] : null);
     });
   }
 
-  function collectQuestions(dp) {
+  function collectQuestions() {
     const questions = pg().caseQuestions;
     if (!questions || !Object.keys(questions).length) return { ok: true, questions: null };
     const collected = {};
@@ -2943,9 +3423,9 @@
         return { ok: false, error: "问题 " + label + " 的 instructions 为空：未发起任何请求。" };
       }
       next.instructions = instructions;
-      if (dp === "dp3-worker-clarify") {
+      if (typeof next.dynamic_choices === "string") {
         // dp3 candidates and their criteria have exactly one source:
-        // state.handling_options. Never duplicate them into questions.
+        // material.handling_options. Never duplicate them into questions.
         delete next.criteria;
       } else if (entry.criteria) {
         const text = typeof entry.criteria.value === "string" ? entry.criteria.value.trim() : "";
@@ -3096,14 +3576,14 @@
     if (expectedDp && dp && dp !== expectedDp) {
       issues.push("book.decision_point 与所选 case 不一致：" + dp);
     }
-    const state =
-      book.state && typeof book.state === "object" && !Array.isArray(book.state) ? book.state : null;
-    if (!state) {
-      issues.push("book.state 缺失或不是对象。");
+    const material =
+      book.material && typeof book.material === "object" && !Array.isArray(book.material) ? book.material : null;
+    if (!material) {
+      issues.push("book.material 缺失或不是对象。");
       return issues;
     }
     (DESIGN_FIELDS[dp] || []).forEach(function (field) {
-      if (isMissing(state[field])) issues.push("缺少 design 字段 state." + field + "。");
+      if (isMissing(material[field])) issues.push("缺少 design 字段 material." + field + "。");
     });
     collectTexts(book, "", []).forEach(function (entry) {
       if (PLACEHOLDER_PATTERN.test(entry.text)) {
@@ -3112,8 +3592,28 @@
         issues.push("字段 " + entry.path + " 为空。");
       }
     });
+    if (dp === "dp-auto") {
+      const options = Array.isArray(material.handling_options) ? material.handling_options : [];
+      if (options.length < 2) {
+        issues.push("dp-auto 候选不足：至少需要 2 个可区分候选（当前 " + String(options.length) + "）。");
+      }
+      const ids = [];
+      options.forEach(function (option, index) {
+        if (!option || typeof option !== "object" || Array.isArray(option)) {
+          issues.push("候选 #" + String(index + 1) + " 不是对象。");
+          return;
+        }
+        ["id", "label", "description", "consequence", "risk", "conditions"].forEach(function (key) {
+          if (typeof option[key] !== "string" || !option[key].trim()) {
+            issues.push("候选 #" + String(index + 1) + " 缺少 " + key + " 原文。");
+          }
+        });
+        if (typeof option.id === "string") ids.push(option.id);
+      });
+      if (ids.length !== new Set(ids).size) issues.push("dp-auto 候选 id 重复，不能区分选择。");
+    }
     if (dp === "dp3-worker-clarify") {
-      const options = Array.isArray(state.handling_options) ? state.handling_options : [];
+      const options = Array.isArray(material.handling_options) ? material.handling_options : [];
       if (options.length < 2) {
         issues.push("dp3 候选不足：至少需要 2 个可区分候选（当前 " + String(options.length) + "）。");
       }
@@ -3133,7 +3633,7 @@
       if (labels.length !== new Set(labels).size) {
         issues.push("dp3 候选标签不可区分（重复）。");
       }
-      const background = state.background && typeof state.background === "object" ? state.background : null;
+      const background = material.background && typeof material.background === "object" ? material.background : null;
       if (!background) {
         issues.push("dp3 background 缺失。");
       } else {
@@ -3143,7 +3643,7 @@
       }
     }
     if (dp === "dp25-signoff-conclusion") {
-      const evidence = state.verification_evidence;
+      const evidence = material.verification_evidence;
       if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
         issues.push("dp25 verification_evidence 缺失。");
       } else {
@@ -3154,12 +3654,12 @@
           issues.push("dp25 verification_evidence.unverified 必须是数组（可为空数组）。");
         }
       }
-      if (!Array.isArray(state.unfinished_impact)) {
+      if (!Array.isArray(material.unfinished_impact)) {
         issues.push("dp25 unfinished_impact 必须是数组（可为空数组）。");
       }
     }
-    if (dp === "dp2-checkpoint-split" && state.worker_execution !== undefined) {
-      const execution = state.worker_execution;
+    if (dp === "dp2-checkpoint-split" && material.worker_execution !== undefined) {
+      const execution = material.worker_execution;
       if (execution === "" || execution === null || (typeof execution === "object" && !Object.keys(execution).length)) {
         issues.push("dp2 worker_execution 为空；没有 worker 时请删除该字段而不是留空。");
       }
@@ -3361,6 +3861,8 @@
     if (pgSubmit) pgSubmit.addEventListener("click", submitSelected);
     const pgRetry = document.getElementById("pg-retry");
     if (pgRetry) pgRetry.addEventListener("click", retrySubmit);
+    const pgEntryApply = document.getElementById("pg-entry-apply");
+    if (pgEntryApply) pgEntryApply.addEventListener("click", applyEntryForm);
     const dpSelect = document.getElementById("dp-select");
     if (dpSelect) dpSelect.addEventListener("change", onDpChange);
     boot();

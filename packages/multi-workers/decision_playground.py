@@ -54,10 +54,10 @@ Design decisions implemented here (design.md D-002/D-003, §4.2, §5.3, §9):
 Two limits are deliberate and reported rather than papered over:
 
 * the book's top-level ``context`` block is validated (slots, sizes, evidence,
-  secrets) but **not sent**: the T05 observation book gate joins
-  ``book["state"]`` with the sent state, and design D-003 declares context
-  "discardable prose". ``validate``/``submit`` report ``context_sent: false``
-  plus the used slots, so nothing silently disappears.
+  secrets) but **not sent**: the observation book gate joins the book's business
+  layers with the sent state, and design D-003 declares context "discardable
+  prose". ``validate``/``submit`` report ``context_sent: false`` plus the used
+  slots, so nothing silently disappears.
 * the answer text is returned by the live ``submit`` response; the wire ledger
   records ``answers_present``/confidence only, so polling cannot re-join an
   answer without guessing (T02 would have to store it on ``call-end``).
@@ -145,6 +145,7 @@ PLAYGROUND_ISSUE_CODES = frozenset(
         "forbidden-field",
         "capture-unavailable",
         "invalid-request",
+        "retired-dp",
         "record-failed",
         # T10: the observation-only question override gate. ``question-field``
         # is an illegal shape/value; ``question-conflict`` is a second-authority
@@ -249,6 +250,8 @@ class Review:
     context_slots: tuple[str, ...]
     credentials: Credentials | None
     questions: dict[str, dict] | None = None
+    request_state: dict | None = None
+    request_questions: dict[str, dict] | None = None
 
     @property
     def ok(self) -> bool:
@@ -376,13 +379,19 @@ def _sanitize_projection(
     value: object,
     marks: dict[str, object],
     path: str,
+    *,
+    clip: bool = True,
 ) -> object:
-    """Redact (then clip) every string leaf *and* mapping key of the projection."""
+    """Redact every string/key; result projections also clip their display text.
+
+    A request preview preserves the complete bounded request, so it opts out of
+    display clipping while keeping every frozen redactor leg.
+    """
     if isinstance(value, str):
         clean, hits = _redact_all(redactors, value)
         if clean is None:
             raise _ProjectionError("redaction failed")
-        clipped, truncated = _clip_projection_text(redactors, clean)
+        clipped, truncated = _clip_projection_text(redactors, clean) if clip else (clean, False)
         marks["hits"] = int(marks["hits"]) + hits
         if truncated:
             truncated_fields = marks["truncated_fields"]
@@ -395,7 +404,8 @@ def _sanitize_projection(
             name, key_hits = _redact_all(redactors, str(key))
             if name is None:
                 raise _ProjectionError("key redaction failed")
-            name, _truncated = _clip_projection_text(redactors, name)
+            if clip:
+                name, _truncated = _clip_projection_text(redactors, name)
             marks["hits"] = int(marks["hits"]) + key_hits
             child = f"{path}.{name}" if path else name
             if name in out:
@@ -403,11 +413,11 @@ def _sanitize_projection(
                 # (never overwrite, never fabricate a value).
                 out.pop(name, None)
                 continue
-            out[name] = _sanitize_projection(redactors, item, marks, child)
+            out[name] = _sanitize_projection(redactors, item, marks, child, clip=clip)
         return out
     if isinstance(value, (list, tuple)):
         return [
-            _sanitize_projection(redactors, item, marks, f"{path}[{index}]")
+            _sanitize_projection(redactors, item, marks, f"{path}[{index}]", clip=clip)
             for index, item in enumerate(value)
         ]
     return value
@@ -685,12 +695,17 @@ class DecisionPlayground:
         ):
             issues.append(PlaygroundIssue(issue.code, issue.path, issue.detail))
 
-        state = book.get("state")
+        state = decision_book.book_state(book) if isinstance(book.get("material"), Mapping) else {}
         sent_state: dict | None = None
         state_bytes: int | None = None
         state_digest: str | None = None
         reviewed_questions: dict[str, dict] | None = None
-        if isinstance(state, Mapping):
+        request_state: dict | None = None
+        request_questions: dict[str, dict] | None = None
+        if isinstance(book.get("material"), Mapping):
+            # Schema 3: the sent state is the business ``material`` layer plus the
+            # used ``context`` slots (``book_state``); the legacy ``state`` shape
+            # is refused by ``check_book`` above and never read here.
             for path in object_smuggle_paths(dp, state, credentials.gate_redactor):
                 issues.append(
                     PlaygroundIssue(
@@ -726,8 +741,7 @@ class DecisionPlayground:
                 )
 
         context_slots: tuple[str, ...] = ()
-        merged = decision_book.book_state(book)
-        context = merged.get("context")
+        context = state.get("context") if isinstance(state, Mapping) else None
         if isinstance(context, Mapping):
             context_slots = tuple(str(name) for name in context)
 
@@ -755,6 +769,26 @@ class DecisionPlayground:
                     if secret_issue is not None:
                         issues.append(secret_issue)
 
+        if not issues and sent_state is not None:
+            projected, dropped, _size = decision_points.send_state(dp, sent_state)
+            if any(not path.startswith("context.") for path in dropped):
+                issues.append(PlaygroundIssue(
+                    "book-budget", "state", "prepared core material cannot be truncated"
+                ))
+            else:
+                request_state, request_questions = decision_points.prepared_observation_request(
+                    dp, projected, book["preparation"],
+                    reviewed_questions or decision_points.questions_map(point),
+                )
+                state_bytes = len(decision._encode_state(request_state))
+                state_digest = decision_book.state_digest(request_state)
+                if state_bytes > decision_points.MAX_STATE_BYTES:
+                    issues.append(PlaygroundIssue(
+                        "book-budget", "state",
+                        f"complete prepared state is {state_bytes} bytes > "
+                        f"{decision_points.MAX_STATE_BYTES}; no request is sent",
+                    ))
+
         unique: list[PlaygroundIssue] = []
         seen: set[tuple[str, str, str]] = set()
         for issue in issues:
@@ -772,6 +806,8 @@ class DecisionPlayground:
             context_slots=context_slots,
             credentials=credentials,
             questions=reviewed_questions,
+            request_state=request_state,
+            request_questions=request_questions,
         )
 
     # -- protocol: validate ------------------------------------------------
@@ -817,19 +853,18 @@ class DecisionPlayground:
             payload["questions"] = final_questions
             payload["questions_source"] = "override" if review.questions else "registry"
             payload["questions_version"] = point.questions_version
-            preview, reason = self._request_preview(review, final_questions)
+            preview, reason = self._request_preview(review)
             payload["request_preview"] = preview
             payload["request_preview_reason"] = reason
         if review.context_slots:
             payload["context_note"] = (
-                "the validated context slots are not sent: the observation book gate "
-                "joins book.state with the sent state and design D-003 declares context "
-                "discardable prose"
+                "validation sends nothing; the request preview shows the context "
+                "retained by the same projection used on explicit submission"
             )
         return payload
 
     def _request_preview(
-        self, review: Review, questions: Mapping[str, dict]
+        self, review: Review
     ) -> tuple[dict | None, str | None]:
         """The final ``{model, state, questions}`` body this submission would send.
 
@@ -843,15 +878,25 @@ class DecisionPlayground:
             return None, "no credential unit was resolved for this review"
         if not review.ok:
             return None, "the book/questions were refused, so no request would be built"
-        if review.sent_state is None:
-            return None, "no sent state was built from the book"
+        if review.request_state is None or review.request_questions is None:
+            return None, "no complete prepared request was built from the book"
         cfg = review.credentials.cfg
         if not cfg.is_configured:
             return None, "the decision transport is not configured; nothing would be sent"
-        projected, _dropped, size = decision_points.send_state(review.dp, review.sent_state)
-        if size > decision_points.MAX_STATE_BYTES:
-            return None, "the projected state exceeds the send budget; nothing would be sent"
-        dynamic = decision_points.dynamic_choice_labels(questions, projected)
+        projected = review.request_state
+        questions = review.request_questions
+        policy = decision_points.resolve_policy(
+            review.dp,
+            decision_points.load_points_config(self.control_root).row(review.dp),
+            cfg,
+        )
+        if len(questions) > min(cfg.max_questions, policy["max_questions"]):
+            return None, "the prepared question pair exceeds max_questions; nothing would be sent"
+        # The entry id is what makes a dynamic candidate list legal for its own
+        # contract: without it the preview refused exactly the dynamic entry.
+        dynamic = decision_points.dynamic_choice_labels(
+            questions, projected, dp_id=review.dp
+        )
         if dynamic is None:
             return None, "the dynamic candidates cannot be rendered from the projected state"
         # The client owns the one backend-resolution path (never a second
@@ -877,7 +922,7 @@ class DecisionPlayground:
         if redactors:
             stats: dict[str, object] = {"hits": 0, "truncated_fields": []}
             try:
-                safe = _sanitize_projection(redactors, preview, stats, "request_preview")
+                safe = _sanitize_projection(redactors, preview, stats, "request_preview", clip=False)
             except _ProjectionError:
                 return None, "the preview could not be proven safe; nothing is sent"
             if isinstance(safe, Mapping):
@@ -1199,19 +1244,29 @@ class DecisionPlayground:
         try:
             decision_points.get_decision_point(labelled_dp)
         except decision.DecisionInputError:
+            if decision_points.is_retired_dp(labelled_dp):
+                record = decision_points.retired_dp(labelled_dp)
+                disposition = record.disposition if record is not None else "retired"
+                return self._refusal(
+                    "dp",
+                    f"is retired history ({disposition}): old ids are not callable and "
+                    "never an alias of an active entry",
+                    dp=labelled_dp,
+                    code="retired-dp",
+                )
             return self._refusal(
                 "dp", "is not a registered decision point", dp=labelled_dp
             )
         return None
 
-    def _refusal(self, path: str, detail: str, *, dp: str = "") -> dict:
+    def _refusal(self, path: str, detail: str, *, dp: str = "", code: str = "invalid-request") -> dict:
         payload = self._base_payload(dp=dp, submit_id="")
         payload.update(
             state="rejected",
             accepted=False,
             zero_call=True,
             record_status="not-recorded",
-            issues=[PlaygroundIssue("invalid-request", path, detail).as_dict()],
+            issues=[PlaygroundIssue(code, path, detail).as_dict()],
         )
         return payload
 

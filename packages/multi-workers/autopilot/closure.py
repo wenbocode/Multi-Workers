@@ -27,6 +27,7 @@ package root.
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -34,7 +35,197 @@ import pathlib
 from datetime import datetime, timezone
 from typing import Any
 
+import decision_signoff_result
+
 FAILURE_LINE_PREFIX = "   - "
+
+# ── H13 stage-close sign-off consumer (T26) ─────────────────────────────────
+#
+# The stage-close gate may only be opened from a PM's CURRENT stage submission
+# (`source` below), never from a historical `record.material` copy, and every
+# key for which the original rule requires a sign-off must still validate with
+# `validate_key_signoff` against the matter and evidence submitted now. A
+# passing sign-off still does not close the stage and never approves the next
+# one (that is the gate consumer's separate job).
+
+STAGE_CLOSE_MATERIAL_SOURCE = "pm-current"
+STAGE_CLOSE_MATERIAL_SCHEMA = 1
+_MATERIAL_NAME = "stage-{number}-close.material.json"
+_KEYS = ("delivery_goal", "actual_completion", "verification_evidence", "unfinished_impact")
+
+
+@dataclasses.dataclass(frozen=True)
+class StageCloseCheck:
+    ok: bool
+    issues: tuple[str, ...]
+    signed: tuple[str, ...]
+    skipped: tuple[str, ...]
+    material: pathlib.Path
+
+
+def stage_close_material_path(project_root: pathlib.Path, number: int) -> pathlib.Path:
+    return (
+        pathlib.Path(project_root) / ".agenticdoc" / "_autopilot" / "stages"
+        / _MATERIAL_NAME.format(number=int(number))
+    )
+
+
+def _signoff_required(key_dir: pathlib.Path) -> bool:
+    """Original applicability rule (T25): `signoff: disable` or no decide row skips."""
+    try:
+        cfg = json.loads((key_dir.parent.parent / ".mw" / "decide.json").read_text(encoding="utf-8"))
+        if isinstance(cfg, dict) and cfg.get("signoff") == "disable":
+            return False
+    except (OSError, ValueError):
+        pass
+    archive = key_dir.parent / "_autopilot" / "decisions.jsonl"
+    try:
+        text = archive.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    except (OSError, UnicodeDecodeError):
+        return True  # unreadable is not "no requirement"
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict) or row.get("kind") != "decide":
+            continue
+        decision_id = row.get("decision_id")
+        if row.get("key") == key_dir.name or (
+            isinstance(decision_id, str) and decision_id.endswith(":" + key_dir.name)
+        ):
+            return True
+    return False
+
+
+def _current_material_issue(project_root: pathlib.Path, number: int) -> tuple[dict | None, list[str]]:
+    path = stage_close_material_path(project_root, number)
+    issues: list[str] = []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, [f"MISSING: {path.name} — PM must submit the current stage-close material"]
+    except (OSError, ValueError) as exc:
+        return None, [f"UNREADABLE: {path.name} ({exc})"]
+    if not isinstance(raw, dict):
+        return None, [f"INVALID: {path.name} is not an object"]
+    return raw, []
+
+
+def _material_structure_issues(number: int, raw: dict) -> list[str]:
+    issues: list[str] = []
+    name = _MATERIAL_NAME.format(number=int(number))
+    if raw.get("schema") != STAGE_CLOSE_MATERIAL_SCHEMA:
+        issues.append(f"INVALID: {name} schema")
+    if raw.get("stage") != int(number):
+        issues.append(f"INVALID: {name} stage mismatch")
+    if raw.get("source") != STAGE_CLOSE_MATERIAL_SOURCE:
+        issues.append(
+            f"STALE: {name} source={raw.get('source')!r} is not the current PM submission"
+        )
+    if not isinstance(raw.get("submitted_at"), str) or not raw["submitted_at"].strip():
+        issues.append(f"INVALID: {name} has no submitted_at")
+    if not isinstance(raw.get("key_signoffs"), dict):
+        issues.append(f"INVALID: {name} key_signoffs")
+    return issues
+
+
+def stage_close_material_issues(
+    project_root: pathlib.Path, number: int, raw: object, keys: list[str] | tuple[str, ...]
+) -> list[str]:
+    """Validate one PM stage-close submission without writing it.
+
+    Used both by the read-only close check and by the production submission
+    entry, so an invalid submission can never become the current material.
+    """
+    if not isinstance(raw, dict):
+        return [f"INVALID: {_MATERIAL_NAME.format(number=int(number))} is not an object"]
+    issues = _material_structure_issues(int(number), raw)
+    required = [key for key in keys if _signoff_required(pathlib.Path(project_root) / ".agenticdoc" / key)]
+    if not required:
+        return issues
+    signoffs = raw.get("key_signoffs") if isinstance(raw.get("key_signoffs"), dict) else {}
+    issues.extend(_acceptance_issue(raw))
+    for key in required:
+        entry = signoffs.get(key)
+        if not isinstance(entry, dict):
+            issues.append(f"MISSING: {key} has no current sign-off material")
+            continue
+        matter = entry.get("matter")
+        evidence = entry.get("evidence")
+        if not isinstance(matter, dict) or set(matter) != set(_KEYS):
+            issues.append(f"INVALID: {key} sign-off matter is not the four-part submission")
+            continue
+        if evidence is None:
+            issues.append(f"MISSING: {key} current evidence")
+            continue
+        validation = decision_signoff_result.validate_key_signoff(
+            pathlib.Path(project_root) / ".agenticdoc" / key, key, matter, evidence
+        )
+        if not validation.valid or validation.conclusion != "finalize":
+            issues.append(f"SIGNOFF: {key} - {validation.reason}")
+    return issues
+
+
+def write_stage_close_material(project_root: pathlib.Path, number: int, raw: dict) -> pathlib.Path:
+    """Atomically install one already-validated current PM submission."""
+    path = stage_close_material_path(project_root, number)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(raw, ensure_ascii=False, indent=2) + "\n"
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(payload, encoding="utf-8", newline="\n")
+    os.replace(tmp, path)
+    return path
+
+
+def _acceptance_issue(project_root_material: dict) -> list[str]:
+    """Disclosed risks that need explicit user acceptance must carry it."""
+    risks = project_root_material.get("user_risks")
+    if risks is None:
+        return []
+    if not isinstance(risks, list):
+        return ["INVALID: user_risks must be a list"]
+    issues: list[str] = []
+    for index, item in enumerate(risks):
+        if not isinstance(item, dict):
+            issues.append(f"RISK: entry {index} is not an object")
+            continue
+        if not str(item.get("risk") or "").strip():
+            issues.append(f"RISK: entry {index} has no risk")
+        if not str(item.get("accepted_by") or "").strip():
+            issues.append(f"RISK: entry {index} needs explicit user acceptance")
+    return issues
+
+
+def stage_close_check(
+    project_root: pathlib.Path, number: int, keys: list[str] | tuple[str, ...]
+) -> StageCloseCheck:
+    """Read-only H13 eligibility for opening one stage-close gate.
+
+    Only keys for which the original rule requires a sign-off are checked; a
+    stage with no such key is eligible (no forced scope expansion)."""
+    project_root = pathlib.Path(project_root)
+    path = stage_close_material_path(project_root, number)
+    required = [key for key in keys if _signoff_required(project_root / ".agenticdoc" / key)]
+    skipped = tuple(key for key in keys if key not in required)
+    if not required:
+        return StageCloseCheck(True, (), (), skipped, path)
+    raw, issues = _current_material_issue(project_root, number)
+    if raw is None:
+        return StageCloseCheck(False, tuple(issues), (), skipped, path)
+    issues.extend(stage_close_material_issues(project_root, number, raw, required))
+    signoffs = raw.get("key_signoffs") if isinstance(raw.get("key_signoffs"), dict) else {}
+    signed = tuple(
+        key for key in required
+        if isinstance(key, str) and key in signoffs
+        and not any(issue.startswith(f"SIGNOFF: {key}") or issue.startswith(f"INVALID: {key} ")
+                    or issue.startswith(f"MISSING: {key} ") for issue in issues)
+    )
+    return StageCloseCheck(not issues, tuple(issues), signed, skipped, path)
 
 ACHIEVED_FILE_NAME = "achieved.md"
 BAD_DRAFT_MARKER_NAME = ".mw-achieved-baddraft.json"

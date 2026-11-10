@@ -189,6 +189,31 @@ _JSON_OBJ_FIELDS = frozenset({"goal_diff", "blast_radius"})
 # is declared here and only here.
 _SCALAR_EXTENSION_FIELDS = frozenset({"blocker_class"})
 
+# T17 gate-decision fields are a separate additive surface. Keep them out of
+# `_SCALAR_EXTENSION_FIELDS`: its one-field size is an older frozen contract
+# asserted by the existing gate and contract-guard suites.
+_GATE_DECISION_FIELDS = frozenset(
+    {
+        "transport",
+        "business",
+        "effect",
+        "decision_ref",
+        "matter_ref",
+        "substantive_version",
+        "pm_note",
+        "model_basis",
+        "closure_kind",
+    }
+)
+
+GATE_TRANSPORT_STATES: frozenset[str] = frozenset({"pending", "answered", "failed"})
+GATE_BUSINESS_CHOICES: frozenset[str] = frozenset(
+    {"approve", "steer", "need_fix", "reject"}
+)
+GATE_EFFECT_STATES: frozenset[str] = frozenset(
+    {"not-started", "in-progress", "applied", "blocked", "failed", "unknown"}
+)
+
 # Closed set of blocker classes (AC-007, design D6). `paperwork` marks a
 # blockage whose evidence a machine can collect deterministically; `judgment`
 # marks everything else. The parser preserves the raw value (absent/empty ->
@@ -300,6 +325,19 @@ class Gate:
     # Scalar extension (T-14 / AC-007): raw parsed value, None when absent.
     # The fail-safe `judgment` fold happens in the judgment layer, never here.
     blocker_class: str | None = None
+    # T17 three-axis decision contract. Absent on legacy records, which remain
+    # readable history but are never interpreted as a current release.
+    transport: str | None = None
+    business: str | None = None
+    effect: str | None = None
+    decision_ref: str | None = None
+    matter_ref: str | None = None
+    substantive_version: str | None = None
+    pm_note: str | None = None
+    model_basis: str | None = None
+    closure_kind: str | None = None
+    historical: bool = False
+    released: bool = False
     gate_schema: int = GATE_SCHEMA_LEGACY
     consumed_at: str | None = None
     consumed_seq: int | None = None
@@ -327,6 +365,7 @@ def _gate_file_content(
     question: str,
     context_refs: list[str],
     created_at: str,
+    preparation: dict[str, str],
 ) -> str:
     """Full gate file text: frontmatter in canonical order + human body."""
     lines: list[str] = [
@@ -350,6 +389,12 @@ def _gate_file_content(
         "answered_at:",
         "answered_by:",
         "note:",
+    ]
+    if preparation:
+        lines.extend(["transport: pending", "business:", "effect: not-started", "decision_ref:"])
+        lines.extend(f"{field}: {_render_scalar(value)}" for field, value in preparation.items())
+        lines.extend(["model_basis:", "closure_kind:"])
+    lines += [
         "---",
         "",
         f"# Gate {gate_id} ({kind})",
@@ -461,20 +506,33 @@ def create(
     context_refs: Sequence[str] = (),
     stage: int | None = None,
     key: str | None = None,
+    *,
+    pm_note: str | None = None,
+    matter_ref: str | None = None,
+    substantive_version: str | None = None,
 ) -> pathlib.Path:
     """Create the next pending gate file and return its path.
 
     seq = max(existing gate id) + 1 via directory rescan; the file is
     written atomically (tmp + replace) with LF endings. No lock is taken
     here - the caller composes the gates.lock protocol around mutations
-    (D-105: conductor is the sole gate creator, TS only answers).
+    (D-105: conductor is the sole gate creator, TS only answers). Supply the
+    PM's pre-submission note and both matter bindings together for a decision
+    gate. Without preparation the file accepts only the explicit human writer.
     """
     gates_dir = pathlib.Path(gates_dir)
     refs = _validate_new_gate(kind, question, context_refs, stage, key)
+    supplied = {"matter_ref": matter_ref, "substantive_version": substantive_version, "pm_note": pm_note}
+    preparation: dict[str, str] = {}
+    if any(value is not None for value in supplied.values()):
+        for name, value in supplied.items():
+            if not isinstance(value, str) or not value.strip() or value.splitlines() != [value]:
+                raise GateFormatError(f"{name} must be a non-empty single-line string for a prepared gate")
+            preparation[name] = value
     seq = _next_seq(gates_dir)
     gate_id = f"gate-{seq:04d}"
     content = _gate_file_content(
-        gate_id, kind, stage, key, question, refs, _iso_now()
+        gate_id, kind, stage, key, question, refs, _iso_now(), preparation
     )
     path = gates_dir / f"{gate_id}.md"
     _write_atomic(path, content)
@@ -579,6 +637,7 @@ def _parse_frontmatter(text: str, path: pathlib.Path) -> dict[str, object]:
             name not in FRONTMATTER_FIELDS
             and name not in _JSON_LIST_FIELDS
             and name not in _SCALAR_EXTENSION_FIELDS
+            and name not in _GATE_DECISION_FIELDS
         ):
             raise GateFormatError(
                 f"{path}: unknown frontmatter field '{name}' (line {i + 1})"
@@ -756,6 +815,59 @@ def _to_gate(fields: dict[str, object], path: pathlib.Path) -> Gate:
             f"(expected one of: {', '.join(sorted(BLOCKER_CLASSES))})"
         )
 
+    transport = optional("transport")
+    business = optional("business")
+    effect = optional("effect")
+    if transport is not None and transport not in GATE_TRANSPORT_STATES:
+        raise GateFormatError(
+            f"{path}: unknown transport {transport!r} "
+            f"(expected one of: {', '.join(sorted(GATE_TRANSPORT_STATES))})"
+        )
+    if business is not None and business not in GATE_BUSINESS_CHOICES:
+        raise GateFormatError(
+            f"{path}: unknown business {business!r} "
+            f"(expected one of: {', '.join(sorted(GATE_BUSINESS_CHOICES))})"
+        )
+    if effect is not None and effect not in GATE_EFFECT_STATES:
+        raise GateFormatError(
+            f"{path}: unknown effect {effect!r} "
+            f"(expected one of: {', '.join(sorted(GATE_EFFECT_STATES))})"
+        )
+    if transport == "answered" and business is None:
+        raise GateFormatError(f"{path}: answered transport requires a business choice")
+    if transport != "answered" and business is not None:
+        raise GateFormatError(f"{path}: business choice requires answered transport")
+    decision_fields = _GATE_DECISION_FIELDS.intersection(fields)
+    historical = not decision_fields
+    if decision_fields:
+        missing = _GATE_DECISION_FIELDS - decision_fields
+        if missing:
+            raise GateFormatError(f"{path}: incomplete decision gate; missing {', '.join(sorted(missing))}")
+        if status != "pending":
+            raise GateFormatError(f"{path}: legacy status {status!r} cannot accompany decision gate fields")
+        if optional("note") is not None:
+            raise GateFormatError(f"{path}: a decision gate cannot also carry a human answer note")
+        if not transport or not effect:
+            raise GateFormatError(f"{path}: decision gate requires transport and effect")
+        for field in ("pm_note", "matter_ref", "substantive_version"):
+            if not (optional(field) or "").strip():
+                raise GateFormatError(f"{path}: prepared gate requires {field}")
+        if transport == "answered":
+            for field in ("decision_ref", "model_basis", "answered_at", "answered_by"):
+                if not (optional(field) or "").strip():
+                    raise GateFormatError(f"{path}: answered gate requires {field}")
+        elif any(optional(name) is not None for name in (
+            "model_basis", "answered_at", "answered_by", "consumed_at", "consumed_seq",
+        )):
+            raise GateFormatError(f"{path}: unanswered gate cannot carry a recorded answer or consumption")
+        if transport != "answered" and effect in ("in-progress", "applied"):
+            raise GateFormatError(f"{path}: {effect} effect requires an answered gate")
+        closure = optional("closure_kind")
+        if closure is not None and (closure != "legacy" or business != "reject"):
+            raise GateFormatError(f"{path}: closure_kind requires a rejected gate and legacy closure")
+        if effect == "applied" and business != "approve" and not closure:
+            raise GateFormatError(f"{path}: business choice {business!r} cannot mark this gate applied")
+
     return Gate(
         id=gate_id,
         kind=kind,
@@ -797,6 +909,17 @@ def _to_gate(fields: dict[str, object], path: pathlib.Path) -> Gate:
         out_of_band_actions=optional_json("out_of_band_actions"),
         authorizes=authorizes,
         blocker_class=blocker_class,
+        transport=transport,
+        business=business,
+        effect=effect,
+        decision_ref=optional("decision_ref"),
+        matter_ref=optional("matter_ref"),
+        substantive_version=optional("substantive_version"),
+        pm_note=optional("pm_note"),
+        model_basis=optional("model_basis"),
+        closure_kind=optional("closure_kind"),
+        historical=historical,
+        released=False,
         gate_schema=gate_schema,
         consumed_at=optional_iso("consumed_at"),
         consumed_seq=optional_int("consumed_seq"),
@@ -854,5 +977,5 @@ def enumerate(gates_dir: pathlib.Path | str) -> list[Gate]:
 
 
 def pending_gates(gates_dir: pathlib.Path | str) -> list[Gate]:
-    """Only gates still awaiting an answer (status == 'pending')."""
-    return [gate for gate in enumerate(gates_dir) if gate.status == "pending"]
+    """Only gates still awaiting an operator or a prepared decision answer."""
+    return [gate for gate in enumerate(gates_dir) if gate.status == "pending" and gate.transport in (None, "pending")]

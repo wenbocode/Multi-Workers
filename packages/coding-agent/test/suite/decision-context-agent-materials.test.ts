@@ -1,43 +1,11 @@
-/**
- * mw-decision-context T04 (AC-005/AC-006/AC-007/AC-010/AC-014): the shared
- * material tool for the two asking agents.
- *
- * Locked behaviour under test:
- *  1. dp3 material = the asking agent's own `question` 原文 + the four
- *     background facts + 2..5 problem-specific `handling_options`
- *     [{id,label,description}] with contiguous `c1..cN` ids, a single-line
- *     label <= 80 chars and a NON-EMPTY, never-truncated description. There is
- *     no fact/intent/reuse/answerable question set and no stored-answer reuse.
- *  2. Both asking roles (worker -> PM, PM -> user) reach the SAME
- *     `ask_decision` entry; the receipt lands with the ORIGINAL asker (the
- *     native `handling` choice is resolved back to the exact candidate), and a
- *     model selection never executes business work by itself.
- *  3. dp2 and dp25 are PM-initiated only: a worker role is refused with
- *     `role-forbidden` and ZERO spawn. dp25 material carries the four sections
- *     (goal / actual completion / verified vs unverified / unfinished impact)
- *     where `[]` is a real "none", and the tool never writes a sign-off.
- *  4. The local envelope `{material, meta}` keeps the association out of the
- *     model material: `record_version:2`, one fresh UUID `logical_id` per real
- *     call, the exact `key`, the REAL `task_key` (null when the PM decision has
- *     no task), the real `initiator_role` (lowercase, T02 vocabulary) and
- *     `retry_of:null`.
- *  5. Feedback is automatic but honest: `consumed` is written through
- *     `mw decide lifecycle --stdin` when the asker really received a selection;
- *     `executed`/`settled` only via the explicit receipt op after the action;
- *     an unknown action or decision id is NOT recorded.
- *
- * Every fixture is local: a temp project + temp HOME/USERPROFILE/
- * PI_CODING_AGENT_DIR, a read-before spy over the credential store, the suite
- * harness (faux provider) and a stub `mw.py` for the argv/stdin boundary.
- * No real provider, key, token, service or browser is used.
- */
-
+/** Regression coverage for decision material, real window binding, one-call signing
+ * and explicit lifecycle receipts. Fixtures use isolated homes and the faux provider. */
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { activate } from "../../src/extensions/agent-team-loop/index.ts";
@@ -53,13 +21,11 @@ import {
 	buildDecisionEnvelope,
 	buildDecisionToolMeta,
 	buildLifecycleArgv,
-	DECISION_MATERIAL_PROMPTS,
 	DECISION_RECEIPT_TOOL,
 	type DecideRunner,
 	type DecideRunRequest,
 	type DecisionToolMeta,
 	DP3_HANDLING_LABEL_MAX,
-	DP3_HANDLING_MAX_OPTIONS,
 	initiatorRoleFromWorkerTask,
 	type LifecycleRequest,
 	type LifecycleRunner,
@@ -81,7 +47,7 @@ import {
 	decideDp3WorkerClarify,
 	readDp3Policy,
 } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
-import { createHarness, type Harness } from "./harness.ts";
+import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
 const tempDirs: string[] = [];
 const harnesses: Harness[] = [];
@@ -166,25 +132,47 @@ const QUESTION = [
 	Array.from({ length: 20 }, (_, i) => `行${i + 1}：问号😀与中文混排，不做摘要。`).join(""),
 ].join("\n");
 
-function dp3Material(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function autoMaterial(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		question: QUESTION,
 		background: {
 			task_goal: "让两个提问角色共用同一材料入口。",
 			current_state: "T01/T02 已交付；当前 state 只有 question/background/handling_options。",
-			decision_reason: "旧 fact/intent/reuse 多问已被替代，必须由提问 Agent 给材料。",
-			constraints_impact: "不得自动检索旧答案；c1 为继续、c2 为交 PM、c3 为问用户。",
+			tried: "旧 fact/intent/reuse 多问已被替代，必须由提问 Agent 给材料。",
+			unknowns: "Verifying user intent.",
+			constraints: "不得自动检索旧答案；c1 为继续、c2 为交 PM、c3 为问用户。",
 		},
 		handling_options: [
-			{ id: "c1", label: "按现有假设继续", description: "在当前写面内继续，不扩大授权。" },
-			{ id: "c2", label: "交 PM 判定边界", description: "把材料交给 PM，由 PM 判定是否需要用户确认。" },
-			{ id: "c3", label: "向用户提问", description: "当前事实不足以判断，向用户提出具体问题。" },
+			{
+				id: "c1",
+				label: "按现有假设继续",
+				description: "在当前写面内继续，不扩大授权。",
+				consequence: "retains the scope",
+				risk: "documented",
+				conditions: "within the present budget",
+			},
+			{
+				id: "c2",
+				label: "交 PM 判定边界",
+				description: "把材料交给 PM，由 PM 判定是否需要用户确认。",
+				consequence: "retains the scope",
+				risk: "documented",
+				conditions: "within the present budget",
+			},
+			{
+				id: "c3",
+				label: "向用户提问",
+				description: "当前事实不足以判断，向用户提出具体问题。",
+				consequence: "retains the scope",
+				risk: "documented",
+				conditions: "within the present budget",
+			},
 		],
 		...overrides,
 	};
 }
 
-function dp2Material(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function steerMaterial(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		task_goal: "T04 交付双角色材料工具。",
 		task_requirements: "RED->GREEN；保留外部 diff；不越写面。",
@@ -194,7 +182,7 @@ function dp2Material(overrides: Record<string, unknown> = {}): Record<string, un
 	};
 }
 
-function dp25Material(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function signMaterial(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		delivery_goal: "四 DP 材料契约落地并通过验收命令。",
 		actual_completion: "dp2/dp3/dp25 材料与权限已实现，测试 GREEN。",
@@ -204,11 +192,28 @@ function dp25Material(overrides: Record<string, unknown> = {}): Record<string, u
 	};
 }
 
+function preparation(dp: string) {
+	const choices: Record<string, string[]> = {
+		"dp-auto": ["c1", "c2", "c3"],
+		"dp-sign-key": ["finalize", "continue", "user-confirm"],
+		"dp-pm-steer": ["narrow", "split", "direct-exec", "escalate"],
+	};
+	const refs: Record<string, string> = {
+		"dp-auto": "question",
+		"dp-sign-key": "delivery_goal",
+		"dp-pm-steer": "task_goal",
+	};
+	return {
+		prepared_at: "2026-10-25T10:00:00Z",
+		basis_catalog: [
+			{ id: "reason", text: "Review the referenced evidence", material_refs: [refs[dp]], applies_to: choices[dp] },
+		],
+	};
+}
 interface CapturedRunner {
 	run: DecideRunner;
 	calls: DecideRunRequest[];
 }
-
 function decideRunner(answer = '{"handling":{"value":"c2","confidence":0.9}}'): CapturedRunner {
 	const calls: DecideRunRequest[] = [];
 	const run: DecideRunner = async (request) => {
@@ -221,8 +226,8 @@ function decideRunner(answer = '{"handling":{"value":"c2","confidence":0.9}}'): 
 				acted: false,
 				confidence_source: "api",
 				latency_ms: 12,
-				decision_id: "dp3-worker-clarify:fixture",
-				answers: JSON.parse(answer) as Record<string, unknown>,
+				decision_id: `${request.dp}:${envelopeOf(request).meta.logical_id}`,
+				answers: { ...(JSON.parse(answer) as Record<string, unknown>), basis_id: { value: "reason" } },
 			}),
 			stderr: "",
 			timedOut: false,
@@ -273,11 +278,12 @@ function signRunner(conclusion: "finalize" | "continue" | "user-confirm" = "fina
 		const raw: RawDecideResult = {
 			status: 0,
 			stdout: JSON.stringify({
-				dp: "dp25-signoff-conclusion",
+				dp: "dp-sign-key",
 				key: request.key,
 				logical_id: meta.logical_id,
-				decision_id: `dp25-signoff-conclusion:${meta.logical_id}`,
+				decision_id: `dp-sign-key:${meta.logical_id}`,
 				conclusion,
+				basis_id: "reason",
 				signoff_status: finalize ? "written" : "not-required",
 				signoff_path: finalize ? "/fixture/sign-final.md" : null,
 				record_status: "written",
@@ -310,11 +316,11 @@ function payloadOf(text: string): AskDecisionPayload {
 	return JSON.parse(firstLine(text)) as AskDecisionPayload;
 }
 
-// ── 1. dp3 material contract (AC-005) ───────────────────────────────────────
+// ── 1. dp-auto material contract (AC-005) ───────────────────────────────────────
 
-describe("dp3 material contract (AC-005)", () => {
+describe("dp-auto material contract (AC-005)", () => {
 	it("keeps the question 原文, the four background facts and every description verbatim", () => {
-		const built = validateDecisionMaterial("dp3-worker-clarify", dp3Material());
+		const built = validateDecisionMaterial("dp-auto", autoMaterial());
 		expect(built.ok).toBe(true);
 		if (!built.ok) throw new Error("unreachable");
 		expect(built.material.question).toBe(QUESTION);
@@ -329,15 +335,17 @@ describe("dp3 material contract (AC-005)", () => {
 		expect(options[1]?.description).toBe("把材料交给 PM，由 PM 判定是否需要用户确认。");
 	});
 
-	it("refuses fewer than 2 / more than 5 candidates, bad ids, long labels and blank descriptions", () => {
+	it("refuses candidate counts outside the transport limits, duplicate ids, long labels and blank descriptions", () => {
 		const cases: Array<{ material: Record<string, unknown>; field: string }> = [
 			{
-				material: dp3Material({ handling_options: [{ id: "c1", label: "唯一项", description: "只有一个候选。" }] }),
+				material: autoMaterial({
+					handling_options: [{ id: "c1", label: "唯一项", description: "只有一个候选。" }],
+				}),
 				field: "handling_options",
 			},
 			{
-				material: dp3Material({
-					handling_options: Array.from({ length: DP3_HANDLING_MAX_OPTIONS + 1 }, (_, i) => ({
+				material: autoMaterial({
+					handling_options: Array.from({ length: 33 }, (_, i) => ({
 						id: `c${i + 1}`,
 						label: `候选${i + 1}`,
 						description: `说明${i + 1}`,
@@ -346,44 +354,100 @@ describe("dp3 material contract (AC-005)", () => {
 				field: "handling_options",
 			},
 			{
-				material: dp3Material({
+				material: autoMaterial({
 					handling_options: [
-						{ id: "c1", label: "A", description: "说明 A。" },
-						{ id: "c3", label: "B", description: "说明 B。" },
+						{
+							id: "c1",
+							label: "A",
+							description: "说明 A。",
+							consequence: "retains the scope",
+							risk: "documented",
+							conditions: "within the present budget",
+						},
+						{
+							id: "c1",
+							label: "B",
+							description: "说明 B。",
+							consequence: "retains the scope",
+							risk: "documented",
+							conditions: "within the present budget",
+						},
 					],
 				}),
 				field: "handling_options[1].id",
 			},
 			{
-				material: dp3Material({
+				material: autoMaterial({
 					handling_options: [
-						{ id: "c1", label: "A".repeat(DP3_HANDLING_LABEL_MAX + 1), description: "说明 A。" },
-						{ id: "c2", label: "B", description: "说明 B。" },
+						{
+							id: "c1",
+							label: "A".repeat(DP3_HANDLING_LABEL_MAX + 1),
+							description: "说明 A。",
+							consequence: "retains the scope",
+							risk: "documented",
+							conditions: "within the present budget",
+						},
+						{
+							id: "c2",
+							label: "B",
+							description: "说明 B。",
+							consequence: "retains the scope",
+							risk: "documented",
+							conditions: "within the present budget",
+						},
 					],
 				}),
 				field: "handling_options[0].label",
 			},
 			{
-				material: dp3Material({
+				material: autoMaterial({
 					handling_options: [
-						{ id: "c1", label: "A", description: "   " },
-						{ id: "c2", label: "B", description: "说明 B。" },
+						{
+							id: "c1",
+							label: "A",
+							description: "   ",
+							consequence: "retains the scope",
+							risk: "documented",
+							conditions: "within the present budget",
+						},
+						{
+							id: "c2",
+							label: "B",
+							description: "说明 B。",
+							consequence: "retains the scope",
+							risk: "documented",
+							conditions: "within the present budget",
+						},
 					],
 				}),
 				field: "handling_options[0].description",
 			},
 			{
-				material: dp3Material({
+				material: autoMaterial({
 					handling_options: [
-						{ id: "c1", label: "重复", description: "说明 A。" },
-						{ id: "c2", label: "重复", description: "说明 B。" },
+						{
+							id: "c1",
+							label: "重复",
+							description: "说明 A。",
+							consequence: "retains the scope",
+							risk: "documented",
+							conditions: "within the present budget",
+						},
+						{
+							id: "c2",
+							label: "重复",
+							description: "说明 B。",
+							consequence: "retains the scope",
+							risk: "documented",
+							conditions: "within the present budget",
+						},
 					],
 				}),
 				field: "handling_options[1].label",
 			},
 		];
 		for (const { material, field } of cases) {
-			const built = validateDecisionMaterial("dp3-worker-clarify", material);
+			const built = validateDecisionMaterial("dp-auto", material);
 			expect(built.ok, field).toBe(false);
 			if (built.ok) continue;
 			expect(built.issues.map((issue) => issue.field)).toContain(field);
@@ -391,23 +455,24 @@ describe("dp3 material contract (AC-005)", () => {
 	});
 
 	it("refuses missing background facts and unknown keys by name", () => {
-		const missing = dp3Material({ background: { task_goal: "g", current_state: "s", decision_reason: "r" } });
-		const built = validateDecisionMaterial("dp3-worker-clarify", missing);
+		const missing = autoMaterial({ background: { task_goal: "g", current_state: "s", tried: "r" } });
+		const built = validateDecisionMaterial("dp-auto", missing);
 		expect(built.ok).toBe(false);
 		if (built.ok) throw new Error("unreachable");
-		expect(built.issues.map((issue) => issue.field)).toContain("background.constraints_impact");
+		expect(built.issues.map((issue) => issue.field)).toContain("background.constraints");
 
-		const extra = validateDecisionMaterial("dp3-worker-clarify", { ...dp3Material(), local_candidates: [] });
+		const extra = validateDecisionMaterial("dp-auto", { ...autoMaterial(), local_candidates: [] });
 		expect(extra.ok).toBe(false);
 		if (extra.ok) throw new Error("unreachable");
 		expect(extra.issues.map((issue) => issue.field)).toContain("local_candidates");
 		// The field list is the generated registry's, not a second local table.
-		expect(DECIDE_REGISTRY["dp3-worker-clarify"]?.modelStateFields).toEqual([
+		expect(DECIDE_REGISTRY["dp-auto"]?.modelStateFields).toEqual([
 			"question",
 			"background.task_goal",
 			"background.current_state",
-			"background.decision_reason",
-			"background.constraints_impact",
+			"background.tried",
+			"background.unknowns",
+			"background.constraints",
 			"handling_options",
 		]);
 	});
@@ -415,16 +480,17 @@ describe("dp3 material contract (AC-005)", () => {
 
 // ── 2. dp3 dual role + native single choice (AC-005 / AC-006) ───────────────
 
-describe("dp3 dual-role entry (AC-005/AC-006)", () => {
-	it("sends the worker's material envelope and returns the exact candidate to the same asker", async () => {
+describe("PM dynamic choice entry (AC-005/AC-006)", () => {
+	it("sends the task-associated PM's material envelope and returns the exact candidate to the same asker", async () => {
 		const { root, taskPath } = workerProject();
 		const decide = decideRunner();
 		const outcome = await runAskDecision({
 			projectDir: root,
-			dp: "dp3-worker-clarify",
+			dp: "dp-auto",
+			preparation: preparation("dp-auto"),
 			trigger: `${TASK}#nc1`,
-			material: dp3Material(),
-			initiatorRole: "coding",
+			material: autoMaterial(),
+			initiatorRole: "pm",
 			key: KEY,
 			taskKey: TASK,
 			runner: decide.run,
@@ -436,12 +502,12 @@ describe("dp3 dual-role entry (AC-005/AC-006)", () => {
 		const envelope = envelopeOf(decide.calls[0] as DecideRunRequest);
 		// The model sees ONLY business material (identity/association in meta).
 		expect(Object.keys(envelope.material).sort()).toEqual(["background", "handling_options", "question"]);
-		expect(envelope.material).toEqual(dp3Material());
+		expect(envelope.material).toEqual(autoMaterial());
 		expect(envelope.meta.record_version).toBe(2);
 		expect(envelope.meta.logical_id).toMatch(UUID_V4);
 		expect(envelope.meta.key).toBe(KEY);
 		expect(envelope.meta.task_key).toBe(TASK);
-		expect(envelope.meta.initiator_role).toBe("coding");
+		expect(envelope.meta.initiator_role).toBe("pm");
 		expect(envelope.meta.retry_of).toBeNull();
 
 		const payload = payloadOf(outcome.text);
@@ -454,9 +520,9 @@ describe("dp3 dual-role entry (AC-005/AC-006)", () => {
 			label: "交 PM 判定边界",
 			description: "把材料交给 PM，由 PM 判定是否需要用户确认。",
 		});
-		expect(payload.answers).toEqual({ handling: { value: "c2", confidence: 0.9 } });
+		expect(payload.answers).toEqual({ handling: { value: "c2", confidence: 0.9 }, basis_id: { value: "reason" } });
 		// Receipt cost: the child's decision_id, never a locally concatenated one.
-		expect(payload.decision_id).toBe("dp3-worker-clarify:fixture");
+		expect(payload.decision_id).toBe(`dp-auto:${envelope.meta.logical_id}`);
 		expect(taskPath).toContain(TASK);
 	});
 
@@ -465,9 +531,10 @@ describe("dp3 dual-role entry (AC-005/AC-006)", () => {
 		const decide = decideRunner();
 		const outcome = await runAskDecision({
 			projectDir: root,
-			dp: "dp3-worker-clarify",
+			dp: "dp-auto",
+			preparation: preparation("dp-auto"),
 			trigger: `${KEY}#ckpt2`,
-			material: dp3Material(),
+			material: autoMaterial(),
 			initiatorRole: "pm",
 			key: KEY,
 			runner: decide.run,
@@ -487,10 +554,11 @@ describe("dp3 dual-role entry (AC-005/AC-006)", () => {
 		for (let i = 0; i < 2; i++) {
 			await runAskDecision({
 				projectDir: root,
-				dp: "dp3-worker-clarify",
+				dp: "dp-auto",
+				preparation: preparation("dp-auto"),
 				trigger: `${TASK}#nc${i + 1}`,
-				material: dp3Material(),
-				initiatorRole: "research",
+				material: autoMaterial(),
+				initiatorRole: "pm",
 				key: KEY,
 				taskKey: TASK,
 				runner: decide.run,
@@ -504,8 +572,8 @@ describe("dp3 dual-role entry (AC-005/AC-006)", () => {
 	});
 
 	it("never resolves a selection the agent did not send (unknown candidate id)", () => {
-		expect(resolveHandlingSelection({ handling: { value: "c9" } }, dp3Material().handling_options)).toBeUndefined();
-		expect(resolveHandlingSelection({}, dp3Material().handling_options)).toBeUndefined();
+		expect(resolveHandlingSelection({ handling: { value: "c9" } }, autoMaterial().handling_options)).toBeUndefined();
+		expect(resolveHandlingSelection({}, autoMaterial().handling_options)).toBeUndefined();
 	});
 });
 
@@ -519,9 +587,10 @@ describe("role permissions (AC-006/AC-010)", () => {
 			const lifecycle = lifecycleRunner();
 			const outcome = await runAskDecision({
 				projectDir: root,
-				dp: "dp2-checkpoint-split",
+				dp: "dp-pm-steer",
+				preparation: preparation("dp-pm-steer"),
 				trigger: `${TASK}#ckpt1`,
-				material: dp2Material(),
+				material: steerMaterial(),
 				initiatorRole: role,
 				key: KEY,
 				taskKey: TASK,
@@ -536,7 +605,7 @@ describe("role permissions (AC-006/AC-010)", () => {
 			expect(decide.calls).toHaveLength(0);
 			expect(lifecycle.calls).toHaveLength(0);
 		}
-		expect(ASK_DECISION_PM_ONLY_DP_IDS).toContain("dp2-checkpoint-split");
+		expect(ASK_DECISION_PM_ONLY_DP_IDS).toContain("dp-pm-steer");
 	});
 
 	it("refuses dp25 material for a worker and never writes a sign-off", async () => {
@@ -544,9 +613,10 @@ describe("role permissions (AC-006/AC-010)", () => {
 		const decide = decideRunner();
 		const outcome = await runAskDecision({
 			projectDir: root,
-			dp: "dp25-signoff-conclusion",
+			dp: "dp-sign-key",
+			preparation: preparation("dp-sign-key"),
 			trigger: `${TASK}#sign`,
-			material: dp25Material(),
+			material: signMaterial(),
 			initiatorRole: "coding",
 			key: KEY,
 			taskKey: TASK,
@@ -559,7 +629,7 @@ describe("role permissions (AC-006/AC-010)", () => {
 		expect(payload.available).toBe(false);
 		if (payload.available) throw new Error("unreachable");
 		expect(payload.unavailable).toBe(ASK_DECISION_REASON_ROLE_FORBIDDEN);
-		expect(ASK_DECISION_PM_ONLY_DP_IDS).toContain("dp25-signoff-conclusion");
+		expect(ASK_DECISION_PM_ONLY_DP_IDS).toContain("dp-sign-key");
 		// No file is written anywhere by the material tool.
 		expect(fs.existsSync(path.join(root, "evidence"))).toBe(false);
 	});
@@ -570,9 +640,10 @@ describe("role permissions (AC-006/AC-010)", () => {
 		const lifecycle = lifecycleRunner();
 		const outcome = await runAskDecision({
 			projectDir: root,
-			dp: "dp2-checkpoint-split",
+			dp: "dp-pm-steer",
+			preparation: preparation("dp-pm-steer"),
 			trigger: `${KEY}#ckpt1`,
-			material: dp2Material(),
+			material: steerMaterial(),
 			initiatorRole: "pm",
 			key: KEY,
 			runner: decide.run,
@@ -580,7 +651,7 @@ describe("role permissions (AC-006/AC-010)", () => {
 		});
 		expect(outcome.spawned).toBe(true);
 		const envelope = envelopeOf(decide.calls[0] as DecideRunRequest);
-		expect(envelope.material).toEqual(dp2Material());
+		expect(envelope.material).toEqual(steerMaterial());
 		// Not dispatched is legal: no invented worker_execution field.
 		expect("worker_execution" in envelope.material).toBe(false);
 		const payload = payloadOf(outcome.text);
@@ -592,9 +663,10 @@ describe("role permissions (AC-006/AC-010)", () => {
 		const withWorker = decideRunner('{"checkpoint_action":{"value":"split","confidence":0.7}}');
 		await runAskDecision({
 			projectDir: root,
-			dp: "dp2-checkpoint-split",
+			dp: "dp-pm-steer",
+			preparation: preparation("dp-pm-steer"),
 			trigger: `${KEY}#ckpt2`,
-			material: dp2Material({ worker_execution: "done: 12 files; remaining: review; blocked: none; budget 12m" }),
+			material: steerMaterial({ worker_execution: "done: 12 files; remaining: review; blocked: none; budget 12m" }),
 			initiatorRole: "pm",
 			key: KEY,
 			runner: withWorker.run,
@@ -608,9 +680,10 @@ describe("role permissions (AC-006/AC-010)", () => {
 		const decide = decideRunner();
 		const outcome = await runAskDecision({
 			projectDir: root,
-			dp: "dp2-checkpoint-split",
+			dp: "dp-pm-steer",
+			preparation: preparation("dp-pm-steer"),
 			trigger: `${KEY}#ckpt1`,
-			material: dp2Material({ pm_decision_background: "   " }),
+			material: steerMaterial({ pm_decision_background: "   " }),
 			initiatorRole: "pm",
 			key: KEY,
 			runner: decide.run,
@@ -630,9 +703,10 @@ describe("role permissions (AC-006/AC-010)", () => {
 		const sign = signRunner("finalize");
 		const outcome = await runAskDecision({
 			projectDir: root,
-			dp: "dp25-signoff-conclusion",
+			dp: "dp-sign-key",
+			preparation: preparation("dp-sign-key"),
 			trigger: `${KEY}#sign`,
-			material: dp25Material(),
+			material: signMaterial(),
 			initiatorRole: "pm",
 			key: KEY,
 			signRunner: sign.run,
@@ -669,9 +743,10 @@ describe("role permissions (AC-006/AC-010)", () => {
 			const sign = signRunner(conclusion);
 			const outcome = await runAskDecision({
 				projectDir: root,
-				dp: "dp25-signoff-conclusion",
+				dp: "dp-sign-key",
+				preparation: preparation("dp-sign-key"),
 				trigger: `${KEY}#sign-${conclusion}`,
-				material: dp25Material(),
+				material: signMaterial(),
 				initiatorRole: "pm",
 				key: KEY,
 				signRunner: sign.run,
@@ -690,15 +765,15 @@ describe("role permissions (AC-006/AC-010)", () => {
 
 	it("refuses a dp25 with an empty goal / a missing evidence pair", async () => {
 		const cases = [
-			{ material: dp25Material({ delivery_goal: "" }), field: "delivery_goal" },
+			{ material: signMaterial({ delivery_goal: "" }), field: "delivery_goal" },
 			{
-				material: dp25Material({ verification_evidence: { verified: [] } }),
+				material: signMaterial({ verification_evidence: { verified: [] } }),
 				field: "verification_evidence.unverified",
 			},
-			{ material: dp25Material({ unfinished_impact: "none" }), field: "unfinished_impact" },
+			{ material: signMaterial({ unfinished_impact: "none" }), field: "unfinished_impact" },
 		];
 		for (const { material, field } of cases) {
-			const built = validateDecisionMaterial("dp25-signoff-conclusion", material);
+			const built = validateDecisionMaterial("dp-sign-key", material);
 			expect(built.ok, field).toBe(false);
 			if (built.ok) continue;
 			expect(built.issues.map((issue) => issue.field)).toContain(field);
@@ -715,10 +790,11 @@ describe("lifecycle feedback (AC-014)", () => {
 		const lifecycle = lifecycleRunner();
 		await runAskDecision({
 			projectDir: root,
-			dp: "dp3-worker-clarify",
+			dp: "dp-auto",
+			preparation: preparation("dp-auto"),
 			trigger: `${TASK}#nc1`,
-			material: dp3Material(),
-			initiatorRole: "coding",
+			material: autoMaterial(),
+			initiatorRole: "pm",
 			key: KEY,
 			taskKey: TASK,
 			runner: decide.run,
@@ -727,15 +803,15 @@ describe("lifecycle feedback (AC-014)", () => {
 		expect(lifecycle.calls).toHaveLength(1);
 		const envelope = JSON.parse((lifecycle.calls[0] as LifecycleRequest).input) as Record<string, unknown>;
 		expect(envelope.stage).toBe("consumed");
-		expect(envelope.dp).toBe("dp3-worker-clarify");
-		expect(envelope.decision_id).toBe("dp3-worker-clarify:fixture");
+		expect(envelope.dp).toBe("dp-auto");
+		expect(envelope.decision_id).toBe(`dp-auto:${envelopeOf(decide.calls[0] as DecideRunRequest).meta.logical_id}`);
 		expect(typeof envelope.event_id).toBe("string");
 		expect(envelope.answer).toBe("c2");
 		expect(envelope.action).toBeUndefined();
 		expect(envelope.outcome).toBeUndefined();
 		const meta = envelope.meta as Record<string, unknown>;
 		expect(meta.record_version).toBe(2);
-		expect(meta.initiator_role).toBe("coding");
+		expect(meta.initiator_role).toBe("pm");
 		const runMeta = envelopeOf(decide.calls[0] as DecideRunRequest).meta;
 		// Same decision, same logical_id, same key (the join key T06 uses).
 		expect(meta.logical_id).toBe(runMeta.logical_id);
@@ -749,9 +825,10 @@ describe("lifecycle feedback (AC-014)", () => {
 		// role refusal
 		await runAskDecision({
 			projectDir: root,
-			dp: "dp2-checkpoint-split",
+			dp: "dp-pm-steer",
+			preparation: preparation("dp-pm-steer"),
 			trigger: `${TASK}#ckpt1`,
-			material: dp2Material(),
+			material: steerMaterial(),
 			initiatorRole: "coding",
 			key: KEY,
 			runner: decideRunner().run,
@@ -766,10 +843,11 @@ describe("lifecycle feedback (AC-014)", () => {
 		});
 		await runAskDecision({
 			projectDir: root,
-			dp: "dp3-worker-clarify",
+			dp: "dp-auto",
+			preparation: preparation("dp-auto"),
 			trigger: `${TASK}#nc2`,
-			material: dp3Material(),
-			initiatorRole: "coding",
+			material: autoMaterial(),
+			initiatorRole: "pm",
 			key: KEY,
 			runner: down,
 			lifecycleRunner: lifecycle.run,
@@ -781,10 +859,11 @@ describe("lifecycle feedback (AC-014)", () => {
 		const { root } = workerProject();
 		const outcome = await runAskDecision({
 			projectDir: root,
-			dp: "dp3-worker-clarify",
+			dp: "dp-auto",
+			preparation: preparation("dp-auto"),
 			trigger: `${TASK}#nc1`,
-			material: dp3Material(),
-			initiatorRole: "coding",
+			material: autoMaterial(),
+			initiatorRole: "pm",
 			key: KEY,
 			runner: decideRunner().run,
 			lifecycleRunner: lifecycleRunner("failed").run,
@@ -802,7 +881,7 @@ describe("lifecycle feedback (AC-014)", () => {
 		const { capture, pi } = capturingApi();
 		registerAskDecisionTool(pi, {
 			projectDir: root,
-			initiatorRole: "coding",
+			initiatorRole: "pm",
 			key: KEY,
 			taskKey: TASK,
 			runner: decide.run,
@@ -814,9 +893,10 @@ describe("lifecycle feedback (AC-014)", () => {
 		expect(receipt, "decision_receipt registered").toBeDefined();
 
 		const asked = await ask?.execute("call-1", {
-			dp: "dp3-worker-clarify",
+			dp: "dp-auto",
+			preparation: preparation("dp-auto"),
 			trigger: `${TASK}#nc1`,
-			material: dp3Material(),
+			material: autoMaterial(),
 		});
 		const askedPayload = JSON.parse(firstLine(asked?.content[0]?.text ?? "")) as AskDecisionPayload;
 		expect(askedPayload.available).toBe(true);
@@ -824,14 +904,14 @@ describe("lifecycle feedback (AC-014)", () => {
 		expect(lifecycle.calls.map((call) => (JSON.parse(call.input) as { stage: string }).stage)).toEqual(["consumed"]);
 
 		const done = await receipt?.execute("call-2", {
-			decision_id: "dp3-worker-clarify:fixture",
+			decision_id: `dp-auto:${envelopeOf(decide.calls[0] as DecideRunRequest).meta.logical_id}`,
 			stage: "executed",
 			action: "clarify",
 			result: "asked the PM with the chosen handling option",
 		});
 		expect(done?.content[0]?.text).toContain("executed");
 		const settled = await receipt?.execute("call-3", {
-			decision_id: "dp3-worker-clarify:fixture",
+			decision_id: `dp-auto:${envelopeOf(decide.calls[0] as DecideRunRequest).meta.logical_id}`,
 			stage: "settled",
 			outcome: "ok",
 		});
@@ -852,25 +932,30 @@ describe("lifecycle feedback (AC-014)", () => {
 		const { capture, pi } = capturingApi();
 		registerAskDecisionTool(pi, {
 			projectDir: root,
-			initiatorRole: "coding",
+			initiatorRole: "pm",
 			key: KEY,
 			runner: decide.run,
 			lifecycleRunner: lifecycle.run,
 		});
 		const ask = capture.tools.get(ASK_DECISION_TOOL);
 		const receipt = capture.tools.get(DECISION_RECEIPT_TOOL);
-		await ask?.execute("call-1", { dp: "dp3-worker-clarify", trigger: `${TASK}#nc1`, material: dp3Material() });
+		await ask?.execute("call-1", {
+			dp: "dp-auto",
+			trigger: `${TASK}#nc1`,
+			material: autoMaterial(),
+			preparation: preparation("dp-auto"),
+		});
 		expect(lifecycle.calls).toHaveLength(1);
 
 		const badAction = await receipt?.execute("call-2", {
-			decision_id: "dp3-worker-clarify:fixture",
+			decision_id: `dp-auto:${envelopeOf(decide.calls[0] as DecideRunRequest).meta.logical_id}`,
 			stage: "executed",
 			action: "kill-worker",
 			result: "unknown action",
 		});
 		expect(badAction?.content[0]?.text).toContain(ASK_DECISION_REASON_UNKNOWN_ACTION);
 		const unknown = await receipt?.execute("call-3", {
-			decision_id: "dp3-worker-clarify:not-mine",
+			decision_id: "dp-auto:not-mine",
 			stage: "settled",
 			outcome: "ok",
 		});
@@ -902,7 +987,7 @@ describe("worker dp3 producer (worker-mode, AC-005/AC-006)", () => {
 			keyDir: path.join(projectRoot, ".agenticdoc", KEY),
 			policy: readDp3Policy(projectRoot),
 			runner,
-			material: dp3Material(),
+			material: autoMaterial(),
 		};
 	}
 
@@ -918,7 +1003,7 @@ describe("worker dp3 producer (worker-mode, AC-005/AC-006)", () => {
 					mode: "auto",
 					acted: false,
 					confidence_source: "api",
-					decision_id: "dp3-worker-clarify:worker",
+					decision_id: "dp-auto:worker",
 					answers: { handling: { value: "c2", confidence: 0.8 } },
 				}),
 				stderr: "",
@@ -928,20 +1013,12 @@ describe("worker dp3 producer (worker-mode, AC-005/AC-006)", () => {
 		return { run, calls };
 	}
 
-	it("sends the agent material and returns the chosen handling option without acting", () => {
+	it("the retired numeric worker hook never manufactures an active request", () => {
 		const { root } = workerProject();
 		const decide = syncRunner();
 		const decision = decideDp3WorkerClarify(dp3Input(root, decide.run));
-		expect(decision.kind).toBe("handling");
-		if (decision.kind !== "handling") throw new Error("unreachable");
-		expect(decision.option.id).toBe("c2");
-		expect(decision.option.label).toBe("交 PM 判定边界");
-		// AC-006: a model selection is a receipt, not an executed action.
-		expect(decision).not.toHaveProperty("acted");
-		const envelope = envelopeOf(decide.calls[0] as WorkerDecideRunRequest);
-		expect(envelope.material).toEqual(dp3Material());
-		expect(envelope.meta.initiator_role).toBe("coding");
-		expect(envelope.meta.task_key).toBe(TASK);
+		expect(decision.kind).toBe("escalate");
+		expect(decide.calls).toHaveLength(0);
 	});
 
 	it("refuses to answer without agent-prepared material (no local guesses, zero spawn)", () => {
@@ -1021,7 +1098,7 @@ function writeStubMw(dir: string): { stubPath: string; seenDir: string } {
 			"cmd = args[0] if args else ''",
 			"if cmd == 'decide' and args[1:2] == ['lifecycle']:",
 			"    open(os.path.join(seen, 'lifecycle-%d.json' % len(os.listdir(seen))), 'w', encoding='utf-8').write(raw)",
-			"    print(json.dumps({'ok': True, 'stage': payload.get('stage'), 'status': 'written'}))",
+			"    print(json.dumps({'ok': True, 'stage': payload.get('stage'), 'status': 'written', 'recorded': True}))",
 			"    sys.exit(0)",
 			"if cmd == 'decide' and args[1:2] == ['run']:",
 			"    open(os.path.join(seen, 'run.json'), 'w', encoding='utf-8').write(raw)",
@@ -1031,8 +1108,8 @@ function writeStubMw(dir: string): { stubPath: string; seenDir: string } {
 			"    assert 'meta' not in payload['material'], payload",
 			"    print(json.dumps({'available': True, 'mode': 'auto', 'acted': False,",
 			"                      'confidence_source': 'api', 'latency_ms': 3,",
-			"                      'decision_id': 'dp3-worker-clarify:stub',",
-			"                      'answers': {'handling': {'value': 'c3', 'confidence': 0.8}}}))",
+			"                      'decision_id': 'dp-auto:'+payload['meta']['logical_id'],",
+			"                      'answers': {'handling': {'value': 'c3', 'confidence': 0.8}, 'basis_id': {'value': 'reason'}}}))",
 			"    sys.exit(0)",
 			"print('unknown command', args, file=sys.stderr)",
 			"sys.exit(2)",
@@ -1069,21 +1146,16 @@ describe("real entry: roles, prompts and the production stdin boundary", () => {
 		}
 	});
 
-	it("the PM tool schema carries the fixed material prompts for dp2/dp3/dp25", () => {
+	it("exposes preparation and every generated material contract to the PM", () => {
 		const { capture, pi } = capturingApi();
 		registerAskDecisionTool(pi, { projectDir: pmProject().root, initiatorRole: "pm", key: KEY });
-		const ask = capture.tools.get(ASK_DECISION_TOOL) as CapturedTool;
-		const guidelines = (ask.promptGuidelines ?? []).join("\n");
-		// dp3: question 原文 + four background facts + candidates + unknown=unknown.
-		expect(guidelines).toContain(DECISION_MATERIAL_PROMPTS.dp3);
-		// dp2: PM-only, task 原文 + PM background, worker execution optional.
-		expect(guidelines).toContain(DECISION_MATERIAL_PROMPTS.dp2);
-		// dp25: four sections, verified vs unverified, no counts as evidence.
-		expect(guidelines).toContain(DECISION_MATERIAL_PROMPTS.dp25);
-		const schema = JSON.stringify(ask.parameters);
-		for (const field of ["material", "handling_options", "verification_evidence", "pm_decision_background"]) {
-			expect(schema, field).toContain(field);
+		const tool = capture.tools.get(ASK_DECISION_TOOL) as CapturedTool;
+		const guidelines = (tool.promptGuidelines ?? []).join("\n");
+		for (const [id, entry] of Object.entries(DECIDE_REGISTRY)) {
+			expect(guidelines).toContain(id);
+			for (const field of entry.requiredStateFields) expect(guidelines).toContain(field.name);
 		}
+		expect(JSON.stringify(tool.parameters)).toContain("basis_catalog");
 	});
 
 	it("index.ts wires the same entry into the worker branch with the derived role", () => {
@@ -1108,7 +1180,8 @@ describe("real entry: roles, prompts and the production stdin boundary", () => {
 		expect(initiatorRoleFromWorkerTask(write("coding"))).toBe("coding");
 		expect(initiatorRoleFromWorkerTask(write("research"))).toBe("research");
 		expect(initiatorRoleFromWorkerTask(write("review"))).toBe("review");
-		expect(initiatorRoleFromWorkerTask(write("vision"))).toBe("unknown");
+		expect(initiatorRoleFromWorkerTask(write("vision"))).toBe("coding");
+		expect(initiatorRoleFromWorkerTask(write("unregistered"))).toBe("unknown");
 		expect(initiatorRoleFromWorkerTask(write(""))).toBe("unknown");
 		expect(initiatorRoleFromWorkerTask(undefined)).toBe("unknown");
 		expect(initiatorRoleFromWorkerTask(path.join(dir, "missing.md"))).toBe("unknown");
@@ -1124,10 +1197,11 @@ describe("real entry: roles, prompts and the production stdin boundary", () => {
 			const lifecycle: LifecycleRequest[] = [];
 			const outcome = await runAskDecision({
 				projectDir: project.root,
-				dp: "dp3-worker-clarify",
+				dp: "dp-auto",
+				preparation: preparation("dp-auto"),
 				trigger: `${TASK}#nc1`,
-				material: dp3Material(),
-				initiatorRole: "coding",
+				material: autoMaterial(),
+				initiatorRole: "pm",
 				key: KEY,
 				taskKey: TASK,
 			});
@@ -1145,7 +1219,7 @@ describe("real entry: roles, prompts and the production stdin boundary", () => {
 				meta: DecisionToolMeta;
 			};
 			expect(seen.material.question).toBe(QUESTION);
-			expect(seen.meta.initiator_role).toBe("coding");
+			expect(seen.meta.initiator_role).toBe("pm");
 			expect(seen.meta.task_key).toBe(TASK);
 			expect(seen.meta.logical_id).toMatch(UUID_V4);
 			expect(lifecycle).toHaveLength(0);
@@ -1156,7 +1230,7 @@ describe("real entry: roles, prompts and the production stdin boundary", () => {
 		expect(
 			buildDecideArgv("/repo/mw.py", {
 				projectDir: "/work",
-				dp: "dp3-worker-clarify",
+				dp: "dp-auto",
 				input: '{"material":{}}',
 				timeoutMs: 20_000,
 				viaStdin: true,
@@ -1169,7 +1243,7 @@ describe("real entry: roles, prompts and the production stdin boundary", () => {
 			"run",
 			"--project=/work",
 			"--dp",
-			"dp3-worker-clarify",
+			"dp-auto",
 			"--stdin",
 			"--json",
 		]);
@@ -1188,11 +1262,7 @@ describe("real entry: roles, prompts and the production stdin boundary", () => {
 	});
 
 	it("keeps the four material dp ids aligned with the generated registry", () => {
-		expect([...ASK_DECISION_MATERIAL_DP_IDS].sort()).toEqual([
-			"dp2-checkpoint-split",
-			"dp25-signoff-conclusion",
-			"dp3-worker-clarify",
-		]);
+		expect(ASK_DECISION_MATERIAL_DP_IDS).toEqual(Object.keys(DECIDE_REGISTRY));
 		for (const dp of ASK_DECISION_MATERIAL_DP_IDS) {
 			expect(DECIDE_REGISTRY[dp]?.modelStateFields, dp).toBeDefined();
 		}
@@ -1201,15 +1271,245 @@ describe("real entry: roles, prompts and the production stdin boundary", () => {
 	it("keeps identity/association out of the material for every material dp", () => {
 		const meta = buildDecisionToolMeta({ key: KEY, taskKey: TASK, initiatorRole: "pm" });
 		for (const [dp, material] of [
-			["dp2-checkpoint-split", dp2Material()],
-			["dp3-worker-clarify", dp3Material()],
-			["dp25-signoff-conclusion", dp25Material()],
+			["dp-pm-steer", steerMaterial()],
+			["dp-auto", autoMaterial()],
+			["dp-sign-key", signMaterial()],
 		] as const) {
-			const envelope = buildDecisionEnvelope({ dp, material, meta });
+			const envelope = buildDecisionEnvelope({ dp, material, meta, preparation: preparation(dp) });
 			const paths = Object.keys(envelope.material);
 			for (const forbidden of ["key", "task_key", "schema_version", "decision_point"]) {
 				expect(paths, `${dp}:${forbidden}`).not.toContain(forbidden);
 			}
 		}
 	});
+});
+
+it.each([
+	["coding", "coding"],
+	["research", "research"],
+	["review", "review"],
+	["vision", "coding"],
+	["repair", "coding"],
+	["roadmap-writer", "coding"],
+	["phase-writer", "coding"],
+	["verifier", "research"],
+	["reviewer", "research"],
+	["rag-research", "research"],
+	["decide_prepare", "research"],
+])("binds registered %s cards to lifecycle role %s through faux", async (cardType, lifecycleRole) => {
+	const { root, taskPath } = workerProject();
+	fs.writeFileSync(taskPath, `type: ${cardType}\n`, "utf8");
+	const calls: DecideRunRequest[] = [];
+	const lifecycle = lifecycleRunner();
+	const runner: DecideRunner = async (request) => {
+		calls.push(request);
+		const { meta } = envelopeOf(request);
+		return {
+			status: 0,
+			timedOut: false,
+			stderr: "",
+			stdout: JSON.stringify({
+				available: true,
+				decision_id: `${request.dp}:${meta.logical_id}`,
+				mode: "suggest",
+				acted: false,
+				answers: { reachability: { value: "continue" }, basis_id: { value: "evidence" } },
+			}),
+		};
+	};
+	const harness = await createHarness({
+		extensionFactories: [
+			(pi) => {
+				registerAskDecisionTool(pi, {
+					projectDir: root,
+					taskPath,
+					initiatorRole: "pm",
+					key: "other-key",
+					taskKey: "other-task",
+					runner,
+					lifecycleRunner: lifecycle.run,
+				});
+			},
+		],
+	});
+	harnesses.push(harness);
+	const material = {
+		task_goal: "Read the files",
+		reachability_facts: "The fixture is present",
+		completed: "Read card",
+		remaining: "Review fixture",
+		blockers: "none",
+		constraints: "Read-only",
+	};
+	const prepared = {
+		prepared_at: "2026-10-25T07:10:00Z",
+		basis_catalog: [
+			{
+				id: "evidence",
+				text: "Fixture is available",
+				material_refs: ["reachability_facts"],
+				applies_to: ["continue"],
+			},
+		],
+	};
+	harness.setResponses([
+		fauxAssistantMessage(
+			[
+				fauxToolCall(ASK_DECISION_TOOL, {
+					dp: "dp-pm-steer",
+					trigger: "test",
+					material: steerMaterial(),
+					preparation: preparation("dp-pm-steer"),
+				}),
+			],
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage(
+			[fauxToolCall(ASK_DECISION_TOOL, { dp: "dp-w-check-task", trigger: "test", material, preparation: prepared })],
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("complete"),
+	]);
+	await harness.session.prompt("Review the current task.");
+	expect(calls).toHaveLength(1);
+	expect(calls[0]?.dp).toBe("dp-w-check-task");
+	expect(envelopeOf(calls[0] as DecideRunRequest).meta).toMatchObject({
+		key: KEY,
+		task_key: TASK,
+		initiator_role: lifecycleRole,
+	});
+	expect(lifecycle.calls).toHaveLength(1);
+	const responses = harness.session.messages
+		.filter((message) => message.role === "toolResult")
+		.map(getMessageText)
+		.join("\n");
+	expect(responses).toContain("role-forbidden");
+	expect(responses).toContain("Fixture is available");
+});
+
+it.each([
+	["unknown", "dp-w-check-task", "role-forbidden"],
+	["pm", "dp-w-check-task", "role-forbidden"],
+	["main", "dp-w-check-task", "role-forbidden"],
+	["decision", "dp-w-check-task", "role-forbidden"],
+	["vision", "dp-pm-steer", "role-forbidden"],
+	["repair", "dp-sign-key", "role-forbidden"],
+	...[
+		"dp1-dispatch-type",
+		"dp2-checkpoint-split",
+		"dp3-worker-clarify",
+		"dp4-failure-handling",
+		"dp5-test-triage",
+		"dp6-qg-verdict",
+		"dp7-gate-failure",
+		"dp8-scope-change",
+		"dp9-model-select",
+		"dp10-dependency",
+		"dp11-credential",
+		"dp12-destructive",
+		"dp13-commit-release",
+		"dp14-rule-conflict",
+		"dp15-autopilot-gate",
+		"dp16-goal",
+		"dp17-spec-lock",
+		"dp18-claim",
+		"dp19-foreign-write",
+		"dp20-stage-close",
+		"dp21-refine",
+		"dp22-debug-plan",
+		"dp23-snapshot",
+		"dp24-pi-trust",
+		"dp25-signoff-conclusion",
+	].map((dp) => ["vision", dp, "retired"]),
+])("refuses %s card calling %s despite spoofed PM option (%s)", async (cardType, dp, reason) => {
+	const { root, taskPath } = workerProject();
+	fs.writeFileSync(taskPath, `type: ${cardType}\n`, "utf8");
+	const decide = decideRunner();
+	const lifecycle = lifecycleRunner();
+	const sign = signRunner();
+	const { capture, pi } = capturingApi();
+	registerAskDecisionTool(pi, {
+		projectDir: root,
+		taskPath,
+		initiatorRole: "pm",
+		key: KEY,
+		runner: decide.run,
+		lifecycleRunner: lifecycle.run,
+		signRunner: sign.run,
+	});
+	// Invoke the actual registered execute boundary so retired IDs are checked
+	// even though the public schema deliberately cannot offer them to faux.
+	const result = await capture.tools.get(ASK_DECISION_TOOL)?.execute("negative", {
+		dp,
+		trigger: TASK,
+		material: autoMaterial(),
+		preparation: preparation("dp-auto"),
+	});
+	expect(payloadOf(result?.content[0]?.text ?? "")).toMatchObject({ available: false, unavailable: reason });
+	expect(decide.calls).toHaveLength(0);
+	expect(lifecycle.calls).toHaveLength(0);
+	expect(sign.calls).toHaveLength(0);
+});
+
+it("checks the current PM window's live claim on each ask and receipt", async () => {
+	const project = pmProject();
+	const indexFile = path.join(project.root, ".agenticdoc", "_index.parallel");
+	const cwd = process.cwd();
+	const self = `${os.hostname()}:${process.pid}`;
+	const stub = writeStubMw(project.root);
+	process.env.MW_PY = stub.stubPath;
+	process.env.MW_STUB_SEEN = stub.seenDir;
+	process.chdir(project.root);
+	try {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					registerAskDecisionTool(pi, { initiatorRole: "pm" });
+				},
+			],
+		});
+		harnesses.push(harness);
+		async function call(name: string, params: Record<string, unknown>) {
+			harness.setResponses([
+				fauxAssistantMessage([fauxToolCall(name, params)], { stopReason: "toolUse" }),
+				fauxAssistantMessage("done"),
+			]);
+			await harness.session.prompt("Check this request.");
+			const result = harness.session.messages.filter((message) => message.role === "toolResult").at(-1);
+			return getMessageText(result);
+		}
+		const args = { dp: "dp-auto", trigger: "current", material: autoMaterial(), preparation: preparation("dp-auto") };
+		const selfRow = `| ${KEY} | active | EXECUTE | ${self} | — | fixture | now |`;
+		const foreign = "| foreign | active | EXECUTE | other-host:100 | — | fixture | now |";
+		for (const [index, key] of [
+			["", KEY],
+			[foreign, "foreign"],
+			[`${selfRow}\n${foreign}`, "foreign"],
+			[selfRow.replace("active", "idle"), KEY],
+		]) {
+			fs.writeFileSync(indexFile, index, "utf8");
+			expect(payloadOf(await call(ASK_DECISION_TOOL, { ...args, key }))).toMatchObject({
+				available: false,
+				missing_fields: ["meta.key"],
+			});
+			expect(fs.readdirSync(stub.seenDir)).toEqual([]);
+		}
+		fs.writeFileSync(indexFile, `${selfRow}\n${foreign}`, "utf8");
+		const confirmed = payloadOf(await call(ASK_DECISION_TOOL, args));
+		expect(confirmed.available).toBe(true);
+		if (!confirmed.available) throw new Error("expected a decision for the claimed key");
+		const seen = JSON.parse(fs.readFileSync(path.join(stub.seenDir, "run.json"), "utf8"));
+		expect(seen.meta).toMatchObject({ key: KEY, initiator_role: "pm", task_key: null });
+		const prior = fs.readdirSync(stub.seenDir);
+		fs.writeFileSync(indexFile, foreign, "utf8");
+		const receipt = await call(DECISION_RECEIPT_TOOL, {
+			decision_id: confirmed.decision_id,
+			stage: "executed",
+			action: "record",
+		});
+		expect(receipt).toContain("meta.key");
+		expect(fs.readdirSync(stub.seenDir)).toEqual(prior);
+	} finally {
+		process.chdir(cwd);
+	}
 });

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import io
 import json
 import pathlib
 import re
@@ -42,6 +43,7 @@ import decide_archive  # noqa: E402
 import decide_signoff  # noqa: E402
 import decision  # noqa: E402
 import decision_points as dpts  # noqa: E402
+import decision_signoff_result  # noqa: E402
 import mw  # noqa: E402
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -402,16 +404,16 @@ def test_render_counts_escalations_and_p0(tmp_path: pathlib.Path) -> None:
     table = project / ".mw" / "decide-points.json"
     table.parent.mkdir(parents=True)
     table.write_text(
-        json.dumps({"version": 1, "points": {"dp8-scope-change": {"enabled": True}}}),
+        json.dumps({"version": 1, "points": {"dp-gate-approve": {"enabled": True}}}),
         encoding="utf-8",
     )
     dpts.clear_points_config_cache()
     _append(project, trigger="t1", available=False, escalated_reason="low-confidence")
     facts = decide_signoff.collect(project, KEY)
-    assert facts.p0_open == ("dp8-scope-change",)
+    assert facts.p0_open == ("dp-gate-approve",)
     text = decide_signoff.render(facts, "narrow", None, KEY, "-", ts="T")
     assert "| low-confidence | 1 |" in text
-    assert "p0-open: dp8-scope-change" in text.splitlines()
+    assert "p0-open: dp-gate-approve" in text.splitlines()
 
 
 @pytest.mark.parametrize("signed_via", list(decide_signoff.SIGNED_VIA_VALUES))
@@ -615,30 +617,54 @@ def test_gate_passes_a_key_without_any_decide_row(tmp_path: pathlib.Path) -> Non
     assert passed is False  # the pre-existing done rules still fail; no sign-off check ran
 
 
-def test_gate_blocks_continue_with_n_zero(tmp_path: pathlib.Path) -> None:
+def test_gate_blocks_a_zero_count_finalize_with_n_zero_available(
+    tmp_path: pathlib.Path,
+) -> None:
+    """T22 migration: a typed finalize whose rows all escalated is still counted.
+
+    T25 replaced the old N=0 ``continue`` rule with the typed validator, so the
+    same no-available-row archive now reaches the real sign-off checks. The
+    count lines stay authoritative: a sign-off claiming ``counted_rows: 0`` for
+    an archive with one counted row is not a no-count closure.
+    """
     advance = _load_advance_phase()
     project = _project(tmp_path)
     key_dir = project / ".agenticdoc" / KEY
     (key_dir / "decision-scope.md").write_text("scope\n", encoding="utf-8")
-    # The gate only looks when a real decide row exists; this one escalated, so
-    # counted_rows=1 while N (available rows) stays 0.
     _append(project, trigger="t1", available=False, escalated_reason="low-confidence")
-    _write_sign(project, "continue", allow_empty=True)
+    facts = _typed_sign(project)
+    assert facts.n_available == 0
+    assert len(facts.rows) == 1
+    assert advance._decision_signoff_problems(key_dir) == []
+    sign = _sign_file(project)
+    text = sign.read_text(encoding="utf-8")
+    assert "counted_rows: 1" in text.splitlines()
+    sign.write_text(
+        text.replace("counted_rows: 1", "counted_rows: 0"),
+        encoding="utf-8",
+        newline="\n",
+    )
     _passed, failures = advance.check_gate(key_dir, "done")
-    assert advance._key_has_decide_rows(key_dir) is True
-    assert any("N=0" in failure for failure in failures), failures
+    assert any("counted_rows" in failure for failure in failures), failures
 
 
-def test_gate_passes_narrow_with_n_zero(tmp_path: pathlib.Path) -> None:
+def test_gate_passes_typed_finalize_with_n_zero_available(
+    tmp_path: pathlib.Path,
+) -> None:
     advance = _load_advance_phase()
     project = _project(tmp_path)
     key_dir = project / ".agenticdoc" / KEY
     _append(project, trigger="t1", available=False, escalated_reason="low-confidence")
-    _write_sign(project, "narrow")
+    facts = _typed_sign(project)
+    assert facts.n_available == 0
     # Not a vacuous pass: the key has a decide row, so the full check really ran.
     assert advance._key_has_decide_rows(key_dir) is True
     assert advance._decision_signoff_problems(key_dir) == []
-    _passed, failures = advance.check_gate(key_dir, "done")
+    passed, failures = advance.check_gate(key_dir, "done")
+    assert passed is False
+    # The sign-off rule is satisfied, but it does not exempt the other done
+    # hard gates (achieved.md / QG / PASS) and never closes the stage itself.
+    assert any("achieved.md" in failure for failure in failures), failures
     assert not any("SIGNOFF" in failure for failure in failures), failures
 
 
@@ -648,7 +674,7 @@ def test_gate_blocks_after_the_archive_is_appended(tmp_path: pathlib.Path) -> No
     project = _project(tmp_path)
     key_dir = project / ".agenticdoc" / KEY
     _append(project, trigger="t1")
-    _write_sign(project, "continue")
+    _typed_sign(project)
     _passed, failures = advance.check_gate(key_dir, "done")
     assert not any("SIGNOFF" in failure for failure in failures), failures
 
@@ -662,12 +688,49 @@ def test_gate_blocks_a_missing_machine_line(tmp_path: pathlib.Path) -> None:
     project = _project(tmp_path)
     key_dir = project / ".agenticdoc" / KEY
     _append(project, trigger="t1")
+    _typed_sign(project)
     sign = _sign_file(project)
-    sign.parent.mkdir(parents=True, exist_ok=True)
-    sign.write_text("conclusion: narrow\n", encoding="utf-8", newline="\n")
+    text = sign.read_text(encoding="utf-8")
+    assert "counted_rows:" in text and "rows_sha256:" in text
+    # T25 validates the typed header before the legacy count lines. Removing
+    # counted_rows keeps the typed header valid; the later archive append then
+    # makes the signed rows_sha256 stale, so both machine-line checks surface.
+    sign.write_text(
+        _without_machine_lines(text, "counted_rows"),
+        encoding="utf-8",
+        newline="\n",
+    )
+    _append(project, trigger="t2")
     _passed, failures = advance.check_gate(key_dir, "done")
     assert any("counted_rows" in failure for failure in failures), failures
     assert any("rows_sha256" in failure for failure in failures), failures
+
+
+def test_gate_rejects_a_legacy_narrow_file_without_logical_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The legacy narrow success word is read-only history (AC-038/AC-039)."""
+    advance = _load_advance_phase()
+    project = _project(tmp_path)
+    key_dir = project / ".agenticdoc" / KEY
+    _append(project, trigger="t1")
+    facts = decide_signoff.collect(project, KEY)
+    legacy = decide_signoff.render(facts, "narrow", None, KEY, "-", ts="T")
+    sign = _sign_file(project)
+    sign.parent.mkdir(parents=True, exist_ok=True)
+    sign.write_text(legacy, encoding="utf-8", newline="\n")
+    before = sign.read_bytes()
+    problems = advance._decision_signoff_problems(key_dir)
+    assert any(
+        "legacy" in problem and "logical_id" in problem for problem in problems
+    ), problems
+    _passed, failures = advance.check_gate(key_dir, "done")
+    assert any(
+        "legacy" in failure and "logical_id" in failure for failure in failures
+    ), failures
+    # Read-only: no rewrite and no typed result record is fabricated.
+    assert sign.read_bytes() == before
+    assert not (key_dir / "evidence" / "review" / "decide-results").exists()
 
 
 def test_gate_fails_a_key_with_decide_rows_and_no_file(
@@ -731,19 +794,17 @@ def test_signed_via_line_leaves_the_gate_and_dp_apply_parse_untouched(
     project = _project(tmp_path)
     key_dir = project / ".agenticdoc" / KEY
     _append(project, trigger="t1")
-    facts = decide_signoff.collect(project, KEY)
-    text = decide_signoff.render(
-        facts, "narrow", None, KEY, "-", ts="T", signed_via="auto-decide"
-    )
+    _typed_sign(project)
+    text = _sign_file(project).read_text(encoding="utf-8")
     assert "signed_via: auto-decide" in text.splitlines()
-    assert re.search(GATE_RE, text)
-    payload, errors = mw._dp_apply_parse(text)
-    assert errors == []
-    assert payload["conclusion"] == "narrow"
-    # `signed_via` is part of the machine-line vocabulary now (render() emits
-    # it), so parse_signoff reads it; `dp apply` ignores the unknown name.
+    assert "conclusion: finalize" in text.splitlines()
+    # `signed_via` is evidence, not authority: parse_signoff reads it back, but
+    # the typed key-signoff product is isolated from `mw decide dp apply`.
     assert decide_signoff.parse_signoff(text)["signed_via"] == "auto-decide"
-    decide_signoff.write_signoff(project, KEY, text)
+    payload, errors = mw._dp_apply_parse(text)
+    assert errors
+    assert "typed product" in errors[0]
+    assert payload["conclusion"] is None
     # The check really ran (the key has a decide row) and the extra line is inert.
     assert advance._key_has_decide_rows(key_dir) is True
     _passed, failures = advance.check_gate(key_dir, "done")
@@ -753,3 +814,231 @@ def test_signed_via_line_leaves_the_gate_and_dp_apply_parse_untouched(
 # ---------------------------------------------------------------------------
 # `--dry-run --json`: the zero-write pre-judge (AC-003)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# T22: typed key-signoff (dp-sign-key) and the finalize-only success word
+# ---------------------------------------------------------------------------
+
+
+def _typed_material(**overrides: object) -> dict:
+    material = {
+        "delivery_goal": "deliver the typed sign-off validator",
+        "actual_completion": "validator and writer migrated",
+        "verification_evidence": {
+            "verified": ["pytest test_decide_signoff.py"],
+            "unverified": ["real provider end to end"],
+        },
+        "unfinished_impact": ["stage close remains a separate gate"],
+    }
+    material.update(overrides)
+    return material
+
+
+def _typed_sign(
+    project: pathlib.Path,
+    *,
+    material: dict | None = None,
+    conclusion: str = "finalize",
+    logical_id: str = "logical-t22-typed",
+    key: str = KEY,
+) -> decide_signoff.SignoffFacts:
+    material = material if material is not None else _typed_material()
+    key_dir = decide_signoff.key_dir(project, key)
+    key_dir.mkdir(parents=True, exist_ok=True)
+    facts = decide_signoff.collect(project, key)
+    record = decision_signoff_result.build_result(
+        key_dir,
+        key=key,
+        logical_id=logical_id,
+        decision_id=f"{decision_signoff_result.DP_ID}:{logical_id}",
+        conclusion=conclusion,
+        material=material,
+        facts=facts,
+        transport="timi-decisions",
+        model="jev-latest",
+        confidence_source="api",
+        snapshot_material=material,
+    )
+    decision_signoff_result.write_result(
+        key_dir, record, redact=decision.known_secret_redactor()
+    )
+    text = decide_signoff.render(facts, conclusion, None, key, "-", result=record)
+    decide_signoff.write_signoff(project, key, text)
+    return facts
+
+
+def _without_machine_lines(text: str, *names: str) -> str:
+    """Drop the named column-0 machine lines but keep the typed file valid."""
+    prefixes = tuple(name + ":" for name in names)
+    kept = [line for line in text.splitlines() if not line.startswith(prefixes)]
+    return "\n".join(kept) + "\n"
+
+
+def test_typed_finalize_is_written_as_dp_sign_key(tmp_path: pathlib.Path) -> None:
+    project = _project(tmp_path)
+    _append(project, trigger="t1")
+    _typed_sign(project)
+    text = _sign_file(project).read_text(encoding="utf-8")
+    assert "product_type: key-signoff" in text.splitlines()
+    assert "dp: dp-sign-key" in text.splitlines()
+    assert "basis_version: 1" in text.splitlines()
+    assert any(line.startswith("basis_sha256: ") for line in text.splitlines())
+    assert "conclusion: finalize" in text.splitlines()
+    validation = decision_signoff_result.validate_signoff(
+        decide_signoff.key_dir(project, KEY), KEY
+    )
+    assert validation.valid is True, validation.reason
+    assert validation.conclusion == "finalize"
+    assert validation.dp == "dp-sign-key"
+
+
+def test_render_refuses_a_typed_non_finalize_result(tmp_path: pathlib.Path) -> None:
+    project = _project(tmp_path)
+    _append(project, trigger="t1")
+    with pytest.raises(decide_signoff.SignoffError):
+        _typed_sign(project, conclusion="continue")
+    assert not _sign_file(project).exists()
+
+
+def test_write_signoff_refuses_typed_non_finalize_text(tmp_path: pathlib.Path) -> None:
+    project = _project(tmp_path)
+    text = "product_type: key-signoff\nconclusion: user-confirm\n"
+    with pytest.raises(decide_signoff.SignoffError):
+        decide_signoff.write_signoff(project, KEY, text)
+    assert not _sign_file(project).exists()
+
+
+@pytest.mark.parametrize("word", ["continue", "user-confirm", "narrow", "revoke"])
+def test_validate_signoff_requires_the_finalize_word(
+    tmp_path: pathlib.Path, word: str
+) -> None:
+    project = _project(tmp_path)
+    _append(project, trigger="t1")
+    _typed_sign(project)
+    path = _sign_file(project)
+    tampered = path.read_text(encoding="utf-8").replace(
+        "conclusion: finalize", f"conclusion: {word}"
+    )
+    decision_signoff_result.write_signoff_text(
+        decide_signoff.key_dir(project, KEY), tampered
+    )
+    validation = decision_signoff_result.validate_signoff(
+        decide_signoff.key_dir(project, KEY), KEY
+    )
+    assert validation.valid is False
+    assert "finalize" in validation.reason
+
+
+def test_collect_ignores_both_current_and_retired_signoff_rows(
+    tmp_path: pathlib.Path,
+) -> None:
+    project = _project(tmp_path)
+    _append(project, trigger="t1")
+    for dp in (
+        decision_signoff_result.DP_ID,
+        *decision_signoff_result.LEGACY_DP_IDS,
+    ):
+        decide_archive.append_decide(
+            _archive(project),
+            dp=dp,
+            key=KEY,
+            task_key=None,
+            trigger_id=f"advice-{dp}",
+            state={"schema_version": 2},
+            questions_version=QP,
+            available=True,
+            answer={"q-conclusion": {"value": "finalize", "confidence": 0.9}},
+            authority="binding",
+            acted=False,
+            mode="auto",
+            transport=TRUE_TRANSPORT,
+            model=TRUE_MODEL,
+            confidence_source=TRUE_CONFIDENCE,
+        )
+    facts = decide_signoff.collect(project, KEY)
+    assert [row["dp"] for row in facts.rows] == ["dp3-worker-clarify"]
+
+
+# ---------------------------------------------------------------------------
+# AC-039 / AC-052: the native basis is captured before the request
+# ---------------------------------------------------------------------------
+
+
+def test_basis_change_during_the_model_request_is_not_bound_or_signed(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """The answer belongs to the captured basis, never a post-call resample."""
+    import test_dp_consolidation_cli as cli_fixtures
+
+    project = _project(tmp_path)
+    _write_config(project)
+    cli_fixtures._bind_pm_claim(project, KEY)
+    key_dir = project / ".agenticdoc" / KEY
+    (key_dir / "spec.md").write_text(
+        "| AC-001 | original contract text |\n", encoding="utf-8", newline="\n"
+    )
+    _append(project, trigger="t1")
+
+    def mutate_during_the_call(state, questions, cfg):
+        business_id = cli_fixtures._business_question_id("dp-sign-key")
+        assert set(questions) == {business_id, "basis_id"}
+        assert state["preparation"] == envelope["preparation"]
+        (key_dir / "spec.md").write_text(
+            "| AC-001 | rewritten during the model request |\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        return decision.BackendOutcome(
+            available=True,
+            reason=None,
+            retryable=False,
+            answers={
+                business_id: {"value": "finalize", "confidence": 0.9},
+                "basis_id": {"value": "b-primary", "confidence": 0.9},
+            },
+            latency_ms=5,
+            detail="",
+        )
+
+    backend = decision.FakeBackend(
+        [mutate_during_the_call],
+        name="timi-decisions",
+        model="jev-latest",
+        confidence_source=decision.CONFIDENCE_SOURCE_API,
+    )
+    monkeypatch.setattr(decision, "DEFAULT_BACKEND_FACTORY", lambda cfg: backend)
+    envelope = {
+        "material": _typed_material(),
+        "preparation": cli_fixtures._preparation("dp-sign-key", _typed_material()),
+        "meta": {
+            "record_version": 2,
+            "logical_id": "logical-native-basis-midcall",
+            "key": KEY,
+            "task_key": "task-1",
+            "initiator_role": "pm",
+            "retry_of": None,
+        },
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(envelope)))
+    args = _sign_args(
+        project,
+        key=KEY,
+        key_pos=KEY,
+        stdin=True,
+        request_file=None,
+        retry_write=None,
+        validate=None,
+        json=True,
+    )
+    assert mw.cmd_decide(args) == 2
+    output = capsys.readouterr()
+    assert "native contract/goal basis changed during the model request" in (
+        output.err + output.out
+    )
+    assert backend.calls, "the model really was called once"
+    # No valid finalize and no result record is bound to the changed contract.
+    assert not _sign_file(project).exists()
+    assert not (
+        key_dir / "evidence" / "review" / "decide-results" / "logical-native-basis-midcall.json"
+    ).exists()

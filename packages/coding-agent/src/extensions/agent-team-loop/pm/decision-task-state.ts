@@ -34,6 +34,17 @@ export const AGENT_TASK_STATE_SCHEMA = Type.Object(
 	{ additionalProperties: false },
 );
 
+function isIsoCalendarTimestamp(value: string): boolean {
+	const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+	if (match === null || !Number.isFinite(Date.parse(value))) return false;
+	const [, year, month, day, hour] = match;
+	// JavaScript normalizes midnight at hour 24 and permits a year zero.
+	// The Python lifecycle writer rejects both as task observations.
+	if (year === "0000" || Number(hour) > 23) return false;
+	const lastDay = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
+	return Number(month) >= 1 && Number(month) <= 12 && Number(day) >= 1 && Number(day) <= lastDay;
+}
+
 export function isTaskStateSnapshot(value: unknown): value is TaskStateSnapshot {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
 	const snapshot = value as Record<string, unknown>;
@@ -44,12 +55,7 @@ export function isTaskStateSnapshot(value: unknown): value is TaskStateSnapshot 
 		!(SOURCES as readonly unknown[]).includes(snapshot.source)
 	)
 		return false;
-	if (
-		typeof snapshot.observed_at !== "string" ||
-		!/^.+T.+(?:Z|[+-][0-9]{2}:[0-9]{2})$/.test(snapshot.observed_at) ||
-		!Number.isFinite(Date.parse(snapshot.observed_at))
-	)
-		return false;
+	if (typeof snapshot.observed_at !== "string" || !isIsoCalendarTimestamp(snapshot.observed_at)) return false;
 	return [snapshot.completed, snapshot.remaining, snapshot.blockers].every(
 		(items) =>
 			items === null ||

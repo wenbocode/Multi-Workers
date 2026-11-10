@@ -21,17 +21,16 @@
  */
 
 import * as fs from "node:fs";
+import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.ts";
 import { acquireLock, type LockOptions } from "../shared/file-lock.ts";
-import { AUTHORIZES_ACTIONS } from "./status-model.ts";
+import { AUTHORIZES_ACTIONS, parseGateFile } from "./status-model.ts";
 
-export interface AnswerGateOptions {
+interface GateFileOptions {
 	/** Path of the gate .md file to answer. */
 	gateFile: string;
 	/** The `.mw/gates.lock` path (O_CREAT|O_EXCL). */
 	lockFile: string;
-	decision: "approve" | "reject";
-	/** Free-form single-line answer note. Omitted → the note field is
-	 * cleared (rewritten to its empty form). */
+	/** Human answer note, or a check against an already stored PM note. */
 	note?: string;
 	/** Audit identity written to `answered_by` — the answering window's
 	 * claimId (host:pid). */
@@ -39,6 +38,12 @@ export interface AnswerGateOptions {
 	/** Timestamp override for `answered_at`. Defaults to now at second
 	 * precision in the `...Z` form gates.py _check_iso explicitly accepts. */
 	answeredAt?: string;
+	/** Lock retry options (tests inject small values). */
+	lockOpts?: LockOptions;
+}
+
+export interface AnswerGateOptions extends GateFileOptions {
+	decision: "approve" | "reject";
 	/** G3 (D-011/D-012): action types this answer authorizes, from the closed
 	 * set {@link AUTHORIZES_ACTIONS} `{retry, contract-change}`. Values outside
 	 * the set are refused fail-closed and nothing is written. Omitted or empty
@@ -46,21 +51,42 @@ export interface AnswerGateOptions {
 	 * already exist (the conductor materializes `authorizes: []` for new
 	 * gates): this writer only rewrites existing lines and refuses otherwise. */
 	authorizes?: string[];
-	/** Lock retry options (tests inject small values). */
-	lockOpts?: LockOptions;
+}
+
+interface DecisionBinding {
+	modelBasis: string;
+	decisionRef: string;
+	matterRef: string;
+	substantiveVersion: string;
+}
+
+export interface PreparedGateAnswerOptions extends GateFileOptions, DecisionBinding {
+	decision: "approve" | "steer" | "need_fix" | "reject";
+}
+
+interface GateWriteOptions extends GateFileOptions, Partial<DecisionBinding> {
+	decision: PreparedGateAnswerOptions["decision"];
+	authorizes?: string[];
 }
 
 export type AnswerGateResult =
-	| { ok: true; gateFile: string; status: "approved" | "rejected" }
+	| { ok: true; gateFile: string; status: "approved" | "rejected" | "pending" }
 	| { ok: false; error: string };
 
 const GATE_FIELD_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
+const LINE_SEPARATOR = /[\r\n\v\f\u001c-\u001e\u0085\u2028\u2029]/u;
 
-/** The frontmatter fields an answer may rewrite (gates.py FRONTMATTER_FIELDS
- * members plus the recognized `authorizes` extension field, whose line is
- * materialized by the conductor). Only already-existing lines are rewritten;
- * `authorizes` is additionally refused when its line is absent. */
-const ANSWER_FIELDS = ["status", "answered_at", "answered_by", "note", "authorizes"] as const;
+const DECISION_FIELDS = new Set([
+	"transport",
+	"business",
+	"effect",
+	"decision_ref",
+	"matter_ref",
+	"substantive_version",
+	"pm_note",
+	"model_basis",
+	"closure_kind",
+]);
 
 /** Scalars safe to render unquoted (no YAML indicators, no spaces, no
  * quotes) — identical charset to gates.py _PLAIN_SCALAR_RE. */
@@ -106,59 +132,45 @@ function isoNowSeconds(): string {
 	return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-type RewriteResult = { ok: true; content: string } | { ok: false; error: string };
-
-/** Rewrite the answer fields of a gate file's frontmatter. Only the answer
- * lines change; every other line — including the body, context_refs list, and
- * any CRLF endings — is preserved byte-for-byte. A requested `authorizes`
- * whose line does not exist is refused (never silently dropped). */
-function rewriteAnswerFields(content: string, replacements: Map<string, string>, gateFile: string): RewriteResult {
+/** Parse under the lock. Exclude the decision extension only from the legacy
+ * schema pass; keep every original line and its ending for the atomic rewrite. */
+function readAnswerFields(content: string, gateFile: string) {
 	const lines = content.split("\n");
-	if (lines.length === 0 || lines[0].trim() !== "---") {
-		return { ok: false, error: `${gateFile}: frontmatter must open with a '---' line` };
-	}
-	let end = -1;
-	for (let i = 1; i < lines.length; i++) {
-		if (lines[i].trim() === "---") {
-			end = i;
-			break;
-		}
-	}
-	if (end < 0) return { ok: false, error: `${gateFile}: frontmatter never closes with a '---' line` };
-	const rewritten = new Set<string>();
+	const end = lines.findIndex((line, i) => i > 0 && line.trim() === "---");
+	if (lines[0]?.trim() !== "---" || end < 0) throw new Error(`${gateFile}: invalid gate frontmatter`);
+	const positions = new Map<string, number>();
+	const decision = new Map<string, string>();
+	let consumed = false;
+	const base = [lines[0]];
 	for (let i = 1; i < end; i++) {
-		const raw = lines[i];
-		const probe = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
-		const m = GATE_FIELD_LINE_RE.exec(probe);
-		if (m === null) continue; // list item / prose — preserved as-is
-		const name = m[1] ?? "";
-		if (!(ANSWER_FIELDS as readonly string[]).includes(name) || rewritten.has(name)) continue;
-		// Only fields this answer actually supplies are rewritten; a recognized
-		// field with no replacement (e.g. `authorizes` when the human did not pass
-		// --authorizes) keeps its existing line untouched.
-		if (!replacements.has(name)) continue;
-		const value = replacements.get(name) ?? "";
-		// An empty value renders as the bare `field:` line — the same shape
-		// gates.py create() writes for empty optionals.
-		lines[i] = (value === "" ? `${name}:` : `${name}: ${value}`) + (raw.endsWith("\r") ? "\r" : "");
-		rewritten.add(name);
+		const raw = lines[i].replace(/\r$/, "");
+		if (LINE_SEPARATOR.test(raw)) throw new Error(`${gateFile}: invalid line separator`);
+		const match = GATE_FIELD_LINE_RE.exec(raw);
+		if (match) {
+			const name = match[1];
+			if (positions.has(name)) throw new Error(`${gateFile}: duplicate ${name} field`);
+			positions.set(name, i);
+			if (
+				(name === "consumed_at" || name === "consumed_seq") &&
+				!/^(?:|''|~|-|null|Null|NULL)$/.test(match[2] ?? "")
+			) {
+				consumed = true;
+			}
+			if (DECISION_FIELDS.has(name)) {
+				const scalar = match[2] ?? "";
+				if (scalar.startsWith('"') || (scalar.startsWith("'") && !/^'(?:[^']|'')*'$/.test(scalar))) {
+					throw new Error(`${gateFile}: invalid ${name} scalar`);
+				}
+				const value = scalar.startsWith("'") ? scalar.slice(1, -1).replaceAll("''", "'") : scalar;
+				decision.set(name, /^(?:~|-|null|Null|NULL)$/.test(scalar) ? "" : value);
+				continue;
+			}
+		}
+		base.push(raw);
 	}
-	if (!rewritten.has("status")) {
-		return { ok: false, error: `${gateFile}: no 'status:' line in frontmatter — not a gate file (or corrupt)` };
-	}
-	// G3 boundary (D-012): an explicit authorization must never be silently
-	// dropped. Only existing lines are rewritten, so a gate file without the
-	// conductor-materialized `authorizes:` line cannot receive one here.
-	if (replacements.has("authorizes") && !rewritten.has("authorizes")) {
-		return {
-			ok: false,
-			error:
-				`${gateFile}: no 'authorizes:' line in frontmatter — this writer only rewrites existing lines. ` +
-				"The conductor materializes 'authorizes: []' for new gates; add that line manually and retry, " +
-				"or answer without --authorizes.",
-		};
-	}
-	return { ok: true, content: lines.join("\n") };
+	if (!positions.has("status")) throw new Error(`${gateFile}: no 'status:' line in frontmatter`);
+	base.push("---");
+	return { lines, positions, decision, consumed, gate: parseGateFile(base.join("\n"), gateFile) };
 }
 
 /** Answer one gate: take `.mw/gates.lock`, read the gate file, rewrite
@@ -166,10 +178,60 @@ function rewriteAnswerFields(content: string, replacements: Map<string, string>,
  * (tmp + rename). The read-modify-write happens under the lock so a
  * concurrent lock-respecting writer (the conductor creating gates, another
  * window answering) can never interleave with ours. */
-export async function answerGate(opts: AnswerGateOptions): Promise<AnswerGateResult> {
-	const status = opts.decision === "approve" ? "approved" : "rejected";
-	if (opts.note !== undefined && /[\r\n]/.test(opts.note)) {
-		return { ok: false, error: "note must be a single line (frontmatter scalars cannot span lines)" };
+export function answerGate(opts: AnswerGateOptions): Promise<AnswerGateResult> {
+	return writeAnswer(opts, "human");
+}
+
+/** Deposit an answer for the PM-prepared matter only. Caller authorization
+ * and the actual decision evidence are verified by the producer. This writer
+ * records the answer without granting authority or recording an effect. */
+export function answerPreparedGate(opts: PreparedGateAnswerOptions): Promise<AnswerGateResult> {
+	return writeAnswer(opts, "decision");
+}
+
+async function writeAnswer(opts: GateWriteOptions, source: "human" | "decision"): Promise<AnswerGateResult> {
+	const bound = {
+		modelBasis: opts.modelBasis,
+		decisionRef: opts.decisionRef,
+		matterRef: opts.matterRef,
+		substantiveVersion: opts.substantiveVersion,
+	};
+	const scalars = { answeredBy: opts.answeredBy, answeredAt: opts.answeredAt, note: opts.note, ...bound };
+	for (const [name, value] of Object.entries(scalars)) {
+		if (value !== undefined && (typeof value !== "string" || LINE_SEPARATOR.test(value))) {
+			return { ok: false, error: `${name} must be a single line` };
+		}
+	}
+	if (!opts.answeredBy?.trim()) return { ok: false, error: "answeredBy is required" };
+	const at = opts.answeredAt ?? isoNowSeconds();
+	const localDay = at.slice(0, 10);
+	if (
+		!/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(at) ||
+		at.startsWith("0000") ||
+		Number.isNaN(Date.parse(at)) ||
+		new Date(`${localDay}T00:00:00Z`).toISOString().slice(0, 10) !== localDay
+	) {
+		return { ok: false, error: "answeredAt must be an ISO timestamp with a time zone" };
+	}
+	if (!DECIDE_REGISTRY["dp-gate-approve"].fixedChoiceIds.includes(opts.decision)) {
+		return { ok: false, error: "unknown gate decision" };
+	}
+	if (opts.authorizes !== undefined && !Array.isArray(opts.authorizes)) {
+		return { ok: false, error: "authorizes must be a list" };
+	}
+	if (source === "human") {
+		if (
+			(opts.decision !== "approve" && opts.decision !== "reject") ||
+			Object.values(bound).some((v) => v !== undefined)
+		) {
+			return { ok: false, error: "the human gate command cannot record a model decision" };
+		}
+	} else {
+		const missing = Object.entries(bound)
+			.filter(([, v]) => !v?.trim())
+			.map(([name]) => name);
+		if (missing.length) return { ok: false, error: `missing required decision field(s): ${missing.join(", ")}` };
+		if (opts.authorizes?.length) return { ok: false, error: "a model answer cannot grant authorizes" };
 	}
 	// G3 closed set (D-011): validate before touching the file so an
 	// out-of-set action can never be written (fail-closed, nothing to roll back).
@@ -187,14 +249,6 @@ export async function answerGate(opts: AnswerGateOptions): Promise<AnswerGateRes
 			};
 		}
 	}
-	const replacements = new Map<string, string>([
-		["status", status],
-		["answered_at", opts.answeredAt ?? isoNowSeconds()],
-		["answered_by", opts.answeredBy === "" ? "" : renderScalar(opts.answeredBy)],
-		["note", opts.note === undefined ? "" : renderScalar(opts.note)],
-	]);
-	if (authorizes !== undefined) replacements.set("authorizes", renderScalar(JSON.stringify(authorizes)));
-
 	let release: () => void;
 	try {
 		release = await acquireLock(opts.lockFile, opts.lockOpts);
@@ -202,22 +256,67 @@ export async function answerGate(opts: AnswerGateOptions): Promise<AnswerGateRes
 		return { ok: false, error: err instanceof Error ? err.message : String(err) };
 	}
 	try {
-		let content: string;
-		try {
-			content = fs.readFileSync(opts.gateFile, "utf8");
-		} catch (err) {
-			return { ok: false, error: `gate file not readable: ${opts.gateFile} (${String(err)})` };
+		const { lines, positions, decision, consumed, gate } = readAnswerFields(
+			fs.readFileSync(opts.gateFile, "utf8"),
+			opts.gateFile,
+		);
+		if (gate.status !== "pending" || gate.answeredAt || gate.answeredBy || consumed) {
+			return { ok: false, error: "the recorded answer is read-only" };
 		}
-		const rewritten = rewriteAnswerFields(content, replacements, opts.gateFile);
-		if (!rewritten.ok) return { ok: false, error: rewritten.error };
-		try {
-			const tmp = `${opts.gateFile}.tmp`;
-			fs.writeFileSync(tmp, rewritten.content, "utf8");
-			fs.renameSync(tmp, opts.gateFile);
-		} catch (err) {
-			return { ok: false, error: `cannot write ${opts.gateFile}: ${String(err)}` };
+		const replacements = new Map([
+			["answered_at", at],
+			["answered_by", opts.answeredBy],
+		]);
+		let status: "approved" | "rejected" | "pending" = "pending";
+		if (source === "decision") {
+			if (decision.size !== DECISION_FIELDS.size)
+				return { ok: false, error: "incomplete or unprepared decision gate" };
+			if (
+				gate.note ||
+				decision.get("transport") !== "pending" ||
+				decision.get("effect") !== "not-started" ||
+				decision.get("business") ||
+				decision.get("model_basis") ||
+				decision.get("closure_kind")
+			) {
+				return { ok: false, error: "gate is not awaiting its first business answer" };
+			}
+			if (
+				decision.get("matter_ref") !== opts.matterRef ||
+				decision.get("substantive_version") !== opts.substantiveVersion ||
+				(decision.get("decision_ref") && decision.get("decision_ref") !== opts.decisionRef)
+			) {
+				return { ok: false, error: "decision is for a different matter, version or request" };
+			}
+			const note = decision.get("pm_note");
+			if (!note?.trim() || (opts.note !== undefined && opts.note !== note)) {
+				return { ok: false, error: "missing or changed pre-submission PM note" };
+			}
+			replacements.set("transport", "answered");
+			replacements.set("business", opts.decision);
+			replacements.set("model_basis", opts.modelBasis ?? "");
+			replacements.set("decision_ref", opts.decisionRef ?? "");
+		} else {
+			if (decision.size) return { ok: false, error: "operator answers cannot replace a prepared decision" };
+			status = opts.decision === "approve" ? "approved" : "rejected";
+			replacements.set("status", status);
+			replacements.set("note", opts.note ?? "");
+			if (authorizes) replacements.set("authorizes", JSON.stringify(authorizes));
 		}
+		for (const [name, value] of replacements) {
+			const index = positions.get(name);
+			if (index === undefined) {
+				const hint = name === "authorizes" ? " (requires conductor-materialized authorizes: [])" : "";
+				return { ok: false, error: `no '${name}:' line in frontmatter${hint}` };
+			}
+			lines[index] = `${name}:${value ? ` ${renderScalar(value)}` : ""}${lines[index].endsWith("\r") ? "\r" : ""}`;
+		}
+		const tmp = `${opts.gateFile}.tmp`;
+		fs.writeFileSync(tmp, lines.join("\n"), "utf8");
+		fs.renameSync(tmp, opts.gateFile);
 		return { ok: true, gateFile: opts.gateFile, status };
+	} catch (err) {
+		return { ok: false, error: `${opts.gateFile}: ${String(err)}` };
 	} finally {
 		release();
 	}

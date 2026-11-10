@@ -118,7 +118,7 @@ def test_goal_change_halts_and_gates_once(tmp_path: pathlib.Path) -> None:
     st = _state(project)
     assert conductor.tick(project, st) == "ok"  # no change yet
     goal = conductor.goal_path(project)
-    os.utime(goal, None)  # touch — mtime moves
+    goal.write_text("# Goal\n\nDeliver feature B.\n", encoding="utf-8")
     assert conductor.tick(project, st) == "halted-goal-change"
     gate_files = sorted(conductor.gates_dir(project).glob("gate-*.md"))
     assert len(gate_files) == 1
@@ -138,16 +138,17 @@ def test_goal_gate_answered_resumes_and_rebases(tmp_path: pathlib.Path) -> None:
     project = _project(tmp_path, enabled=True)
     st = _state(project)
     conductor.tick(project, st)
-    os.utime(conductor.goal_path(project), None)
+    conductor.goal_path(project).write_text("# Goal\n\nDeliver feature B.\n", encoding="utf-8")
     assert conductor.tick(project, st) == "halted-goal-change"
     gate_file = next(iter(conductor.gates_dir(project).glob("gate-*.md")))
-    text = gate_file.read_text(encoding="utf-8").replace("status: pending", "status: approved")
-    gate_file.write_text(text, encoding="utf-8")
+    assert conductor.answer_gate_confirmed(
+        project, st, gate_file.stem, "approve", answered_by="isolated-human"
+    ).ok
     # Answered → resume with a fresh baseline.
     assert conductor.tick(project, st) == "ok"
     assert any(e["ev"] == "goal-snapshot" for e in _events(project))
     # A later goal change opens a NEW gate (baseline was rebased).
-    os.utime(conductor.goal_path(project), None)
+    conductor.goal_path(project).write_text("# Goal\n\nDeliver feature C.\n", encoding="utf-8")
     assert conductor.tick(project, st) == "halted-goal-change"
     assert len(sorted(conductor.gates_dir(project).glob("gate-*.md"))) == 2
 
@@ -157,7 +158,7 @@ def test_open_goal_gate_survives_restart(tmp_path: pathlib.Path) -> None:
     project = _project(tmp_path, enabled=True)
     st = _state(project)
     conductor.tick(project, st)
-    os.utime(conductor.goal_path(project), None)
+    conductor.goal_path(project).write_text("# Goal\n\nDeliver feature B.\n", encoding="utf-8")
     assert conductor.tick(project, st) == "halted-goal-change"
     st2 = _state(project)  # restart: baseline is the CURRENT mtime
     assert conductor.tick(project, st2) == "halted-goal-change"
@@ -230,7 +231,7 @@ def test_conductor_source_never_writes_goal_or_phase() -> None:
         low = line.lower()
         assert "goal" not in low, f"goal write at line {lineno}: {line}"
         assert "phase" not in low, f"Phase write at line {lineno}: {line}"
-    # goal.md is only ever stat()ed.
+    # goal.md remains read-only; timestamps and content bind the review.
     assert "goal_path" in src and "st_mtime_ns" in src
 
 

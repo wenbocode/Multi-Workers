@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Multi-Workers operator</title></head><body>
+<main><h1>Multi-Workers operator</h1>
+<p id="status" role="status">Loading protected requests</p>
+<section><h2>Pending requests</h2><button id="refresh">Refresh</button><ul id="requests"></ul></section>
+<section id="review" hidden><h2>Review request</h2><p id="purpose"></p>
+<p id="provenance" role="note"></p>
+<label for="content">Complete UTF-8 payload (invisible characters are escaped below)</label><br>
+<textarea id="content" rows="18" cols="100" spellcheck="false" readonly></textarea>
+<pre id="escaped"></pre><p id="digest"></p>
+<button id="save" hidden>Save edited query for review</button>
+<button id="approve">Verify identity and confirm displayed request</button><button id="cancel">Cancel request</button>
+</section>
+<section><h2>Recovery authorizations</h2><label for="project">Project</label><select id="project"></select>
+<label for="kind">Action</label><select id="kind"></select>
+<p>Choose the live PM candidate or grant shown below. A new grant requires its scope, budget source, observation conditions, stop conditions and expiry.</p>
+<pre id="records"></pre><label for="terms">Authorization fields (JSON)</label><br>
+<textarea id="terms" rows="12" cols="100" spellcheck="false"></textarea><br>
+<button id="propose">Prepare for review</button></section></main>
+<script src="/operator_host.js" defer></script></body></html>

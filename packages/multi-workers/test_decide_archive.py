@@ -928,3 +928,45 @@ def test_concurrent_writers_never_duplicate_seq(tmp_path):
     assert sorted(seqs) == list(range(1, 2 * per_writer + 1))
     _assert_chain_intact(rows)
     assert len({row["decision_id"] for row in rows}) == 2 * per_writer
+
+
+# ---------------------------------------------------------------------------
+# T22: authority-change and key-signoff are typed, separate products
+# ---------------------------------------------------------------------------
+
+
+def test_key_signoff_finalize_word_is_not_an_authority_change(tmp_path):
+    archive = _archive(tmp_path)
+    for by in ("signoff:finalize", "signoff:user-confirm"):
+        with pytest.raises(decide_archive.DecisionArchiveError):
+            decide_archive.append_authority_change(
+                archive, dp="dp-sign-key", key="k", by=by, change="x"
+            )
+    # The legacy sign-off labels stay readable history, not the new contract.
+    row = decide_archive.append_authority_change(
+        archive,
+        dp="dp-sign-key",
+        key="k",
+        by="signoff:revoke",
+        change="historical conclusion=revoke",
+        conclusion="revoke",
+    )
+    assert row["kind"] == "authority-change"
+    assert row["conclusion"] == "revoke"
+
+
+def test_require_authority_change_refuses_a_key_signoff_product(tmp_path):
+    with pytest.raises(decide_archive.DecisionArchiveError):
+        decide_archive.require_authority_change(
+            {"kind": "key-signoff", "product_type": "key-signoff"}
+        )
+    with pytest.raises(decide_archive.DecisionArchiveError):
+        decide_archive.require_authority_change(
+            {"kind": "decide", "dp": "dp-sign-key"}
+        )
+    assert (
+        decide_archive.require_authority_change(
+            {"kind": "authority-change", "by": "human"}
+        )["kind"]
+        == "authority-change"
+    )

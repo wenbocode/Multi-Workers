@@ -2,12 +2,28 @@
 """Generate ``packages/coding-agent/.../shared/decide-registry.generated.ts``.
 
 The registry (``decision_points.registry_snapshot``) is the single authority for
-which state fields a dp requires, which facts are optional, and how each field is
-shaped (type / enum / ``max_items`` / element length / signedness).
-``decision_context.CONTEXT_SLOTS`` is the authority for the ``context`` slots a
-dp may emit. The TS producers may not keep a second hand-written copy, so this
-script renders both into a checked-in module and
+which state fields an entry requires, which facts are optional, how each field is
+shaped (type / enum / ``max_items`` / element length / ``empty_is_value`` /
+signedness), which role may initiate the entry, and which retired ids are
+read-only history. ``decision_context.CONTEXT_SLOTS`` is the authority for the
+``context`` slots an entry may emit. The TS producers may not keep a second
+hand-written copy, so this script renders both into a checked-in module and
 ``test_decide_registry_ts_lock.py`` fails on any byte drift.
+
+Generated shape (T04):
+
+* ``DECIDE_REGISTRY`` -- exactly the eight active entries, in registry order,
+  each with its questions version, ``kind``, ``roleScope`` (eligibility, never a
+  grant), business question ID and fixed answer IDs, the required/optional
+  field contract, the model allowlist, the context
+  slots it may emit, and a reference to the one preparation contract;
+* ``DECIDE_REGISTRY_PREPARATION`` -- the PM-prepared basis layer (D-012A): keys,
+  basis item keys, source, independence from material, the one extra model field
+  (``preparation.basis_catalog``) and the fact that it is never trimmable
+  context;
+* ``DECIDE_REGISTRY_RETIRED`` -- the 25 retired ids as a read-only projection
+  (disposition / migration target / explanation), never entry-shaped keys, so it
+  cannot be read as an alias or a second menu.
 
 Usage::
 
@@ -15,14 +31,21 @@ Usage::
     python scripts/gen_decide_registry_ts.py --check    # exit 1 on drift
     python scripts/gen_decide_registry_ts.py --stdout   # print, touch nothing
 
-Deterministic by construction: points are sorted by id, fields keep the
-``REQUIRED_STATE_FIELDS`` / ``OPTIONAL_STATE_FIELDS`` order, slots keep
-``decision_context.SLOT_ORDER``, and the output is already in the repo
+Deterministic by construction: entries keep ``decision_points.DP_REGISTRY``
+order, fields keep the ``REQUIRED_STATE_FIELDS`` / ``OPTIONAL_STATE_FIELDS``
+order, slots keep ``decision_context.SLOT_ORDER``, retired records keep
+``RETIRED_DP_REGISTRY`` order, and the output is already in the repo
 formatter's shape (``biome.json`` ``lineWidth``/``indentWidth``) so
 ``npm run check`` cannot rewrite the generated file: a field object stays on one
 line when it fits (120 columns, tab = 3), otherwise it is emitted expanded with
 one property per line, and a value that still does not fit is broken after its
 colon exactly like the formatter does.
+
+The script refuses to render a slot table that could trim core evidence: a slot
+whose name is a declared state path (business material) or a ``preparation``
+key would let ``decision_context.fit_context`` drop evidence while the request
+still validated, and a producer that is not an active entry would keep a
+retired id callable through the slot whitelist.
 """
 
 from __future__ import annotations
@@ -31,6 +54,7 @@ import argparse
 import json
 import pathlib
 import sys
+from functools import lru_cache
 
 _HERE = pathlib.Path(__file__).resolve().parent
 _MW_ROOT = _HERE.parent
@@ -52,6 +76,10 @@ GENERATED_HEADER = (
     "// Drift lock: test_decide_registry_ts_lock.py fails when this file is stale.\n"
 )
 
+#: The single basis field the model allowlist permits in addition to the
+#: business material (D-012A). It is a *preparation* field, never material.
+BASIS_STATE_FIELD = "preparation." + decision_points.PREPARATION_KEYS[0]
+
 #: Fallbacks when the repo formatter config cannot be read (``biome.json``).
 _DEFAULT_LINE_WIDTH = 120
 _DEFAULT_INDENT_WIDTH = 3
@@ -70,6 +98,7 @@ def _ts_string(text: str) -> str:
     return json.dumps(text, ensure_ascii=False)
 
 
+@lru_cache(maxsize=1)
 def _formatter_config() -> tuple[int, int]:
     """``(lineWidth, indentWidth)`` from the repo's biome config.
 
@@ -97,6 +126,72 @@ def _formatter_config() -> tuple[int, int]:
 def _width(indent_level: int, text: str, *, indent_width: int) -> int:
     """Printed column width of ``text`` at ``indent_level`` tabs (biome metric)."""
     return indent_level * indent_width + len(text)
+
+
+def _fits(indent_level: int, text: str) -> bool:
+    line_width, indent_width = _formatter_config()
+    return _width(indent_level, text, indent_width=indent_width) <= line_width
+
+
+def _property_lines(name: str, rendered: str, indent_level: int) -> list[str]:
+    """One ``name: value,`` property, broken after the colon when too wide."""
+    prefix = "\t" * indent_level
+    single = f"{name}: {rendered},"
+    if _fits(indent_level, single):
+        return [prefix + single]
+    return [prefix + f"{name}:", "\t" * (indent_level + 1) + rendered + ","]
+
+
+# ---------------------------------------------------------------------------
+# Slot boundary guards: a cuttable slot may never carry core evidence
+# ---------------------------------------------------------------------------
+
+
+def _declared_material_paths(doc: dict) -> tuple[str, ...]:
+    """Every required/optional state path declared by the document's entries."""
+    paths: list[str] = []
+    for point in doc["points"]:
+        for key in ("required_state_fields", "optional_state_fields"):
+            for field_spec in point.get(key) or []:
+                paths.append(str(field_spec["name"]))
+    return tuple(paths)
+
+
+def assert_slot_boundary(doc: dict) -> None:
+    """Refuse to render a slot table that can trim core decision material.
+
+    Two invariants (T04):
+
+    * no slot name may be a declared business-material path or a
+      ``preparation`` key -- ``decision_context.fit_context`` cuts whole slots
+      under budget pressure, so such a slot would delete evidence while the
+      request still validated;
+    * every slot producer must be an entry this document declares -- otherwise a
+      retired id stays callable through the per-entry slot whitelist.
+    """
+    conflicts = decision_context.trimmable_slot_conflicts(_declared_material_paths(doc))
+    if conflicts:
+        raise ValueError(
+            "context slots collide with core decision material: " + ", ".join(conflicts)
+        )
+    active = {str(point["id"]) for point in doc["points"]}
+    stray = sorted(
+        {
+            str(producer)
+            for name in decision_context.SLOT_ORDER
+            for producer in decision_context.CONTEXT_SLOTS[name].get("producers", ())
+            if str(producer) not in active
+        }
+    )
+    if stray:
+        raise ValueError(
+            "context slot provenance names non-active entries: " + ", ".join(stray)
+        )
+
+
+# ---------------------------------------------------------------------------
+# Field / entry rendering
+# ---------------------------------------------------------------------------
 
 
 def _field_properties(field_spec: dict) -> list[tuple[str, str]]:
@@ -146,18 +241,17 @@ def _render_array(rendered: str, indent_level: int) -> list[str]:
 
 def _render_field(field_spec: dict, indent_level: int) -> list[str]:
     """One field as formatter-stable TS lines (single line when it fits)."""
-    line_width, indent_width = _formatter_config()
     props = _field_properties(field_spec)
     single = "{ " + ", ".join(f"{key}: {value}" for key, value in props) + " }"
     prefix = "\t" * indent_level
-    if _width(indent_level, single + ",", indent_width=indent_width) <= line_width:
+    if _fits(indent_level, single + ","):
         return [prefix + single + ","]
     lines = [prefix + "{"]
     prop_indent = indent_level + 1
     for key, value in props:
         prop_prefix = "\t" * prop_indent
         prop_line = f"{key}: {value},"
-        if _width(prop_indent, prop_line, indent_width=indent_width) <= line_width:
+        if _fits(prop_indent, prop_line):
             lines.append(prop_prefix + prop_line)
             continue
         # Too wide: the formatter breaks after the colon and indents the value.
@@ -171,16 +265,112 @@ def _render_field(field_spec: dict, indent_level: int) -> list[str]:
     return lines
 
 
+def _render_field_list(ts_key: str, fields: list[dict]) -> list[str]:
+    if not fields:
+        return [f"\t\t{ts_key}: [],"]
+    lines = [f"\t\t{ts_key}: ["]
+    for field_spec in fields:
+        lines.extend(_render_field(field_spec, 3))
+    lines.append("\t\t],")
+    return lines
+
+
+def _render_string_list(key: str, values: list[str] | tuple[str, ...]) -> list[str]:
+    rendered = ", ".join(_ts_string(value) for value in values)
+    single = f"{key}: [{rendered}],"
+    if _fits(2, single):
+        return ["\t\t" + single]
+    lines = [f"\t\t{key}: ["]
+    lines.extend("\t\t\t" + _ts_string(value) + "," for value in values)
+    lines.append("\t\t],")
+    return lines
+
+
+def _render_entry(point: dict) -> list[str]:
+    dp_id = str(point["id"])
+    question = point["questions"][0]
+    lines = [f"\t{_ts_string(dp_id)}: {{"]
+    lines.extend(_property_lines("questionsVersion", _ts_string(str(point["questions_version"])), 2))
+    lines.extend(_property_lines("businessQuestionId", _ts_string(question["id"]), 2))
+    choices = [] if point["kind"] == "dynamic-candidates" else question["choices"]
+    lines.extend(_render_string_list("fixedChoiceIds", choices))
+    lines.extend(_property_lines("kind", _ts_string(str(point["kind"])), 2))
+    lines.extend(_property_lines("roleScope", _ts_string(str(point["role_scope"])), 2))
+    lines.extend(_render_field_list("requiredStateFields", point.get("required_state_fields") or []))
+    lines.extend(
+        _render_field_list("optionalStateFields", point.get("optional_state_fields") or [])
+    )
+    if point.get("model_state_fields"):
+        lines.extend(_render_string_list("modelStateFields", point["model_state_fields"]))
+    lines.extend(_render_string_list("contextSlots", decision_context.slot_names_for(dp_id)))
+    lines.extend(_property_lines("preparation", "DECIDE_REGISTRY_PREPARATION", 2))
+    lines.append("\t},")
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Preparation / retired rendering
+# ---------------------------------------------------------------------------
+
+
+def _render_preparation(section: dict) -> list[str]:
+    lines = ["export const DECIDE_REGISTRY_PREPARATION: DecideRegistryPreparation = {"]
+    keys = ", ".join(_ts_string(str(key)) for key in section["keys"])
+    item_keys = ", ".join(_ts_string(str(key)) for key in section["basis_item_keys"])
+    lines.extend(_property_lines("keys", f"[{keys}]", 1))
+    lines.extend(_property_lines("basisItemKeys", f"[{item_keys}]", 1))
+    lines.extend(_property_lines("basisSource", _ts_string(str(section["basis_source"])), 1))
+    lines.extend(_property_lines("independentOf", _ts_string(str(section["independent_of"])), 1))
+    lines.extend(_property_lines("basisStateField", _ts_string(BASIS_STATE_FIELD), 1))
+    lines.extend(_property_lines("contextTrimmable", "false", 1))
+    lines.append("};")
+    return lines
+
+
+def _render_retired(records: list[dict]) -> list[str]:
+    lines = [
+        "/**",
+        " * The retired ids, read-only: disposition, migration target and the",
+        " * explanation a reader (or a refusal) may quote. No required/model field",
+        " * contract, no entry-shaped key -- never an alias, never a second menu.",
+        " */",
+        "export const DECIDE_REGISTRY_RETIRED: DecideRegistryRetiredEntry[] = [",
+    ]
+    for record in records:
+        lines.append("\t{")
+        lines.extend(_property_lines("id", _ts_string(str(record["id"])), 2))
+        lines.extend(_property_lines("tier", _ts_string(str(record["tier"])), 2))
+        lines.extend(_property_lines("description", _ts_string(str(record["description"])), 2))
+        lines.extend(_property_lines("disposition", _ts_string(str(record["disposition"])), 2))
+        migrated_to = record.get("migrated_to")
+        rendered = "null" if migrated_to is None else _ts_string(str(migrated_to))
+        lines.extend(_property_lines("migratedTo", rendered, 2))
+        lines.extend(_property_lines("note", _ts_string(str(record["note"])), 2))
+        lines.append("\t},")
+    lines.append("];")
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Whole module
+# ---------------------------------------------------------------------------
+
+
 def render(snapshot: dict | None = None) -> str:
     """Render the module text for ``snapshot`` (default: live registry)."""
     doc = decision_points.registry_snapshot() if snapshot is None else snapshot
-    points = sorted(doc["points"], key=lambda point: str(point["id"]))
-    kinds = " | ".join(_ts_string(kind) for kind in decision_points.STATE_FIELD_TYPES)
+    assert_slot_boundary(doc)
+    kinds = " | ".join(_ts_string(kind) for kind in decision_points.ENTRY_KINDS)
+    roles = " | ".join(_ts_string(role) for role in decision_points.ACTOR_ROLES)
+    field_kinds = " | ".join(_ts_string(kind) for kind in decision_points.STATE_FIELD_TYPES)
+    dispositions = " | ".join(
+        _ts_string(disposition) for disposition in decision_points.RETIRED_DISPOSITIONS
+    )
     lines: list[str] = [
         GENERATED_HEADER.rstrip("\n"),
         "",
         "/** JSON-native state field kinds the registry can declare. */",
-        f"export type DecideRegistryFieldType = {kinds};",
+        f"export type DecideRegistryFieldType = {field_kinds};",
         "",
         "/**",
         " * One declared dp state field. `type`/`description` are always present;",
@@ -200,55 +390,78 @@ def render(snapshot: dict | None = None) -> str:
         "\temptyIsValue?: boolean;",
         "}",
         "",
-        "/** Required/optional dp state fields + model allowlist + context slots, generated from the Python registry. */",
-        "export interface DecideRegistryEntry {",
-        "\tquestionsVersion: string;",
-        "\trequiredStateFields: DecideRegistryField[];",
-        "\toptionalStateFields: DecideRegistryField[];",
-        "\t/** Exact business keys sent to the model; absent = no allowlist (legacy dp unchanged). */",
-        "\tmodelStateFields?: string[];",
-        "\tcontextSlots: string[];",
+        "/** How an entry's answer enum is produced (`decision_points.ENTRY_KINDS`). */",
+        f"export type DecideRegistryEntryKind = {kinds};",
+        "",
+        "/** Role eligible to *initiate* an entry: eligibility only, never a grant. */",
+        f"export type DecideRegistryRoleScope = {roles};",
+        "",
+        "/**",
+        " * The PM-prepared basis layer (D-012A). Independent of the business",
+        " * material and never carried by the trimmable `context` block: a basis",
+        " * that could be cut away would leave an invalid request looking valid.",
+        " */",
+        "export interface DecideRegistryPreparation {",
+        "\t/** Exact keys of the local `preparation` block. */",
+        "\tkeys: string[];",
+        "\t/** Exact keys of one `basis_catalog` item. */",
+        "\tbasisItemKeys: string[];",
+        "\t/** Who prepares the catalog (a real PM window, never a self-reported role). */",
+        "\tbasisSource: string;",
+        "\t/** This layer is never derived from or merged into the business material. */",
+        "\tindependentOf: string;",
+        "\t/** The one basis field the model allowlist allows besides the material. */",
+        "\tbasisStateField: string;",
+        "\t/** Core evidence: never carried by the trimmable `context` block. */",
+        "\tcontextTrimmable: false;",
         "}",
         "",
-        "export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {",
+        (
+            "/** Required/optional dp state fields, role, model allowlist, context slots"
+            " and preparation layering, generated from the Python registry. */"
+        ),
+        "export interface DecideRegistryEntry {",
+        "\tquestionsVersion: string;",
+        "\tbusinessQuestionId: string;",
+        "\t/** Allowed fixed answer IDs. Dynamic entries resolve candidates from the request material. */",
+        "\tfixedChoiceIds: readonly string[];",
+        "\tkind: DecideRegistryEntryKind;",
+        "\troleScope: DecideRegistryRoleScope;",
+        "\trequiredStateFields: DecideRegistryField[];",
+        "\toptionalStateFields: DecideRegistryField[];",
+        (
+            "\t/** Exact business keys sent to the model (every active entry declares"
+            " one; absent = no allowlist). */"
+        ),
+        "\tmodelStateFields?: string[];",
+        (
+            "\t/** The only trimmable block this entry may emit: `fit_context` may"
+            " cut whole slots, so core evidence is never a slot. */"
+        ),
+        "\tcontextSlots: string[];",
+        "\tpreparation: DecideRegistryPreparation;",
+        "}",
+        "",
+        "/** One read-only retirement record (never entry-shaped, never callable). */",
+        "export interface DecideRegistryRetiredEntry {",
+        "\tid: string;",
+        "\ttier: string;",
+        "\tdescription: string;",
+        f"\tdisposition: {dispositions};",
+        "\tmigratedTo: string | null;",
+        "\tnote: string;",
+        "}",
+        "",
     ]
-    for point in points:
-        dp_id = str(point["id"])
-        lines.append(f"\t{_ts_string(dp_id)}: {{")
-        lines.append(f"\t\tquestionsVersion: {_ts_string(str(point['questions_version']))},")
-        for key in ("required_state_fields", "optional_state_fields"):
-            fields = point.get(key) or []
-            ts_key = (
-                "requiredStateFields" if key == "required_state_fields" else "optionalStateFields"
-            )
-            if not fields:
-                lines.append(f"\t\t{ts_key}: [],")
-                continue
-            lines.append(f"\t\t{ts_key}: [")
-            for field_spec in fields:
-                lines.extend(_render_field(field_spec, 3))
-            lines.append("\t\t],")
-        model_fields = point.get("model_state_fields") or []
-        if model_fields:
-            line_width, indent_width = _formatter_config()
-            rendered = ", ".join(_ts_string(str(name)) for name in model_fields)
-            single = f"modelStateFields: [{rendered}],"
-            if _width(2, single, indent_width=indent_width) <= line_width:
-                lines.append("\t\t" + single)
-            else:
-                lines.append("\t\tmodelStateFields: [")
-                lines.extend(
-                    "\t\t\t" + _ts_string(str(name)) + "," for name in model_fields
-                )
-                lines.append("\t\t],")
-        slots = decision_context.slot_names_for(dp_id)
-        if not slots:
-            lines.append("\t\tcontextSlots: [],")
-        else:
-            rendered = ", ".join(_ts_string(slot) for slot in slots)
-            lines.append(f"\t\tcontextSlots: [{rendered}],")
-        lines.append("\t},")
+    lines.extend(_render_preparation(doc["preparation"]))
+    lines.append("")
+    lines.append("/** Exactly the eight active entries, in registry order. */")
+    lines.append("export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {")
+    for point in doc["points"]:
+        lines.extend(_render_entry(point))
     lines.append("};")
+    lines.append("")
+    lines.extend(_render_retired(doc.get("retired") or []))
     lines.append("")
     return "\n".join(lines)
 

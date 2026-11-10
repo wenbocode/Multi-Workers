@@ -125,70 +125,203 @@ def _fail(reason: str) -> decision.BackendOutcome:
     )
 
 
+#: 32-hex id the registered operator host returns for a frozen submission.
+_PENDING_ID = "0123456789abcdef0123456789abcdef"
+_PENDING_SHA = "b" * 64
+
+
+def _capture_submit(
+    monkeypatch: pytest.MonkeyPatch, captured: list, *, reply: dict | None = None
+) -> None:
+    """Replace only the host IPC: capture the exact frozen bytes it receives."""
+
+    def fake_submit(project_id: str, payload: bytes, *, timeout_ms: int = 5000) -> dict:
+        captured.append((project_id, bytes(payload)))
+        if reply is not None:
+            return dict(reply)
+        return {
+            "ok": True,
+            "id": _PENDING_ID,
+            "state": "pending",
+            "sha256": _PENDING_SHA,
+        }
+
+    monkeypatch.setattr(mw.operator_authority, "submit_ask", fake_submit)
+
+
+def _forbid_direct_backend(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Record (and fail on) any provider built by the ordinary CLI process."""
+    calls: list = []
+
+    def factory(cfg):
+        calls.append(cfg)
+        raise AssertionError("the ordinary CLI must never build a provider backend")
+
+    monkeypatch.setattr(decision, "DEFAULT_BACKEND_FACTORY", factory)
+    return calls
+
+
+def _frozen_draft(frozen: bytes) -> dict:
+    return json.loads(frozen.decode("utf-8"))
+
+
+def _authorized_send(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, frozen: bytes, answers: dict
+) -> tuple[decision.FakeBackend, dict]:
+    """The registered host callback replays the same frozen bytes exactly once."""
+    fake = decision.FakeBackend([_ok(answers)])
+    monkeypatch.setattr(decision, "DEFAULT_BACKEND_FACTORY", lambda cfg: fake)
+    monkeypatch.setattr(mw.operator_host, "authorized_callback", lambda *args, **kwargs: True)
+    result = mw.operator_ask_frozen(tmp_path, frozen)
+    assert len(fake.calls) == 1
+    return fake, result
+
+
+def _apply_result(
+    monkeypatch: pytest.MonkeyPatch, result: dict, *, state: str = "applied"
+) -> None:
+    """The host's confirmed result, read back only by `ask --result`."""
+    monkeypatch.setattr(
+        mw.operator_authority,
+        "ask_result",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "id": _PENDING_ID,
+            "state": state,
+            "result": result,
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
-# run: contract + exit-code semantics (fake backend, no network)
+# run: contract + exit-code semantics (operator host only, no direct send)
 # ---------------------------------------------------------------------------
 
 
 def test_run_available_writes_evidence_and_exits_zero(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
+    """`run` submits pending; the confirmed host replay writes the evidence."""
     _write_config(tmp_path, enabled=True)
-    _inject_backend(
-        monkeypatch,
-        decision.FakeBackend([_ok({"triage_type": {"value": "research", "confidence": 0.8}})]),
-    )
+    captured: list = []
+    _capture_submit(monkeypatch, captured)
+    backend_calls = _forbid_direct_backend(monkeypatch)
     request = _request_file(tmp_path, {"state": "card body", "questions": CHOICE_QUESTIONS})
     rc = mw.cmd_decide(_args("run", tmp_path, request_file=str(request), dp="dp1"))
     assert rc == 0
     response = json.loads(capsys.readouterr().out)
-    assert response["available"] is True
-    assert response["answers"]["triage_type"]["value"] == "research"
+    # The ordinary CLI freezes and submits; it never invents an answer.
+    assert response["state"] == "pending"
+    assert response["id"] == _PENDING_ID
+    assert "--result" in response["next"]
+    assert "available" not in response and "answers" not in response
+    assert len(captured) == 1
+    frozen = captured[0][1]
+    draft = _frozen_draft(frozen)
+    assert draft["purpose"] == "ask"
+    assert draft["questions"] == CHOICE_QUESTIONS
+    assert draft["state"] == "card body"
+    assert mw.operator_ask_validate(tmp_path, frozen) is True
+    assert not _evidence_path(tmp_path).exists()
+    assert backend_calls == []
+
+    fake, result = _authorized_send(
+        tmp_path,
+        monkeypatch,
+        frozen,
+        {"triage_type": {"value": "research", "confidence": 0.8}},
+    )
+    assert fake.calls[0]["state"] == "card body"
+    assert fake.calls[0]["questions"] == CHOICE_QUESTIONS
+    assert result["answers"]["triage_type"]["value"] == "research"
+
+    _apply_result(monkeypatch, result)
+    assert mw.cmd_decide(_ask_args(tmp_path, result=_PENDING_ID, json=True)) == 0
+    answered = json.loads(capsys.readouterr().out)
+    assert answered["answers"]["triage_type"]["value"] == "research"
     lines = _evidence_path(tmp_path).read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     record = json.loads(lines[0])
-    assert record["dp"] == "dp1"
+    assert record["dp"] == "dp-human-ask"
+    assert record["available"] is True
     assert record["ts"].endswith("+00:00")
 
 
-def test_run_unavailable_still_exits_zero(
+def test_run_unavailable_refuses_and_reports_the_transport_failure(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
+    """An unavailable host sends nothing; the failure is observed, not invented."""
     _write_config(tmp_path, enabled=True)
-    _inject_backend(monkeypatch, decision.FakeBackend([_fail("upstream-error")]))
+    captured: list = []
+    _capture_submit(monkeypatch, captured, reply={"ok": False, "reason": "host-unavailable"})
+    backend_calls = _forbid_direct_backend(monkeypatch)
     request = _request_file(tmp_path, {"state": "card body", "questions": CHOICE_QUESTIONS})
     rc = mw.cmd_decide(_args("run", tmp_path, request_file=str(request)))
-    response = json.loads(capsys.readouterr().out)
-    assert rc == 0
-    assert response["available"] is False
-    assert response["reason"] == "upstream-error"
+    first = capsys.readouterr()
+    assert rc == 2
+    assert first.out.strip() == ""
+    assert "host-unavailable" in first.err
+    assert "nothing was sent" in first.err
+    assert len(captured) == 1  # only the host guard/sender ever gets the draft
+    assert backend_calls == []
+
+    frozen = captured[0][1]
+    fake = decision.FakeBackend([_fail("upstream-error")])
+    monkeypatch.setattr(decision, "DEFAULT_BACKEND_FACTORY", lambda cfg: fake)
+    monkeypatch.setattr(mw.operator_host, "authorized_callback", lambda *args, **kwargs: True)
+    with pytest.raises(mw._OperatorAskError) as excinfo:
+        mw.operator_ask_frozen(tmp_path, frozen)
+    assert "upstream-error" in str(excinfo.value)
+    assert len(fake.calls) == 1  # the confirmed replay sends exactly once
+
+    _apply_result(monkeypatch, None, state="failed")
+    rc = mw.cmd_decide(_ask_args(tmp_path, result=_PENDING_ID))
+    failed = capsys.readouterr()
+    assert rc == 2
+    assert failed.out.strip() == ""
+    assert "failed" in failed.err and "no answer" in failed.err
 
 
-def test_run_unconfigured_reports_disabled_exit_zero(
-    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+def test_run_unconfigured_refuses_and_show_reports_disabled(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
+    captured: list = []
+    _capture_submit(monkeypatch, captured)
+    backend_calls = _forbid_direct_backend(monkeypatch)
     request = _request_file(tmp_path, {"state": "card body", "questions": CHOICE_QUESTIONS})
     rc = mw.cmd_decide(_args("run", tmp_path, request_file=str(request)))
-    response = json.loads(capsys.readouterr().out)
-    assert rc == 0
-    assert response["available"] is False
-    assert response["reason"] == "disabled"
+    refused = capsys.readouterr()
+    assert rc == 2
+    assert "not configured/enabled" in refused.err
+    assert captured == [] and backend_calls == []
+
+    # The original observability checkpoint stays: `show` reports disabled.
+    assert mw.cmd_decide(_args("show", tmp_path, json=True)) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["enabled"] is False
 
 
 def test_run_reads_request_from_stdin(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     _write_config(tmp_path, enabled=True)
-    _inject_backend(
-        monkeypatch,
-        decision.FakeBackend([_ok({"triage_type": {"value": "coding", "confidence": None}})]),
-    )
+    captured: list = []
+    _capture_submit(monkeypatch, captured)
+    backend_calls = _forbid_direct_backend(monkeypatch)
     monkeypatch.setattr(
         sys, "stdin", io.StringIO(json.dumps({"state": "card body", "questions": CHOICE_QUESTIONS}))
     )
     rc = mw.cmd_decide(_args("run", tmp_path, request_file=None))
     assert rc == 0
-    assert json.loads(capsys.readouterr().out)["available"] is True
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "pending"
+    assert payload["id"] == _PENDING_ID
+    assert len(captured) == 1
+    draft = _frozen_draft(captured[0][1])
+    assert draft["state"] == "card body"
+    assert draft["questions"] == CHOICE_QUESTIONS
+    assert mw.operator_ask_validate(tmp_path, captured[0][1]) is True
+    assert backend_calls == []
 
 
 def test_run_request_missing_questions_exit2(tmp_path: pathlib.Path) -> None:
@@ -514,6 +647,7 @@ def _ask_args(project: pathlib.Path, **kw) -> argparse.Namespace:
         "choice": [],
         "score": [],
         "model": None,
+        "result": None,
     }
     base.update(kw)
     return _args("ask", project, **base)
@@ -528,21 +662,9 @@ def test_ask_noul_and_choice_questions_match_the_contract(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     _write_config(tmp_path, enabled=True)
-    fake = decision.FakeBackend(
-        [
-            _ok(
-                {
-                    "urgent": {"value": 0.87, "confidence": None},
-                    "dept": {
-                        "value": "billing",
-                        "confidence": 0.98,
-                        "probabilities": {"billing": 0.99, "technical": 0.01},
-                    },
-                }
-            )
-        ]
-    )
-    _inject_backend(monkeypatch, fake)
+    captured: list = []
+    _capture_submit(monkeypatch, captured)
+    backend_calls = _forbid_direct_backend(monkeypatch)
     rc = mw.cmd_decide(
         _ask_args(
             tmp_path,
@@ -552,64 +674,89 @@ def test_ask_noul_and_choice_questions_match_the_contract(
         )
     )
     assert rc == 0, capsys.readouterr().err
-    call = fake.calls[0]
-    assert call["state"] == "提现失败3天"
+    pending = capsys.readouterr().out
+    assert "operator confirmation pending" in pending
+    assert _PENDING_ID in pending
+    assert len(captured) == 1
+    draft = _frozen_draft(captured[0][1])
+    assert draft["state"] == "提现失败3天"
     # `noul` without --noul-criteria must not carry the optional key at all.
-    assert call["questions"]["urgent"] == {"type": "noul", "instructions": "是否紧急"}
-    assert call["questions"]["dept"]["criteria"] == {"billing": "支付", "technical": "技术"}
-    wire = _wire_questions(call["questions"])
+    assert draft["questions"]["urgent"] == {"type": "noul", "instructions": "是否紧急"}
+    assert draft["questions"]["dept"]["criteria"] == {"billing": "支付", "technical": "技术"}
+    assert list(draft["questions"]["dept"]["criteria"]) == ["billing", "technical"]
+    wire = _wire_questions(draft["questions"])
     assert set(wire["urgent"]) == {"type", "instructions"}
     assert wire["urgent"] == {"type": "noul", "instructions": "是否紧急"}
     assert set(wire["dept"]) == {"type", "instructions", "criteria"}
     assert wire["dept"]["type"] == "choice"
     assert wire["dept"]["instructions"]
     assert wire["dept"]["criteria"] == {"billing": "支付", "technical": "技术"}
+    assert mw.operator_ask_validate(tmp_path, captured[0][1]) is True
+    assert backend_calls == []
+
+    # Only the confirmed host replay reaches the original backend, once.
+    fake, result = _authorized_send(
+        tmp_path,
+        monkeypatch,
+        captured[0][1],
+        {
+            "urgent": {"value": 0.87, "confidence": None},
+            "dept": {
+                "value": "billing",
+                "confidence": 0.98,
+                "probabilities": {"billing": 0.99, "technical": 0.01},
+            },
+        },
+    )
+    assert fake.calls[0]["state"] == "提现失败3天"
     # The evidence row is the legacy client's, tagged as the human face.
     record = json.loads(_evidence_path(tmp_path).read_text(encoding="utf-8").splitlines()[0])
     assert record["dp"] == "dp-human-ask"
     assert record["available"] is True
+
+    _apply_result(monkeypatch, result)
+    assert mw.cmd_decide(_ask_args(tmp_path, result=_PENDING_ID, json=True)) == 0
+    answered = json.loads(capsys.readouterr().out)
+    assert answered["answers"]["dept"]["value"] == "billing"
+    assert mw.cmd_decide(_ask_args(tmp_path, result=_PENDING_ID)) == 0
+    human = capsys.readouterr().out
+    assert "[noul]" in human and "[choice]" in human
 
 
 def test_ask_choice_without_label_yields_null(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     _write_config(tmp_path, enabled=True)
-    fake = decision.FakeBackend(
-        [_ok({"dept": {"value": "billing", "confidence": 0.9}})]
-    )
-    _inject_backend(monkeypatch, fake)
+    captured: list = []
+    _capture_submit(monkeypatch, captured)
+    backend_calls = _forbid_direct_backend(monkeypatch)
     rc = mw.cmd_decide(_ask_args(tmp_path, state="s", choice=["dept=billing"]))
     assert rc == 0, capsys.readouterr().err
-    assert fake.calls[0]["questions"]["dept"]["criteria"] == {"billing": None}
-    assert _wire_questions(fake.calls[0]["questions"])["dept"]["criteria"] == {"billing": None}
+    assert len(captured) == 1
+    draft = _frozen_draft(captured[0][1])
+    assert draft["questions"]["dept"]["criteria"] == {"billing": None}
+    assert _wire_questions(draft["questions"])["dept"]["criteria"] == {"billing": None}
+    assert backend_calls == []
 
 
 def test_ask_score_levels_are_ordered_criteria(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     _write_config(tmp_path, enabled=True)
-    fake = decision.FakeBackend(
-        [
-            _ok(
-                {
-                    "effort": {
-                        "value": 1.05,
-                        "confidence": 0.92,
-                        "legend": {"0": "小", "1": "中", "2": "大"},
-                    }
-                }
-            )
-        ]
-    )
-    _inject_backend(monkeypatch, fake)
+    captured: list = []
+    _capture_submit(monkeypatch, captured)
+    backend_calls = _forbid_direct_backend(monkeypatch)
     rc = mw.cmd_decide(_ask_args(tmp_path, state="s", score=["effort=小,中,大"]))
     assert rc == 0, capsys.readouterr().err
-    spec = fake.calls[0]["questions"]["effort"]
+    assert len(captured) == 1
+    draft = _frozen_draft(captured[0][1])
+    spec = draft["questions"]["effort"]
     assert spec["criteria"] == ["小", "中", "大"]
     assert (spec["min"], spec["max"]) == (0, 2)
-    wire = _wire_questions(fake.calls[0]["questions"])["effort"]
+    wire = _wire_questions(draft["questions"])["effort"]
     assert set(wire) == {"type", "instructions", "criteria"}
     assert wire["criteria"] == ["小", "中", "大"]
+    assert backend_calls == []
 
 
 @pytest.mark.parametrize("levels", ["小", ",".join("abcdefghijk")])
@@ -640,38 +787,120 @@ def test_ask_unavailable_prints_reason_and_no_answer(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     _write_config(tmp_path, enabled=True)
-    _inject_backend(monkeypatch, decision.FakeBackend([_fail("upstream-error")]))
+    captured: list = []
+    _capture_submit(monkeypatch, captured)
+    backend_calls = _forbid_direct_backend(monkeypatch)
     rc = mw.cmd_decide(_ask_args(tmp_path, state="s", noul=["urgent=是否紧急"]))
-    captured = capsys.readouterr()
+    assert rc == 0, capsys.readouterr().err
+    assert len(captured) == 1 and backend_calls == []
+    capsys.readouterr()  # consume the pending submission notice
+
+    # The formal guarded replay passes the transport failure through, once.
+    frozen = captured[0][1]
+    fake = decision.FakeBackend([_fail("upstream-error")])
+    monkeypatch.setattr(decision, "DEFAULT_BACKEND_FACTORY", lambda cfg: fake)
+    monkeypatch.setattr(mw.operator_host, "authorized_callback", lambda *args, **kwargs: True)
+    with pytest.raises(mw._OperatorAskError) as excinfo:
+        mw.operator_ask_frozen(tmp_path, frozen)
+    assert "upstream-error" in str(excinfo.value)
+    assert len(fake.calls) == 1
+
+    # The human-facing client keeps the backend detail for that transport seam.
+    cfg = mw._decide_config_snapshot(tmp_path)
+    assert cfg is not None
+    client = mw._AskDecisionClient(
+        cfg, project_root=tmp_path, credential_snapshot=decision.credential_snapshot(cfg)
+    )
+    monkeypatch.setattr(
+        decision,
+        "DEFAULT_BACKEND_FACTORY",
+        lambda _cfg: decision.FakeBackend([_fail("upstream-error")]),
+    )
+    response = client.decide(
+        "s", {"urgent": {"type": "noul", "instructions": "是否紧急"}}, dp=mw._ASK_DP
+    )
+    assert response["available"] is False
+    assert response["reason"] == "upstream-error"
+    assert client.ask_detail == "programmed failure"  # the backend detail is passed through
+
+    _apply_result(monkeypatch, None, state="failed")
+    failed = mw.cmd_decide(_ask_args(tmp_path, result=_PENDING_ID))
+    captured_io = capsys.readouterr()
+    assert failed == 2
+    assert "failed" in captured_io.err and "no answer" in captured_io.err
+    assert captured_io.out.strip() == ""
+
+
+def test_ask_without_a_host_never_sends_and_never_falls_back(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _write_config(tmp_path, enabled=True)
+    captured: list = []
+    _capture_submit(monkeypatch, captured, reply={"ok": False, "reason": "host-unavailable"})
+    backend_calls = _forbid_direct_backend(monkeypatch)
+    rc = mw.cmd_decide(_ask_args(tmp_path, state="s", noul=["urgent=是否紧急"]))
+    io = capsys.readouterr()
     assert rc == 2
-    assert "upstream-error" in captured.err
-    assert "programmed failure" in captured.err  # the backend detail is passed through
-    assert captured.out.strip() == ""
+    assert io.out.strip() == ""
+    assert "host-unavailable" in io.err
+    assert "no direct fallback" in io.err
+    assert len(captured) == 1  # the draft only reaches the host guard/sender
+    assert backend_calls == []
+
+
+@pytest.mark.parametrize("state", ["failed", "expired", "reserved", "unknown"])
+def test_ask_result_cancelled_or_replaced_never_sends(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    state: str,
+) -> None:
+    """A cancelled/expired/replaced submission is an observation, not an answer."""
+    _write_config(tmp_path, enabled=True)
+    backend_calls = _forbid_direct_backend(monkeypatch)
+    submitted: list = []
+    _capture_submit(monkeypatch, submitted)
+    _apply_result(monkeypatch, None, state=state)
+    rc = mw.cmd_decide(_ask_args(tmp_path, result=_PENDING_ID))
+    io = capsys.readouterr()
+    assert rc == 2
+    assert io.out.strip() == ""
+    assert state in io.err and "no answer" in io.err
+    assert submitted == []  # reading a result never submits a new request
+    assert backend_calls == []
 
 
 def test_ask_json_is_machine_readable(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     _write_config(tmp_path, enabled=True)
-    _inject_backend(
-        monkeypatch,
-        decision.FakeBackend(
-            [
-                _ok(
-                    {
-                        "dept": {
-                            "value": "billing",
-                            "confidence": 0.98,
-                            "probabilities": {"billing": 0.99, "technical": 0.01},
-                        }
-                    }
-                )
-            ]
-        ),
-    )
+    captured: list = []
+    _capture_submit(monkeypatch, captured)
+    backend_calls = _forbid_direct_backend(monkeypatch)
     rc = mw.cmd_decide(
         _ask_args(tmp_path, json=True, state="s", choice=["dept=billing:支付,technical:技术"])
     )
+    pending = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert pending["state"] == "pending"
+    assert pending["id"] == _PENDING_ID
+    assert "answers" not in pending  # no invented `available` answer
+    assert len(captured) == 1 and backend_calls == []
+
+    _, result = _authorized_send(
+        tmp_path,
+        monkeypatch,
+        captured[0][1],
+        {
+            "dept": {
+                "value": "billing",
+                "confidence": 0.98,
+                "probabilities": {"billing": 0.99, "technical": 0.01},
+            }
+        },
+    )
+    _apply_result(monkeypatch, result)
+    rc = mw.cmd_decide(_ask_args(tmp_path, result=_PENDING_ID, json=True))
     out = capsys.readouterr().out
     assert rc == 0
     payload = json.loads(out)
@@ -687,28 +916,9 @@ def test_ask_human_rows_show_type_confidence_probs_and_legend(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     _write_config(tmp_path, enabled=True)
-    _inject_backend(
-        monkeypatch,
-        decision.FakeBackend(
-            [
-                _ok(
-                    {
-                        "dept": {
-                            "value": "billing",
-                            "confidence": 0.98,
-                            "probabilities": {"billing": 0.99, "technical": 0.01},
-                        },
-                        "urgent": {"value": 0.87, "confidence": None},
-                        "effort": {
-                            "value": 1.05,
-                            "confidence": 0.92,
-                            "legend": {"0": "小", "1": "中", "2": "大"},
-                        },
-                    }
-                )
-            ]
-        ),
-    )
+    captured: list = []
+    _capture_submit(monkeypatch, captured)
+    backend_calls = _forbid_direct_backend(monkeypatch)
     rc = mw.cmd_decide(
         _ask_args(
             tmp_path,
@@ -718,6 +928,30 @@ def test_ask_human_rows_show_type_confidence_probs_and_legend(
             score=["effort=小,中,大"],
         )
     )
+    assert rc == 0, capsys.readouterr().err
+    assert len(captured) == 1 and backend_calls == []
+    capsys.readouterr()  # consume the pending submission notice
+
+    _, result = _authorized_send(
+        tmp_path,
+        monkeypatch,
+        captured[0][1],
+        {
+            "dept": {
+                "value": "billing",
+                "confidence": 0.98,
+                "probabilities": {"billing": 0.99, "technical": 0.01},
+            },
+            "urgent": {"value": 0.87, "confidence": None},
+            "effort": {
+                "value": 1.05,
+                "confidence": 0.92,
+                "legend": {"0": "小", "1": "中", "2": "大"},
+            },
+        },
+    )
+    _apply_result(monkeypatch, result)
+    rc = mw.cmd_decide(_ask_args(tmp_path, result=_PENDING_ID))
     out = capsys.readouterr().out
     assert rc == 0
     lines = out.splitlines()
@@ -741,11 +975,13 @@ def test_ask_state_from_at_file_and_conflicting_state_flags(
     _write_config(tmp_path, enabled=True)
     state_file = tmp_path / "state.txt"
     state_file.write_text("工单正文", encoding="utf-8", newline="\n")
-    fake = decision.FakeBackend([_ok({"dept": {"value": "billing", "confidence": 0.9}})])
-    _inject_backend(monkeypatch, fake)
+    captured: list = []
+    _capture_submit(monkeypatch, captured)
+    backend_calls = _forbid_direct_backend(monkeypatch)
     rc = mw.cmd_decide(_ask_args(tmp_path, state=f"@{state_file}", choice=["dept=billing"]))
     assert rc == 0, capsys.readouterr().err
-    assert fake.calls[0]["state"] == "工单正文"
+    assert len(captured) == 1
+    assert _frozen_draft(captured[0][1])["state"] == "工单正文"
     rc = mw.cmd_decide(
         _ask_args(tmp_path, state="s", state_file=str(state_file), choice=["dept=billing"])
     )
@@ -754,6 +990,8 @@ def test_ask_state_from_at_file_and_conflicting_state_flags(
     rc = mw.cmd_decide(_ask_args(tmp_path, choice=["dept=billing"]))
     assert rc == 2
     assert "--state" in capsys.readouterr().err
+    assert len(captured) == 1  # local argument refusals never reach the host
+    assert backend_calls == []
 
 
 def test_ask_duplicate_choice_key_exit2(
@@ -774,8 +1012,9 @@ def test_ask_noul_criteria_and_model_passthrough(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     _write_config(tmp_path, enabled=True)
-    fake = decision.FakeBackend([_ok({"urgent": {"value": 0.87, "confidence": None}})])
-    _inject_backend(monkeypatch, fake)
+    captured: list = []
+    _capture_submit(monkeypatch, captured)
+    backend_calls = _forbid_direct_backend(monkeypatch)
     rc = mw.cmd_decide(
         _ask_args(
             tmp_path,
@@ -786,18 +1025,25 @@ def test_ask_noul_criteria_and_model_passthrough(
         )
     )
     assert rc == 0, capsys.readouterr().err
-    call = fake.calls[0]
-    assert call["questions"]["urgent"]["criteria"] == {
+    assert len(captured) == 1
+    draft = _frozen_draft(captured[0][1])
+    assert draft["questions"]["urgent"]["criteria"] == {
         "true": "明确有时效性",
         "false": "未表达紧急性",
     }
-    assert _wire_questions(call["questions"])["urgent"]["criteria"] == {
+    assert _wire_questions(draft["questions"])["urgent"]["criteria"] == {
         "true": "明确有时效性",
         "false": "未表达紧急性",
     }
     # --model only overrides the config value; the server stays the authority on
     # whether the name exists (unknown names are sent as-is).
-    assert call["cfg"].model == "jev-latest-canary"
+    assert draft["model"] == "jev-latest-canary"
+    assert backend_calls == []
+
+    fake, _ = _authorized_send(
+        tmp_path, monkeypatch, captured[0][1], {"urgent": {"value": 0.87, "confidence": None}}
+    )
+    assert fake.calls[0]["cfg"].model == "jev-latest-canary"
 
 
 # ---------------------------------------------------------------------------
@@ -846,11 +1092,12 @@ def test_cli_decide_set_then_run_stdin_smoke(tmp_path: pathlib.Path) -> None:
         input_text=json.dumps({"state": "card body", "questions": CHOICE_QUESTIONS}),
         home=tmp_path,
     )
-    assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
-    # configured + no credential => unavailable, and that is a normal exit 0
-    assert payload["available"] is False
-    assert payload["reason"] in ("entry-unavailable", "disabled")
+    # A bare child process has no registered host: it refuses, sends nothing and
+    # never fabricates an answer.
+    assert proc.returncode == 2, proc.stderr
+    assert "registered operator host is not available" in proc.stderr
+    assert "nothing was sent" in proc.stderr
+    assert proc.stdout.strip() == ""
 
 
 def test_cli_doctor_json_has_decide_section(tmp_path: pathlib.Path) -> None:

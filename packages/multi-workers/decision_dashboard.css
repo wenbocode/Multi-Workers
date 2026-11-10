@@ -757,3 +757,71 @@ ul.plain li.material-item {
   margin: 0.1rem 0;
   overflow-wrap: anywhere;
 }
+
+.entry-facts {
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: var(--panel);
+}
+
+.entry-facts h5,
+.entry-facts h6 {
+  margin: 0.45rem 0 0.2rem;
+}
+
+.entry-block {
+  margin-top: 0.5rem;
+}
+
+.entry-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.entry-successor {
+  margin: 0.35rem 0;
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--line);
+}
+
+.entry-form-section {
+  margin-top: 1rem;
+}
+
+.entry-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.entry-field-group,
+.entry-choices {
+  margin: 0.3rem 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+}
+
+.entry-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0.3rem 0;
+  font-size: 0.85rem;
+}
+
+.entry-field input,
+.entry-field select,
+.entry-field textarea {
+  font: inherit;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 0.25rem;
+}
+
+.entry-choice-list {
+  margin: 0;
+  padding-left: 1.1rem;
+}

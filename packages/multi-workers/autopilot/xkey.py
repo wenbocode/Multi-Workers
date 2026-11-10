@@ -27,10 +27,17 @@ Contract notes (frozen in ``plan.md``; signatures are byte-for-byte):
   ``dedup_key`` never adds a row (only merges fields / appends de-duplicated
   history entries, AC-001). A corrupt ledger is never overwritten.
 
-Ticket frontmatter is the gate-protocol *shape* (``---`` fenced ``key: value``
+Tickets are gate-protocol *shape* (``---`` fenced ``key: value``
 block + human body) rendered by this module's own YAML subset; complex values
 are rendered as nested blocks (or inline JSON, which the parser also accepts,
 so hand-written tickets round-trip).
+
+H07 (AC-026/AC-027/AC-052) adds the restricted cross-key repair machine layer
+at the end of this module: :func:`assess_repair_request` judges the complete PM
+note + exact approval + role/actor + claim, and :func:`claim_acquire` takes
+real per-file ``O_CREAT|O_EXCL`` markers in sorted order. None of these
+judgements writes or dispatches; :func:`apply_block_replace` only writes when
+the caller passes an executable verdict that names the target file.
 
 Hashing (D-011/D-012): every mechanical anchor is a **byte-exact** sha256 over
 the frozen ``line_range`` bytes, CRLF/LF untouched. Matching EOL-normalized
@@ -42,6 +49,7 @@ directly usable for a block).
 from __future__ import annotations
 
 import ast
+import dataclasses
 import datetime
 import fnmatch
 import hashlib
@@ -49,8 +57,11 @@ import json
 import os
 import pathlib
 import re
+import socket
 import subprocess
 import sys
+import time
+import uuid
 
 # Script-mode bootstrap: mirror conductor.py / state.py so ``import mw_common``
 # works both under pytest (repo root on sys.path) and as a plain module.
@@ -59,6 +70,8 @@ if str(_PARENT) not in sys.path:
     sys.path.insert(0, str(_PARENT))
 
 import mw_common  # noqa: E402  (path bootstrapped above)
+import decision_validity as _validity  # noqa: E402  (pure sibling module)
+from autopilot import contract_guard as _guard  # noqa: E402
 
 # ── Public constants (frozen contract) ────────────────────────────────────────
 
@@ -137,6 +150,10 @@ class XKeyShaDrift(XKeyError):
 
 class XKeyAuthorizationError(XKeyError):
     """A write was attempted on a ticket that is not authorised."""
+
+
+class XKeyBoundaryViolation(XKeyAuthorizationError):
+    """The actual splice overlaps the ticket's forbidden file or lines."""
 
 
 # ── Small time/path/hash helpers ──────────────────────────────────────────────
@@ -1167,7 +1184,13 @@ def _apply_targets(ticket: dict) -> tuple[str, list[int], str]:
     return _normalize_rel(file_value), [ordered[0], ordered[-1]], sha_value
 
 
-def apply_block_replace(root: pathlib.Path | str, ticket: dict, new_bytes: bytes) -> str:
+def apply_block_replace(
+    root: pathlib.Path | str,
+    ticket: dict,
+    new_bytes: bytes,
+    *,
+    authorization: "RepairVerdict | None" = None,
+) -> str:
     """Splice ``new_bytes`` over the ticket's frozen ``line_range`` (D-005).
 
     Recomputes ``sha256`` over the **current** bytes of that range and compares
@@ -1176,6 +1199,10 @@ def apply_block_replace(root: pathlib.Path | str, ticket: dict, new_bytes: bytes
     rewritten atomically (``tmp`` + ``os.replace``) with every other byte
     untouched. Returns ``sha256`` of the **new block bytes** (D-012), which is
     the ``new`` value of the AC-006 ``old → new`` pair.
+
+    When ``authorization`` is supplied (H07), the write additionally requires an
+    executable repair verdict that names this exact file. The verdict itself
+    never writes or dispatches; this explicit call is the only write.
     """
     if not isinstance(ticket, dict):
         raise XKeyFormatError("ticket must be a dict")
@@ -1185,6 +1212,40 @@ def apply_block_replace(root: pathlib.Path | str, ticket: dict, new_bytes: bytes
             f"ticket status {status!r} does not authorise a write"
         )
     file_value, line_range, expected_sha = _apply_targets(ticket)
+    if authorization is not None:
+        if getattr(authorization, "_issued", None) is not _REPAIR_ISSUED:
+            raise XKeyAuthorizationError(
+                "repair authorization was not issued by the real-supply assessment"
+            )
+        if not getattr(authorization, "executable", False):
+            raise XKeyAuthorizationError("repair authorization is not executable")
+        if not getattr(authorization, "binding_verified", False):
+            raise XKeyAuthorizationError(
+                "repair authorization is not bound to a verified real source"
+            )
+        decision_ref = getattr(authorization, "decision_ref", None)
+        if not isinstance(decision_ref, str) or not decision_ref:
+            raise XKeyAuthorizationError("repair authorization carries no decision binding")
+        approved = tuple(getattr(authorization, "approved_files", ()) or ())
+        if _normalize_rel(file_value) not in approved:
+            raise XKeyAuthorizationError(
+                f"repair authorization does not cover {file_value}"
+            )
+        approved_key = getattr(authorization, "target_key", None)
+        ticket_key = ticket.get("owner_key") or ticket.get("target_key")
+        if approved_key is not None and ticket_key is not None and approved_key != ticket_key:
+            raise XKeyAuthorizationError(
+                "repair authorization names a different target key than the ticket"
+            )
+
+    if check_boundary(
+        {"file": file_value, "line_range": line_range, "old_block_sha256": expected_sha},
+        ticket,
+    ) != "ok":
+        raise XKeyBoundaryViolation(
+            f"ticket boundary violation in {file_value}:{line_range[0]}-{line_range[1]} "
+            "(no write)"
+        )
 
     if isinstance(new_bytes, str):
         payload = new_bytes.encode("utf-8")
@@ -1433,3 +1494,881 @@ def evidence_bundle_write(root: pathlib.Path | str, request_id: str, bundle: dic
         tmp.write_text(payload, encoding="utf-8", newline="\n")
         os.replace(tmp, target)
     return str(bundle_path)
+
+
+# ── H07: restricted cross-key repair (AC-026 / AC-027 / AC-052) ───────────────
+#
+# A cross-key repair is requested by the PM but executed by a worker. The note
+# has to name necessity, target key/file/action, impact, authorization,
+# coordination and verification; the approval must cover exactly that surface.
+# Project write-face containment is never a permission. Execution additionally
+# requires a role/actor match and a real exclusive claim.
+
+CLAIMS_DIR_NAME = "claims"
+
+_REPAIR_ISSUED = object()
+
+_REPAIR_REQUIRED_FIELDS: tuple[str, ...] = (
+    "request_id",
+    "target_key",
+    "action",
+    "necessity",
+    "impact",
+    "authorization",
+    "coordination",
+    "verification",
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class RepairRequest:
+    """The PM-prepared restricted cross-key repair note (intent only)."""
+
+    request_id: str
+    target_key: str
+    files: tuple[str, ...]
+    action: str
+    necessity: str
+    impact: str
+    authorization: str
+    coordination: str
+    verification: str
+
+
+@dataclasses.dataclass(frozen=True)
+class RepairApproval:
+    """The approving answer: only the named key/files/action.
+
+    ``authority_ref`` is resolved against the real T07 authority source; the
+    ``authority_source`` text is retained only for display and is never a
+    grant.
+    """
+
+    approval_ref: str
+    target_key: str
+    files: tuple[str, ...]
+    action: str
+    authority_source: str
+    authority_ref: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
+class RepairVerdict:
+    """Whether the repair may execute, and on which restricted files.
+
+    ``dispatched`` and ``written`` are always ``False`` here: a selection is
+    not a dispatch, and an authorization is not a modification.
+    ``binding_verified`` is only set by a successful real-supply verification;
+    :func:`apply_block_replace` refuses an authorization without it.
+    """
+
+    status: str
+    executable: bool
+    reasons: tuple[str, ...]
+    approved_files: tuple[str, ...]
+    dispatched: bool = False
+    written: bool = False
+    binding_verified: bool = False
+    authority_ref: str | None = None
+    target_key: str | None = None
+    decision_ref: str | None = None
+    _issued: object | None = dataclasses.field(default=None, repr=False, compare=False)
+
+
+def claims_dir(root: pathlib.Path | str) -> pathlib.Path:
+    """Per-file claim markers for the xkey repair surface."""
+
+    return _xkey_dir(root) / CLAIMS_DIR_NAME
+
+
+def _surface_problem(value: object) -> tuple[str | None, str | None]:
+    """Validate one restricted repair path (fail-closed; no wildcards)."""
+
+    if not isinstance(value, str) or not value.strip():
+        return "empty_write_face", None
+    text = value.strip().replace("\\", "/")
+    if text.startswith("/") or re.match(r"^[A-Za-z]:", text):
+        return "absolute_path", None
+    if "*" in text or "?" in text or "[" in text:
+        return "open_ended_repair", None
+    if text.endswith("/"):
+        return "open_ended_repair", None
+    parts = [part for part in text.split("/") if part not in ("", ".")]
+    if ".." in parts:
+        return "parent_traversal", None
+    if not parts:
+        return "empty_write_face", None
+    return None, "/".join(parts)
+
+
+def _repair_files(values: object) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if not isinstance(values, (list, tuple)) or not values:
+        return ("empty_write_face",), ()
+    problems: list[str] = []
+    files: list[str] = []
+    for value in values:
+        problem, normalised = _surface_problem(value)
+        if problem is not None:
+            problems.append(problem)
+        elif normalised is not None:
+            files.append(normalised)
+    return tuple(dict.fromkeys(problems)), tuple(sorted(set(files)))
+
+
+def _repair_note_problems(request: "RepairRequest", note: str | None) -> tuple[str, ...]:
+    """The PM note must name necessity, target, action, impact and checks."""
+
+    if not isinstance(note, str) or not note.strip():
+        return ("missing_pm_note",)
+    required = [
+        request.target_key,
+        request.action,
+        request.necessity,
+        request.impact,
+        request.coordination,
+        request.verification,
+        *request.files,
+    ]
+    if any(value not in note for value in required):
+        return ("incomplete_pm_note",)
+    return ()
+
+
+def _active_claim_for(
+    root: pathlib.Path | str,
+    *,
+    actor: str,
+    task_key: str,
+    files: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Every requested file must carry this actor/task's real claim marker."""
+
+    reasons: list[str] = []
+    markers = claims_dir(root)
+    for file_value in files:
+        marker = _claim_marker(root, file_value)
+        if not marker.is_file():
+            reasons.append("missing_claim")
+            continue
+        try:
+            existing = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            reasons.append("unreadable_claim")
+            continue
+        if (
+            not isinstance(existing, dict)
+            or existing.get("owner") != actor
+            or existing.get("task_key") != task_key
+            or existing.get("exclusive") is not True
+            or existing.get("canonical")
+            != _canonical_claim_path(root, file_value)[0]
+        ):
+            reasons.append("foreign_claim")
+    return tuple(dict.fromkeys(reasons))
+
+
+def assess_repair_request(
+    request: RepairRequest,
+    approval: RepairApproval | None,
+    claims: list,
+    claim_request: object,
+    *,
+    actor: str,
+    role: str,
+    supply: _guard.TrustedSupply | None = None,
+    pm_note: str | None = None,
+) -> RepairVerdict:
+    """Judge one restricted cross-key repair against real artefacts.
+
+    The request text is intent only. Execution additionally requires the real
+    T17 gate, T10 request/basis/note, live PM claim, T07 authority, cumulative
+    hard budget and the actor's own on-disk claim markers.
+    """
+
+    reasons: list[str] = []
+    missing = [
+        field
+        for field in _REPAIR_REQUIRED_FIELDS
+        if not isinstance(getattr(request, field), str)
+        or not getattr(request, field).strip()
+    ]
+    if not isinstance(request.files, (list, tuple)) or not request.files:
+        missing.append("files")
+    if missing:
+        reasons.append("incomplete_repair_note")
+
+    if role != "worker":
+        reasons.append("role_not_allowed")
+    claim_actor = getattr(claim_request, "actor", None)
+    claim_task = getattr(claim_request, "task_key", None)
+    if (
+        not isinstance(actor, str)
+        or not actor.strip()
+        or claim_actor != actor
+        or not isinstance(claim_task, str)
+        or not claim_task.strip()
+    ):
+        reasons.append("actor_mismatch")
+
+    target_key = request.target_key
+    if (
+        not isinstance(target_key, str)
+        or not _KEY_NAME_RE.match(target_key)
+        or target_key.lower() in _OWNER_ROLE_TOKENS
+    ):
+        reasons.append("invalid_target_key")
+
+    file_problems, requested_files = _repair_files(request.files)
+    reasons.extend(file_problems)
+    reasons.extend(_repair_note_problems(request, pm_note))
+
+    approved_files: tuple[str, ...] = ()
+    if approval is None:
+        reasons.append("missing_approval")
+    else:
+        approved_problems, approved_files = _repair_files(approval.files)
+        reasons.extend(approved_problems)
+        if approval.target_key != request.target_key:
+            reasons.append("reused_unrelated_repair_approval")
+        if approval.action != request.action:
+            reasons.append("approval_action_mismatch")
+        if approval.authority_ref != request.authorization:
+            reasons.append("approval_authority_mismatch")
+        requested = set(requested_files)
+        approved = set(approved_files)
+        if approved - requested:
+            reasons.append("approval_scope_expansion")
+        if requested - approved:
+            reasons.append("approval_scope_too_narrow")
+
+    supply_reasons: tuple[str, ...] = ()
+    if not file_problems and requested_files and claim_actor == actor and claim_task:
+        claim_verdict = _validity.assess_claim(list(claims), claim_request)
+        if claim_verdict.status != "clear":
+            reasons.append("claim_conflict")
+        supply_reasons, _gate = _guard.verify_supply(
+            supply,
+            gate_kind="xkey-authorize",
+            expected_gate_key=request.target_key,
+            required_scope=(
+                f"xkey-repair:{request.target_key}",
+                f"xkey-action:{request.action}",
+                *(f"xkey-file:{file}" for file in requested_files),
+            ),
+            authority_ref=request.authorization,
+            require_files=requested_files,
+            note=pm_note,
+            target_key=request.target_key,
+        )
+        if supply is not None:
+            supply_reasons = tuple(supply_reasons) + _active_claim_for(
+                supply.project_root,
+                actor=actor,
+                task_key=claim_task,
+                files=requested_files,
+            )
+    else:
+        supply_reasons, _gate = _guard.verify_supply(
+            supply,
+            gate_kind="xkey-authorize",
+            expected_gate_key=request.target_key,
+            required_scope=(),
+            authority_ref=request.authorization,
+            note=pm_note,
+            target_key=request.target_key,
+        )
+    reasons.extend(supply_reasons)
+
+    unique = tuple(dict.fromkeys(reasons))
+    executable = not unique
+    return RepairVerdict(
+        status="authorized" if executable else "blocked",
+        executable=executable,
+        reasons=unique,
+        approved_files=requested_files if executable else approved_files,
+        dispatched=False,
+        written=False,
+        binding_verified=executable and supply is not None,
+        authority_ref=request.authorization if executable else None,
+        target_key=request.target_key if executable else None,
+        decision_ref=(supply.decision_ref if executable and supply is not None else None),
+        _issued=_REPAIR_ISSUED if executable else None,
+    )
+
+
+#: This process's own claim generation: only a matching token is a re-entry.
+_PROCESS_TOKEN = uuid.uuid4().hex
+_HOST = socket.gethostname()
+
+
+def _canonical_claim_path(
+    root: pathlib.Path | str, file_value: str
+) -> tuple[str, str]:
+    """One physical identity for a claimed path (case/alias/reparse aware)."""
+
+    rel = _normalize_rel(file_value)
+    candidate = pathlib.Path(root) / rel
+    try:
+        resolved = candidate.resolve()
+    except (OSError, RuntimeError):
+        resolved = pathlib.Path(os.path.abspath(str(candidate)))
+    return os.path.normcase(str(resolved)), rel
+
+
+def _claim_marker(root: pathlib.Path | str, file_value: str) -> pathlib.Path:
+    canonical, _rel = _canonical_claim_path(root, file_value)
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
+    return claims_dir(root) / f"{digest}.json"
+
+
+def _unlink_claim_marker(marker: pathlib.Path) -> None:
+    """Unlink a marker even while a concurrent reader still has it open.
+
+    Windows refuses to remove an open file (WinError 32). Concurrent claim
+    attempts read markers to decide conflicts, so a losing attempt's cleanup
+    can race that short-lived read. Retry only the transient sharing error;
+    every other error stays visible (a failed cleanup must not be silent).
+    """
+
+    for attempt in range(40):
+        try:
+            marker.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if attempt == 39:
+                raise
+            time.sleep(0.005)
+
+
+def _claim_identity(
+    owner: str, task_key: str, files: tuple[str, ...], root: pathlib.Path | str
+) -> str:
+    canonical = ",".join(
+        sorted(_canonical_claim_path(root, file_value)[0] for file_value in files)
+    )
+    return _sha256(
+        (owner + "\x1f" + task_key + "\x1f" + canonical + "\x1f" + _PROCESS_TOKEN).encode(
+            "utf-8"
+        )
+    )[:16]
+
+
+def _read_marker(marker: pathlib.Path) -> dict | None:
+    """A usable marker, or ``None`` for an empty/corrupt/foreign-shaped file."""
+
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if not isinstance(data.get("owner"), str) or not data.get("owner"):
+        return None
+    if not isinstance(data.get("task_key"), str) or not data.get("task_key"):
+        return None
+    if data.get("exclusive") is not True:
+        return None
+    return data
+
+
+def _marker_liveness(existing: dict) -> str:
+    if existing.get("host") != _HOST:
+        return "unknown"
+    pid = existing.get("pid")
+    if type(pid) is not int or pid <= 0:
+        return "unknown"
+    return mw_common.process_alive_state(pid)
+
+
+def claim_acquire(
+    root: pathlib.Path | str,
+    *,
+    owner: str,
+    task_key: str,
+    files: list[str] | tuple[str, ...],
+) -> dict:
+    """Acquire per-file claims with ``O_CREAT|O_EXCL`` markers (real lock).
+
+    Files are attempted in canonical sorted order so two windows never
+    deadlock. Only the *same process generation* (same owner, task, file set
+    and process token) is re-entrant; the same owner/task from another process
+    is a second writer and therefore a conflict. Empty/corrupt markers are
+    conflicts (never overwritten), and a dead owner is reported stale without
+    takeover. Any conflict releases only what this call created.
+    """
+
+    if not isinstance(owner, str) or not owner.strip():
+        raise XKeyFormatError("claim requires a non-empty owner")
+    if not isinstance(task_key, str) or not task_key.strip():
+        raise XKeyFormatError("claim requires a non-empty task_key")
+    problems, normalised = _repair_files(files)
+    if problems or not normalised:
+        raise XKeyFormatError(
+            "claim requires a valid restricted write face: " + ", ".join(problems or ("empty",))
+        )
+
+    ordered = sorted(
+        normalised, key=lambda value: _canonical_claim_path(root, value)[0]
+    )
+    claim_id = _claim_identity(owner, task_key, tuple(ordered), root)
+    acquired: list[str] = []
+    reentrant: list[str] = []
+    conflicts: list[str] = []
+    stale: list[str] = []
+    unreadable: list[str] = []
+    conflicting_owners: set[str] = set()
+    claims_dir(root).mkdir(parents=True, exist_ok=True)
+    try:
+        for file_value in ordered:
+            marker = _claim_marker(root, file_value)
+            payload = {
+                "schema": 2,
+                "file": file_value,
+                "canonical": _canonical_claim_path(root, file_value)[0],
+                "owner": owner,
+                "task_key": task_key,
+                "claim_id": claim_id,
+                "pid": os.getpid(),
+                "host": _HOST,
+                "process_token": _PROCESS_TOKEN,
+                "exclusive": True,
+                "created_at": _iso_now(),
+            }
+            # Publish the complete marker atomically: a concurrent reader must
+            # never observe the in-progress empty file between O_EXCL create and
+            # write (that would be indistinguishable from a crashed writer).
+            staging = marker.with_name(f"{marker.name}.{uuid.uuid4().hex}.tmp")
+            staging.write_text(
+                json.dumps(payload, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            try:
+                os.link(staging, marker)
+            except FileExistsError:
+                _unlink_claim_marker(staging)
+                existing = _read_marker(marker)
+                if existing is None:
+                    conflicts.append(file_value)
+                    unreadable.append(file_value)
+                    conflicting_owners.add("unknown")
+                    continue
+                if (
+                    existing.get("process_token") == _PROCESS_TOKEN
+                    and existing.get("claim_id") == claim_id
+                ):
+                    reentrant.append(file_value)
+                    continue
+                conflicts.append(file_value)
+                conflicting_owners.add(str(existing.get("owner", "unknown")))
+                if (
+                    existing.get("owner") == owner
+                    and existing.get("task_key") == task_key
+                    and _marker_liveness(existing) == "dead"
+                ):
+                    stale.append(file_value)
+                continue
+            _unlink_claim_marker(staging)
+            acquired.append(file_value)
+    except BaseException:
+        for file_value in acquired:
+            try:
+                _unlink_claim_marker(_claim_marker(root, file_value))
+            except FileNotFoundError:
+                pass
+        raise
+
+    if conflicts:
+        for file_value in acquired:
+            try:
+                _unlink_claim_marker(_claim_marker(root, file_value))
+            except FileNotFoundError:
+                pass
+        return {
+            "status": "conflict",
+            "claim_id": None,
+            "owner": owner,
+            "task_key": task_key,
+            "owned": (),
+            "reentrant": tuple(sorted(reentrant)),
+            "conflicts": tuple(sorted(conflicts)),
+            "conflicting_owners": tuple(sorted(conflicting_owners)),
+            "stale": tuple(sorted(stale)),
+            "unreadable": tuple(sorted(unreadable)),
+            "takeover": False,
+        }
+
+    return {
+        "status": "acquired",
+        "claim_id": claim_id,
+        "owner": owner,
+        "task_key": task_key,
+        "owned": tuple(sorted(acquired)),
+        "reentrant": tuple(sorted(reentrant)),
+        "conflicts": (),
+        "conflicting_owners": (),
+        "stale": (),
+        "unreadable": (),
+        "takeover": False,
+    }
+
+
+def claim_release(root: pathlib.Path | str, claim: dict) -> None:
+    """Release only this exact claim generation (idempotent for missing files)."""
+
+    if not isinstance(claim, dict):
+        raise XKeyFormatError("claim must be a dict")
+    owner = claim.get("owner")
+    task_key = claim.get("task_key")
+    claim_id = claim.get("claim_id")
+    if not isinstance(claim_id, str) or not claim_id:
+        raise XKeyFormatError("claim release requires the acquired claim_id")
+    for file_value in claim.get("owned", ()) or ():
+        marker = _claim_marker(root, file_value)
+        if not marker.exists():
+            continue
+        existing = _read_marker(marker)
+        if existing is None or (
+            existing.get("owner") != owner
+            or existing.get("task_key") != task_key
+            or existing.get("claim_id") != claim_id
+            or existing.get("process_token") != _PROCESS_TOKEN
+        ):
+            raise XKeyAuthorizationError(
+                f"claim marker {marker} belongs to another owner/task/generation"
+            )
+        _unlink_claim_marker(marker)
+
+
+def claim_read(root: pathlib.Path | str) -> list[dict]:
+    """Read every claim marker (sorted; unreadable markers fail closed)."""
+
+    directory = claims_dir(root)
+    if not directory.is_dir():
+        return []
+    rows: list[dict] = []
+    for marker in sorted(directory.glob("*.json")):
+        data = _read_marker(marker)
+        if data is None:
+            raise XKeyFormatError(f"claim marker is unreadable or not an object: {marker}")
+        rows.append(data)
+    return rows
+
+
+
+# --- Normal-PM consumption for H07 (T20-pm-source) ---------------------------
+#
+# The strict layer above takes a ``TrustedSupply``. A normally claimed PM must
+# not assemble that source/usage/bearer by hand. These functions read the real
+# protected source through ``contract_guard.prepare_pm_binding`` (which uses
+# ``operator_authority.read_pm_authority``), verify the recorded
+# ``dp-gate-approve`` decision + T10 rows + live claim + policy hash, and only
+# then run the original strict repair assessment. The write itself re-reads the
+# source and re-runs that assessment immediately before ``apply_block_replace``;
+# a revoked record, moved claim, changed gate/version or an exclusive-face
+# conflict in between refuses the write. Nothing is dispatched here and no
+# approval is minted: the PM decision must already be recorded.
+
+
+def _repair_plan(
+    root: pathlib.Path | str,
+    request: "RepairRequest",
+    approval: "RepairApproval | None",
+    claim_request: object,
+    actor: str,
+    role: str,
+    note: str | None,
+) -> dict:
+    return {
+        "root": pathlib.Path(root),
+        "request": request,
+        "approval": approval,
+        "claim_request": claim_request,
+        "actor": actor,
+        "role": role,
+        "note": note,
+        "family": "cross-key-repair",
+    }
+
+
+def _marker_claims(root: pathlib.Path | str) -> list:
+    """Claim markers as the pure validity layer's typed ``Claim`` rows.
+
+    A readable exclusive marker is an active claim; a marker that cannot be
+    read is left to the strict source check (which refuses unknown owners).
+    """
+
+    rows: list = []
+    for marker in claim_read(root):
+        if not isinstance(marker, dict):
+            continue
+        files = marker.get("files")
+        if not isinstance(files, (list, tuple)) or not files:
+            single = marker.get("file")
+            files = (single,) if isinstance(single, str) and single else ()
+        owner = marker.get("owner")
+        task_key = marker.get("task_key")
+        if not files or not isinstance(owner, str) or not isinstance(task_key, str):
+            continue
+        rows.append(
+            _validity.Claim(
+                owner=owner,
+                task_key=task_key,
+                files=tuple(str(item) for item in files),
+                active=True,
+                lock_mode="exclusive",
+            )
+        )
+    return rows
+
+
+def prepare_repair_consumption(
+    root: pathlib.Path | str,
+    *,
+    key: str,
+    request: "RepairRequest",
+    approval: "RepairApproval | None",
+    claim_request: object,
+    actor: str,
+    role: str,
+    gate_id: str,
+    decision_ref: str,
+    note: str | None,
+    expected_matter_ref: str | None = None,
+    expected_version: str | None = None,
+) -> _guard.PmConsumption:
+    """Bind the recorded repair approval to the real PM source (no write)."""
+
+    plan = _repair_plan(root, request, approval, claim_request, actor, role, note)
+    binding, reasons = _guard.prepare_pm_binding(
+        root,
+        key,
+        gate_id=gate_id,
+        decision_ref=decision_ref,
+        note=note,
+        authority_ref=request.authorization,
+        gate_kind="xkey-authorize",
+        expected_gate_key=request.target_key,
+        required_scope=(
+            f"xkey-repair:{request.target_key}",
+            f"xkey-action:{request.action}",
+            *(f"xkey-file:{file}" for file in request.files),
+        ),
+        require_files=tuple(request.files),
+        target_key=request.target_key,
+        expected_matter_ref=expected_matter_ref,
+        expected_version=expected_version,
+    )
+    if reasons:
+        # Still give the caller the original assessment shape (blocked, never
+        # executable) so the surface/role/claim reason is visible. No source is
+        # bound here, so the writer can never accept this verdict.
+        local = assess_repair_request(
+            request,
+            approval,
+            _marker_claims(root),
+            claim_request,
+            actor=actor,
+            role=role,
+            supply=None,
+            pm_note=note,
+        )
+        blocked = tuple(dict.fromkeys((*reasons, *local.reasons)))
+        return _guard.PmConsumption(
+            family="cross-key-repair",
+            status="blocked",
+            reasons=blocked,
+            binding=None,
+            verdict=local,
+            action=None,
+            written=False,
+            target=None,
+            receipt={"family": "cross-key-repair", "blocked_reasons": list(blocked)},
+            plan=plan,
+        )
+    claims = _marker_claims(root)
+    verdict = assess_repair_request(
+        request,
+        approval,
+        claims,
+        claim_request,
+        actor=actor,
+        role=role,
+        supply=binding.supply,
+        pm_note=note,
+    )
+    status = "authorized" if verdict.executable else "blocked"
+    return _guard.PmConsumption(
+        family="cross-key-repair",
+        status=status,
+        reasons=tuple(verdict.reasons),
+        binding=binding,
+        verdict=verdict,
+        action=None,
+        written=False,
+        target=None,
+        receipt=_guard._pm_receipt(binding, action=None, verdict=verdict, target=None),
+        plan=plan,
+    )
+
+
+def consume_repair_request(*args: object, **kwargs: object) -> _guard.PmConsumption:
+    """One normal-PM call: consume the recorded decision into an authorization.
+
+    This deliberately does not dispatch or write. Execution is the separate
+    :func:`apply_repair_consumption`, which re-reads the source first.
+    """
+
+    return prepare_repair_consumption(*args, **kwargs)
+
+
+def apply_repair_consumption(
+    consumption: _guard.PmConsumption,
+    ticket: dict,
+    new_bytes: bytes,
+) -> _guard.PmConsumption:
+    """Re-read the source, re-assess, then perform the original exact write."""
+
+    if (
+        not isinstance(consumption, _guard.PmConsumption)
+        or consumption.family != "cross-key-repair"
+        or consumption.binding is None
+    ):
+        return consumption
+    plan = consumption.plan
+    fresh, reasons = _guard.revalidate_pm_binding(consumption.binding)
+    if reasons:
+        return _guard.PmConsumption(
+            family="cross-key-repair",
+            status="blocked",
+            reasons=reasons,
+            binding=consumption.binding,
+            verdict=None,
+            action=None,
+            written=False,
+            target=None,
+            receipt=_guard._pm_receipt(
+                consumption.binding,
+                action=None,
+                verdict=None,
+                target=None,
+                reasons=reasons,
+            ),
+            plan=plan,
+        )
+    request = plan["request"]
+    approval = plan["approval"]
+    verdict = assess_repair_request(
+        request,
+        approval,
+        _marker_claims(plan["root"]),
+        plan["claim_request"],
+        actor=str(plan["actor"]),
+        role=str(plan["role"]),
+        supply=fresh.supply,
+        pm_note=str(plan["note"]) if plan["note"] is not None else None,
+    )
+    if not verdict.executable:
+        return _guard.PmConsumption(
+            family="cross-key-repair",
+            status="blocked",
+            reasons=tuple(verdict.reasons),
+            binding=fresh,
+            verdict=verdict,
+            action=None,
+            written=False,
+            target=None,
+            receipt=_guard._pm_receipt(
+                fresh,
+                action=None,
+                verdict=verdict,
+                target=None,
+                reasons=verdict.reasons,
+            ),
+            plan=plan,
+        )
+    try:
+        target_file, _range, _sha = _apply_targets(ticket)
+        new_sha = apply_block_replace(
+            plan["root"], ticket, new_bytes, authorization=verdict
+        )
+    except XKeyShaDrift:
+        return _guard.PmConsumption(
+            family="cross-key-repair",
+            status="blocked",
+            reasons=("frozen_block_drift",),
+            binding=fresh,
+            verdict=verdict,
+            action=None,
+            written=False,
+            target=None,
+            receipt=_guard._pm_receipt(
+                fresh,
+                action=None,
+                verdict=verdict,
+                target=None,
+                reasons=("frozen_block_drift",),
+            ),
+            plan=plan,
+        )
+    except XKeyAuthorizationError as exc:
+        reason = (
+            "ticket_boundary_violation"
+            if isinstance(exc, XKeyBoundaryViolation)
+            else "write_not_authorized"
+        )
+        return _guard.PmConsumption(
+            family="cross-key-repair",
+            status="blocked",
+            reasons=(reason,),
+            binding=fresh,
+            verdict=verdict,
+            action=None,
+            written=False,
+            target=None,
+            receipt=_guard._pm_receipt(
+                fresh,
+                action=None,
+                verdict=verdict,
+                target=None,
+                reasons=(reason,),
+            ),
+            plan=plan,
+        )
+    except XKeyFormatError:
+        return _guard.PmConsumption(
+            family="cross-key-repair",
+            status="blocked",
+            reasons=("invalid_ticket",),
+            binding=fresh,
+            verdict=verdict,
+            action=None,
+            written=False,
+            target=None,
+            receipt=_guard._pm_receipt(
+                fresh,
+                action=None,
+                verdict=verdict,
+                target=None,
+                reasons=("invalid_ticket",),
+            ),
+            plan=plan,
+        )
+    receipt = _guard._pm_receipt(
+        fresh, action="restricted-repair-write", verdict=verdict, target=target_file
+    )
+    receipt["new_sha256"] = new_sha
+    return _guard.PmConsumption(
+        family="cross-key-repair",
+        status="applied",
+        reasons=(),
+        binding=fresh,
+        verdict=verdict,
+        action="restricted-repair-write",
+        written=True,
+        target=target_file,
+        receipt=receipt,
+        plan=plan,
+    )

@@ -61,9 +61,15 @@ import decision_wire as wire
 import test_decision_dashboard_assets as assets_suite
 import test_decision_monitor as monitor_suite
 
-DP1 = "dp1-dispatch-type"
-DP4 = "dp4-failure-handling"
-DP8 = "dp8-scope-change"
+#: The active entries this suite exercises, in their former fixture roles:
+#: dp-w-type keeps the same ``triage_type`` question and three required business
+#: fields the old dispatch fixture used; dp-gate-approve is the P0 entry that is
+#: disabled by default; dp-QG is an ``error_excerpt`` context producer.
+DP_W_TYPE = "dp-w-type"
+DP_GATE = "dp-gate-approve"
+DP_QG = "dp-QG"
+DP_AUTO = "dp-auto"
+CASES_DIR = pathlib.Path(decision_monitor.DECIDE_CASES_DIR)
 
 API_KEY = "sk-t11b-fixture-key-0123456789abcdef"
 SECRET = "sk-t11b-answer-secret-9f8e7d6c5b4a"
@@ -160,51 +166,50 @@ def _tree(path: pathlib.Path) -> dict[str, str]:
     return out
 
 
-def _state(dp: str) -> dict:
-    if dp == DP1:
-        # The approved dp1 contract: the complete dispatch material, nothing else.
-        return {
-            "schema_version": 2,
-            "decision_point": DP1,
-            "questions_version": dpts.get_decision_point(DP1).questions_version,
-            "task_goal": "deliver the observed DP test flow with zero production writes",
-            "task_requirements": "edit a shipped case, submit it, assert the real request body",
-            "task_deliverables": "report.md + the observed submit result",
-        }
-    if dp == DP4:
-        return {
-            "schema_version": 2,
-            "decision_point": DP4,
-            "questions_version": dpts.get_decision_point(DP4).questions_version,
-            "failure": {"kind": "transient", "attempt": 1, "limit": 2, "artifact_present": False},
-        }
-    if dp == DP8:
-        return {
-            "schema_version": 2,
-            "decision_point": DP8,
-            "questions_version": dpts.get_decision_point(DP8).questions_version,
-            "scope": {
-                "requested_paths": ["packages/multi-workers/decision_dashboard.js"],
-                "write_scope": ["packages/multi-workers"],
-                "cross_key_conflicts": [
-                    "mw-decision-dashboard:packages/multi-workers/decision_monitor.py"
-                ],
-                "requirement_delta": "deliver the observed DP test flow with zero production writes",
-            },
-        }
-    raise AssertionError(dp)
+def _case_book(dp: str) -> dict:
+    """The shipped complete schema-3 case book (T05 single source).
 
-
-def _book(dp: str, state: dict | None = None, **overrides: object) -> dict:
-    payload = dict(state if state is not None else _state(dp))
-    payload.update(overrides)
-    evidence = {path: "cmd: true" for path in dpts.REQUIRED_STATE_FIELDS[dp]}
-    return {
-        "schema_version": decision_book.BOOK_SCHEMA_VERSION,
-        "decision_point": dp,
-        "state": payload,
-        "notes": {"evidence": evidence},
+    ``notes.evidence`` is rewritten to a trivial local command so a temp control
+    root runs the real typed gate without the repository's generator file; the
+    business material and the PM-prepared basis stay the shipped ones.
+    """
+    case = json.loads((CASES_DIR / f"{dp}.json").read_text(encoding="utf-8"))
+    book = case["book"]
+    book["notes"] = {
+        "evidence": {
+            path: "cmd: true" for path in decision_book.required_state_paths(dp)
+        }
     }
+    return book
+
+
+def _material(dp: str) -> dict:
+    """A mutable copy of one entry's shipped business material."""
+    return json.loads(json.dumps(_case_book(dp)["material"], ensure_ascii=False))
+
+
+def _book(dp: str = DP_W_TYPE, material: dict | None = None, **overrides: object) -> dict:
+    book = _case_book(dp)
+    if material is not None:
+        book["material"] = material
+    book.update(overrides)
+    return book
+
+
+def _supported_answer(dp: str, book: dict) -> dict[str, str]:
+    """The generated book's first supported (choice, basis) answer for the fake HTTP seam.
+
+    The registry menu stays complete, but the shipped preparation may cover only
+    a subset of it. The synthetic HTTP fixture must answer a choice+basis pair
+    the book itself prepared; no first-choice default and no production answer.
+    """
+    qid = next(iter(dpts.questions_map(dp)))
+    catalog = book["preparation"]["basis_catalog"]
+    for choice in dpts.resolve_entry_choices(dp, book["material"]):
+        for item in catalog:
+            if choice in item["applies_to"]:
+                return {qid: choice, "basis_id": item["id"]}
+    raise AssertionError(f"no prepared choice+basis pair for {dp}")
 
 
 # ---------------------------------------------------------------------------
@@ -250,12 +255,13 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
 class _FixtureServer:
     """A real loopback HTTP endpoint that answers like the decisions API."""
 
-    def __init__(self, *, extra_answer: dict | None = None) -> None:
+    def __init__(self, *, extra_answer: dict | None = None, answer_choices: dict[str, str] | None = None) -> None:
         self.requests: list[dict] = []
         self.received = threading.Event()
         self.hold: threading.Event | None = None
         self.status = 200
         self.extra_answer = dict(extra_answer or {})
+        self.answer_choices = dict(answer_choices or {})
         self._server = http.server.ThreadingHTTPServer((HOST, 0), _FixtureHandler)
         self._server.daemon_threads = True
         self._server.fixture = self  # type: ignore[attr-defined]
@@ -292,7 +298,7 @@ class _FixtureServer:
             qtype = spec.get("type")
             if qtype == "choice":
                 criteria = spec.get("criteria") if isinstance(spec.get("criteria"), dict) else {}
-                choice = next(iter(criteria), None)
+                choice = self.answer_choices.get(str(qid), next(iter(criteria), None))
                 entry: dict[str, object] = {"type": "choice", "choice": choice, "confidence": 0.9}
             elif qtype == "score":
                 entry = {"type": "score", "score": 0, "confidence": 0.9}
@@ -319,8 +325,12 @@ def _redactor() -> object:
 
 
 @contextlib.contextmanager
-def _live(tmp_path: pathlib.Path, *, name: str = "proj", fixture: _FixtureServer | None = None):
-    fixture = fixture or _FixtureServer().start()
+def _live(
+    tmp_path: pathlib.Path, *, name: str = "proj",
+    fixture: _FixtureServer | None = None,
+    answer_choices: dict[str, str] | None = None,
+):
+    fixture = fixture or _FixtureServer(answer_choices=answer_choices).start()
     project = _make_project(tmp_path, name, base_url=fixture.url)
     created: list[object] = []
     deps = decision_monitor.MonitorDeps(
@@ -433,17 +443,17 @@ def test_the_command_path_wiring_serves_the_whole_dp_flow(tmp_path: pathlib.Path
             token = _page_token(instance)
             status, payload = _get(instance, "/api/dps", token)
             assert status == 200
-            assert len(_ok_data(payload)["points"]) == 25
+            assert len(_ok_data(payload)["points"]) == 8
             status, payload = _get(instance, "/api/test/history", token)
             assert status == 200
-            status, payload = _post(instance, "/api/test/scaffold", {"dp": DP1}, token)
+            status, payload = _post(instance, "/api/test/scaffold", {"dp": DP_W_TYPE}, token)
             assert status == 200
             status, payload = _post(
                 instance,
                 "/api/test/submit",
                 {
-                    "dp": DP1,
-                    "book": _book(DP1),
+                    "dp": DP_W_TYPE,
+                    "book": _book(DP_W_TYPE),
                     "submit_id": "sub-default-1",
                     "observe_only": True,
                 },
@@ -463,7 +473,9 @@ def test_the_command_path_wiring_serves_the_whole_dp_flow(tmp_path: pathlib.Path
         fixture.stop()
 
 
-def test_dps_route_lists_all_25_typed_contracts_without_a_provider(tmp_path: pathlib.Path) -> None:
+def test_dps_route_lists_the_eight_contracts_and_the_retired_directory_without_a_provider(
+    tmp_path: pathlib.Path,
+) -> None:
     project = _make_project(tmp_path)
     created: list[object] = []
     deps = decision_monitor.MonitorDeps(
@@ -474,9 +486,10 @@ def test_dps_route_lists_all_25_typed_contracts_without_a_provider(tmp_path: pat
         status, payload = _get(instance, "/api/dps", token)
         assert status == 200
         data = _ok_data(payload)
-        assert len(data["points"]) == 25
+        assert len(data["points"]) == 8
+        assert data["callable_count"] == 8
         by_id = {point["id"]: point for point in data["points"]}
-        assert set(by_id) == {point.id for point in dpts.DP_REGISTRY}
+        assert set(by_id) == set(dpts.ACTIVE_DP_IDS)
         for point in data["points"]:
             required = point["required_state_fields"]
             optional = point["optional_state_fields"]
@@ -486,8 +499,17 @@ def test_dps_route_lists_all_25_typed_contracts_without_a_provider(tmp_path: pat
                 assert isinstance(field["type"], str) and field["type"]
                 assert isinstance(field["description"], str)
             assert point["questions_version"]
-        assert by_id[DP8]["tier"] == "P0" and by_id[DP8]["default_enabled"] is False
-        assert by_id[DP1]["tier"] == "P2" and by_id[DP1]["default_enabled"] is True
+        # The P0 gate entry is the one disabled by default; the dispatch entry is
+        # an enabled P2. The retired directory is a separate read-only list.
+        assert by_id[DP_GATE]["tier"] == "P0" and by_id[DP_GATE]["default_enabled"] is False
+        assert by_id[DP_W_TYPE]["tier"] == "P2" and by_id[DP_W_TYPE]["default_enabled"] is True
+        retired = data["retired"]
+        assert len(retired) == 25
+        assert {entry["id"] for entry in retired} == set(dpts.RETIRED_DP_IDS)
+        assert not set(by_id) & {entry["id"] for entry in retired}
+        for entry in retired:
+            assert entry["disposition"] in ("migrated", "retired")
+        assert data["projection"]["points_source"]
         assert data["budget"]["max_state_bytes"] == dpts.MAX_STATE_BYTES
         assert data["observe_only"] is True
         assert created == [], "the registry route must not create a provider"
@@ -495,7 +517,7 @@ def test_dps_route_lists_all_25_typed_contracts_without_a_provider(tmp_path: pat
 
 
 def test_every_registered_dp_scaffolds_and_validates_without_a_call(tmp_path: pathlib.Path) -> None:
-    """All 25 contracts: typed skeleton, explicit validate, zero model calls."""
+    """All eight active entries: typed skeleton, explicit validate, zero calls."""
     with _live(tmp_path) as (project, instance, fixture, created):
         token = _page_token(instance)
         seen: list[str] = []
@@ -526,12 +548,14 @@ def test_every_registered_dp_scaffolds_and_validates_without_a_call(tmp_path: pa
             assert report["dp"] == point.id
             assert report["ok"] is False, "an untouched skeleton is never submittable"
             assert any(
-                issue["code"] == "book-placeholder" for issue in report["issues"]
+                issue["code"] in ("book-placeholder", "book-state")
+                and issue["path"].startswith("material")
+                for issue in report["issues"]
             ), point.id
             assert report["context_sent"] is False
             seen.append(point.id)
         assert seen == [point.id for point in dpts.DP_REGISTRY]
-        assert len(created) == 1, "all 25 DPs share one provider for the control root"
+        assert len(created) == 1, "all eight entries share one provider for the control root"
         assert fixture.calls == 0, "no scaffold/validate may reach the model endpoint"
         assert _of_kind(project, "submission-start") == []
 
@@ -547,18 +571,18 @@ def test_scaffold_and_validate_expose_the_questions_and_the_request_preview(
     """T10: default questions + the final ``{model, state, questions}`` preview."""
     with _live(tmp_path) as (project, instance, fixture, created):
         token = _page_token(instance)
-        status, payload = _post(instance, "/api/test/scaffold", {"dp": DP1}, token)
+        status, payload = _post(instance, "/api/test/scaffold", {"dp": DP_W_TYPE}, token)
         assert status == 200
         scaffold = _ok_data(payload)
-        assert scaffold["questions"] == dpts.questions_map(DP1)
-        assert scaffold["questions_version"] == dpts.get_decision_point(DP1).questions_version
+        assert scaffold["questions"] == dpts.questions_map(DP_W_TYPE)
+        assert scaffold["questions_version"] == dpts.get_decision_point(DP_W_TYPE).questions_version
 
         edited = json.loads(json.dumps(scaffold["questions"], ensure_ascii=False))
         edited["triage_type"]["instructions"] = "T10 edited: which worker type?"
         status, payload = _post(
             instance,
             "/api/test/validate",
-            {"dp": DP1, "book": _book(DP1), "questions": edited},
+            {"dp": DP_W_TYPE, "book": _book(DP_W_TYPE), "questions": edited},
             token,
         )
         assert status == 200
@@ -573,29 +597,40 @@ def test_scaffold_and_validate_expose_the_questions_and_the_request_preview(
         assert preview["questions"]["triage_type"]["instructions"] == (
             "T10 edited: which worker type?"
         )
-        assert set(preview["state"]) == {
+        assert set(preview["state"]) == {"material", "preparation"}
+        assert preview["state"]["preparation"] == _book(DP_W_TYPE)["preparation"]
+        assert set(preview["state"]["material"]) == {
             "task_goal",
             "task_requirements",
             "task_deliverables",
-        }, "the preview carries the projected send state, not the book wrapper"
+            "images_required",
+        }, "the preview carries the projected material and complete same-call preparation"
         assert preview["model"] == "jev-latest"
 
         # Without an override the provider keeps the registry questions; the
         # preview is still produced by the same builder (and never sends).
         status, payload = _post(
-            instance, "/api/test/validate", {"dp": DP1, "book": _book(DP1)}, token
+            instance, "/api/test/validate", {"dp": DP_W_TYPE, "book": _book(DP_W_TYPE)}, token
         )
         assert status == 200
         plain = _ok_data(payload)
         assert plain["ok"] is True
         assert plain["questions_source"] == "registry"
-        assert plain["questions"] == dpts.questions_map(DP1)
+        assert plain["questions"] == dpts.questions_map(DP_W_TYPE)
         assert plain["request_preview"]["questions"] == {
             "triage_type": {
                 "type": "choice",
-                "instructions": dpts.questions_map(DP1)["triage_type"]["instructions"],
-                "criteria": dpts.questions_map(DP1)["triage_type"]["labels"],
-            }
+                "instructions": dpts.questions_map(DP_W_TYPE)["triage_type"]["instructions"],
+                "criteria": dpts.questions_map(DP_W_TYPE)["triage_type"]["labels"],
+            },
+            "basis_id": {
+                "type": "choice",
+                "instructions": decision_backends.PREPARED_BASIS_INSTRUCTIONS,
+                "criteria": {
+                    item["id"]: item["text"]
+                    for item in _book(DP_W_TYPE)["preparation"]["basis_catalog"]
+                },
+            },
         }
         assert fixture.calls == 0, "a preview never reaches the model endpoint"
         assert _of_kind(project, "attempt-start") == []
@@ -606,22 +641,24 @@ def test_scaffold_and_validate_spend_no_call_and_state_context_is_not_sent(
 ) -> None:
     with _live(tmp_path) as (project, instance, fixture, created):
         token = _page_token(instance)
-        status, payload = _post(instance, "/api/test/scaffold", {"dp": DP1}, token)
+        status, payload = _post(instance, "/api/test/scaffold", {"dp": DP_W_TYPE}, token)
         assert status == 200
         scaffold = _ok_data(payload)
-        assert scaffold["dp"] == DP1
+        assert scaffold["dp"] == DP_W_TYPE
         assert scaffold["observe_only"] is True
-        assert scaffold["book"]["decision_point"] == DP1
+        assert scaffold["book"]["decision_point"] == DP_W_TYPE
         required = [field["name"] for field in scaffold["required_state_fields"]]
-        assert required == list(dpts.REQUIRED_STATE_FIELDS[DP1])
-        assert scaffold["optional_state_fields"] == []
+        assert required == list(dpts.REQUIRED_STATE_FIELDS[DP_W_TYPE])
+        assert [field["name"] for field in scaffold["optional_state_fields"]] == list(
+            dpts.OPTIONAL_STATE_FIELDS.get(DP_W_TYPE, ())
+        )
         assert scaffold["max_state_bytes"] == dpts.MAX_STATE_BYTES
         assert len(created) == 1, "exactly one provider is created for this control root"
         assert _discoveries() == [], "scaffold resolves no credential"
 
         # The untouched skeleton is refused without any request.
         status, payload = _post(
-            instance, "/api/test/validate", {"dp": DP1, "book": scaffold["book"]}, token
+            instance, "/api/test/validate", {"dp": DP_W_TYPE, "book": scaffold["book"]}, token
         )
         assert status == 200
         placeholder = _ok_data(payload)
@@ -632,10 +669,10 @@ def test_scaffold_and_validate_spend_no_call_and_state_context_is_not_sent(
 
         # The context slot belongs to the failure-carrying dp4 contract (dp1 has
         # no slot any more), and the block is listed but never sent.
-        book = _book(DP4)
+        book = _book(DP_QG)
         book["context"] = {"error_excerpt": "worker-3: pytest exited 1"}
         book["notes"]["evidence"]["context.error_excerpt"] = "cmd: true"
-        status, payload = _post(instance, "/api/test/validate", {"dp": DP4, "book": book}, token)
+        status, payload = _post(instance, "/api/test/validate", {"dp": DP_QG, "book": book}, token)
         assert status == 200
         report = _ok_data(payload)
         assert report["ok"] is True, report["issues"]
@@ -668,9 +705,9 @@ def test_real_submit_posts_to_the_fixture_and_joins_the_answer_by_ids(
         executor_calls.append(answers)
         return "acted"
 
-    point = dpts._REGISTRY_BY_ID[DP1]
+    point = dpts._REGISTRY_BY_ID[DP_W_TYPE]
     monkeypatch.setitem(
-        dpts._REGISTRY_BY_ID, DP1, dataclasses.replace(point, executor=spy_executor)
+        dpts._REGISTRY_BY_ID, DP_W_TYPE, dataclasses.replace(point, executor=spy_executor)
     )
 
     with _live(tmp_path) as (project, instance, fixture, created):
@@ -689,11 +726,11 @@ def test_real_submit_posts_to_the_fixture_and_joins_the_answer_by_ids(
         token = _page_token(instance)
         # dp1 has no context slot in the approved contract: the observe book is
         # exactly the complete material (the no-context assertion below stays).
-        book = _book(DP1)
+        book = _book(DP_W_TYPE)
         status, payload = _post(
             instance,
             "/api/test/submit",
-            {"dp": DP1, "book": book, "submit_id": "sub-live-1", "observe_only": True},
+            {"dp": DP_W_TYPE, "book": book, "submit_id": "sub-live-1", "observe_only": True},
             token,
         )
         assert status == 200, payload
@@ -705,13 +742,17 @@ def test_real_submit_posts_to_the_fixture_and_joins_the_answer_by_ids(
         assert result["zero_call"] is False
         assert result["record_status"] == "recorded"
         assert result["observe_only"] is True
-        assert result["decision_id"] == f"{DP1}:sub-live-1"
+        assert result["decision_id"] == f"{DP_W_TYPE}:sub-live-1"
         assert isinstance(result["call_id"], str) and result["call_id"]
         assert isinstance(result["book_ref"], str) and result["book_ref"].startswith("book-")
         assert result["http_attempts"] == 1
         assert result["capture_status"] in ("ok", "partial")
         assert result["answer"] == {
             "triage_type": {"value": "coding", "confidence": 0.9},
+            "basis_id": {
+                "value": next(item["id"] for item in book["preparation"]["basis_catalog"] if "coding" in item["applies_to"]),
+                "confidence": 0.9,
+            },
         }
         assert result["outcome"]["status"] == "suggested"
         assert result["answer_persisted"] is True
@@ -726,15 +767,23 @@ def test_real_submit_posts_to_the_fixture_and_joins_the_answer_by_ids(
         assert request["authorization"] == API_KEY
         sent = json.loads(request["body"].decode("utf-8"))
         assert sent["model"] == "jev-latest"
-        # dp1's model projection is the three business fields only (identity and
-        # local association facts never reach the transport).
-        assert set(sent["state"]) == {
+        # The dispatch entry's model projection is the declared business fields
+        # only (identity and local association facts never reach the transport).
+        assert sent["state"] == {
+            "material": dpts.model_state_for(DP_W_TYPE, book["material"]),
+            "preparation": book["preparation"],
+        }
+        assert set(sent["state"]["material"]) == {
             "task_goal",
             "task_requirements",
             "task_deliverables",
+            "images_required",
         }
-        assert set(sent["questions"]) == {"triage_type"}
-        assert "context" not in sent["state"], "the context block is never sent"
+        assert set(sent["questions"]) == {"triage_type", "basis_id"}
+        assert sent["questions"]["basis_id"]["criteria"] == {
+            item["id"]: item["text"] for item in book["preparation"]["basis_catalog"]
+        }
+        assert "context" not in sent["state"]["material"], "this dispatch book has no used context"
 
         # Wire/evidence rows carry this submission's explicit ids and captures.
         starts = _of_kind(project, "submission-start")
@@ -749,7 +798,7 @@ def test_real_submit_posts_to_the_fixture_and_joins_the_answer_by_ids(
         for event in starts + ends + attempts + attempt_ends + calls + decisions:
             assert event["submission_id"] == "sub-live-1"
             assert event["scope"] == "test"
-            assert event["decision_id"] == f"{DP1}:sub-live-1"
+            assert event["decision_id"] == f"{DP_W_TYPE}:sub-live-1"
         for event in attempts + attempt_ends + calls + decisions:
             assert event["call_id"] == result["call_id"], event["kind"]
         assert ends[0]["book_ref"] == result["book_ref"]
@@ -813,7 +862,7 @@ def test_real_submit_posts_to_the_fixture_and_joins_the_answer_by_ids(
         assert attempt["request"]["byte_exact"] is True
         assert attempt["response"]["text_omitted"] is False
         assert json.loads(attempt["response"]["text"])["answers"]["triage_type"]["choice"] == "coding"
-        assert "context" not in json.loads(attempt["request"]["text"])["state"]
+        assert "context" not in json.loads(attempt["request"]["text"])["state"]["material"]
 
         status, payload = _get(instance, "/api/test/history", token)
         assert status == 200
@@ -844,11 +893,87 @@ def test_real_submit_posts_to_the_fixture_and_joins_the_answer_by_ids(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "dp,large_basis",
+    [(dp, False) for dp in dpts.ACTIVE_DP_IDS] + [(DP_W_TYPE, True)],
+)
+def test_prepared_preview_equals_the_actual_same_call_http_body(
+    dp: str, large_basis: bool, tmp_path: pathlib.Path
+) -> None:
+    book = _book(dp)
+    if dp == DP_QG:
+        book["context"] = {"error_excerpt": "this submitted observation retains its used context"}
+        book["notes"]["evidence"]["context.error_excerpt"] = "cmd: true"
+    if large_basis:
+        book["preparation"]["basis_catalog"][0]["text"] = "PM prepared complete basis: " + "x" * 2300
+    questions = json.loads(json.dumps(dpts.questions_map(dp)))
+    qid = next(iter(questions))
+    questions[qid]["instructions"] = f"Edited observation instructions for {dp}"
+    if dp != DP_AUTO:
+        questions[qid]["criteria"] = {
+            choice: f"Edited business description for {choice}"
+            for choice in dpts.resolve_entry_choices(dp, book["material"])
+        }
+    answer_choices = _supported_answer(dp, book)
+    with _live(tmp_path, answer_choices=answer_choices) as (project, instance, fixture, _created):
+        token = _page_token(instance)
+        before = _tree(project / ".agenticdoc")
+
+        status, payload = _post(
+            instance, "/api/test/validate", {"dp": dp, "book": book, "questions": questions}, token
+        )
+        assert status == 200
+        reviewed = _ok_data(payload)
+        assert reviewed["ok"] is True, reviewed["issues"]
+        preview = reviewed["request_preview"]
+        assert preview is not None, reviewed["request_preview_reason"]
+        assert fixture.calls == 0, "validation never sends"
+        validation_calls = fixture.calls
+        assert preview["state"]["preparation"] == book["preparation"]
+        assert preview["questions"][qid]["instructions"] == questions[qid]["instructions"]
+        if "criteria" in questions[qid]:
+            assert preview["questions"][qid]["criteria"] == questions[qid]["criteria"]
+        assert set(preview["questions"]) == {qid, "basis_id"}
+        assert preview["questions"]["basis_id"]["criteria"] == {
+            item["id"]: item["text"] for item in book["preparation"]["basis_catalog"]
+        }
+
+        status, payload = _post(
+            instance, "/api/test/submit",
+            {"dp": dp, "book": book, "questions": questions,
+             "submit_id": "preview-real-1", "observe_only": True}, token,
+        )
+        assert status == 200
+        result = _ok_data(payload)
+        assert result["state"] == "succeeded", result
+        assert fixture.calls == 1
+        actual = json.loads(fixture.requests[0]["body"].decode("utf-8"))
+        assert preview == actual, "preview and actual transport use one prepared request"
+        assert reviewed["state_bytes"] == len(decision._encode_state(actual["state"]))
+        assert reviewed["state_digest"] == result["state_digest"]
+        choice = result["answer"][qid]["value"]
+        basis_id = result["answer"]["basis_id"]["value"]
+        assert not dpts.basis_selection_issues(basis_id, book["preparation"]["basis_catalog"], choice)
+        assert result["outcome"]["preview"]["executor_invoked"] is False
+        assert _tree(project / ".agenticdoc") == before
+        print("[PREVIEW-CALL] " + json.dumps({
+            "dp": dp, "large_basis": large_basis,
+            "preview": preview, "actual_http_body": actual,
+            "answer": result["answer"], "state": result["state"],
+            "validation_calls": validation_calls, "actual_calls": fixture.calls,
+            "validated_bytes": reviewed["state_bytes"],
+            "validated_digest": reviewed["state_digest"],
+            "actual_digest": result["state_digest"],
+            "executor_invoked": result["outcome"]["preview"]["executor_invoked"],
+            "production_before": before, "production_after": _tree(project / ".agenticdoc"),
+        }, ensure_ascii=False))
+
+
 def test_duplicate_retry_and_busy_are_honest(tmp_path: pathlib.Path) -> None:
     with _live(tmp_path) as (project, instance, fixture, _created):
         token = _page_token(instance)
-        book = _book(DP1)
-        base = {"dp": DP1, "book": book, "observe_only": True}
+        book = _book(DP_W_TYPE)
+        base = {"dp": DP_W_TYPE, "book": book, "observe_only": True}
 
         status, payload = _post(instance, "/api/test/submit", {**base, "submit_id": "sub-a"}, token)
         first = _ok_data(payload)
@@ -949,7 +1074,7 @@ def test_invalid_smuggled_oversize_and_secret_books_spend_no_call(tmp_path: path
         status, payload = _post(
             instance,
             "/api/test/submit",
-            {"dp": DP1, "book": decision_book.scaffold_book(DP1),
+            {"dp": DP_W_TYPE, "book": decision_book.scaffold_book(DP_W_TYPE),
              "submit_id": "sub-placeholder", "observe_only": True},
             token,
         )
@@ -960,12 +1085,12 @@ def test_invalid_smuggled_oversize_and_secret_books_spend_no_call(tmp_path: path
         assert any(issue["code"] == "book-placeholder" for issue in placeholder["issues"])
         assert fixture.calls == 0
 
-        smuggled_book = _book(DP1)
-        smuggled_book["state"]["history"] = {"recent_done": 1, "act": True}
+        smuggled_book = _book(DP_W_TYPE)
+        smuggled_book["material"]["history"] = {"recent_done": 1, "act": True}
         status, payload = _post(
             instance,
             "/api/test/submit",
-            {"dp": DP1, "book": smuggled_book, "submit_id": "sub-smuggle", "observe_only": True},
+            {"dp": DP_W_TYPE, "book": smuggled_book, "submit_id": "sub-smuggle", "observe_only": True},
             token,
         )
         assert status == 400, payload
@@ -977,8 +1102,8 @@ def test_invalid_smuggled_oversize_and_secret_books_spend_no_call(tmp_path: path
             instance,
             "/api/test/submit",
             {
-                "dp": DP1,
-                "book": _book(DP1),
+                "dp": DP_W_TYPE,
+                "book": _book(DP_W_TYPE),
                 "submit_id": "sub-top-act",
                 "observe_only": True,
                 "act": "apply",
@@ -989,13 +1114,13 @@ def test_invalid_smuggled_oversize_and_secret_books_spend_no_call(tmp_path: path
         assert payload["error"]["code"] == "forbidden-field"
         assert fixture.calls == 0
 
-        over = _book(DP1)
+        over = _book(DP_W_TYPE)
         # One required string over the published budget: refused whole, never cut.
-        over["state"]["task_goal"] = "x" * (dpts.MAX_STATE_BYTES + 1)
+        over["material"]["task_goal"] = "x" * (dpts.MAX_STATE_BYTES + 1)
         status, payload = _post(
             instance,
             "/api/test/submit",
-            {"dp": DP1, "book": over, "submit_id": "sub-over", "observe_only": True},
+            {"dp": DP_W_TYPE, "book": over, "submit_id": "sub-over", "observe_only": True},
             token,
         )
         assert status == 200
@@ -1006,12 +1131,12 @@ def test_invalid_smuggled_oversize_and_secret_books_spend_no_call(tmp_path: path
         assert oversized["outcome"] is None
         assert fixture.calls == 0
 
-        secret_book = _book(DP1)
-        secret_book["state"]["task_requirements"] = "leaked " + SECRET
+        secret_book = _book(DP_W_TYPE)
+        secret_book["material"]["task_requirements"] = "leaked " + SECRET
         status, payload = _post(
             instance,
             "/api/test/submit",
-            {"dp": DP1, "book": secret_book, "submit_id": "sub-secret", "observe_only": True},
+            {"dp": DP_W_TYPE, "book": secret_book, "submit_id": "sub-secret", "observe_only": True},
             token,
         )
         assert status == 200
@@ -1029,7 +1154,7 @@ def test_invalid_smuggled_oversize_and_secret_books_spend_no_call(tmp_path: path
         status, payload = _post(
             instance,
             "/api/test/submit",
-            {"dp": DP1, "book": _book(DP1), "submit_id": "sub-noobserve"},
+            {"dp": DP_W_TYPE, "book": _book(DP_W_TYPE), "submit_id": "sub-noobserve"},
             token,
         )
         assert status == 400
@@ -1044,7 +1169,7 @@ def test_globally_disabled_transport_sends_nothing(tmp_path: pathlib.Path) -> No
         status, payload = _post(
             instance,
             "/api/test/submit",
-            {"dp": DP1, "book": _book(DP1), "submit_id": "sub-disabled", "observe_only": True},
+            {"dp": DP_W_TYPE, "book": _book(DP_W_TYPE), "submit_id": "sub-disabled", "observe_only": True},
             token,
         )
         assert status == 200
@@ -1075,7 +1200,7 @@ def test_a_failed_submission_start_means_zero_calls(tmp_path: pathlib.Path) -> N
         status, payload = _post(
             instance,
             "/api/test/submit",
-            {"dp": DP1, "book": _book(DP1), "submit_id": "sub-startfail", "observe_only": True},
+            {"dp": DP_W_TYPE, "book": _book(DP_W_TYPE), "submit_id": "sub-startfail", "observe_only": True},
             token,
         )
         assert status == 200
@@ -1091,7 +1216,7 @@ def test_p0_observation_bypass_never_authorizes_or_executes(tmp_path: pathlib.Pa
     with _live(tmp_path) as (project, instance, fixture, _created):
         authorization = project / ".mw" / "decide-points.json"
         authorization.write_text(
-            json.dumps({"version": 1, "points": {DP8: {"enabled": False, "mode": "auto"}}}) + "\n",
+            json.dumps({"version": 1, "points": {DP_GATE: {"enabled": False, "mode": "auto"}}}) + "\n",
             encoding="utf-8",
             newline="\n",
         )
@@ -1102,7 +1227,7 @@ def test_p0_observation_bypass_never_authorizes_or_executes(tmp_path: pathlib.Pa
         status, payload = _post(
             instance,
             "/api/test/submit",
-            {"dp": DP8, "book": _book(DP8), "submit_id": "sub-p0", "observe_only": True},
+            {"dp": DP_GATE, "book": _book(DP_GATE), "submit_id": "sub-p0", "observe_only": True},
             token,
         )
         assert status == 200
@@ -1387,15 +1512,16 @@ def test_dp_tab_dom_replays_the_captured_json_end_to_end(tmp_path: pathlib.Path)
         with _live(tmp_path, fixture=fixture) as (project, instance, fixture_server, _created):
             token = _page_token(instance)
             dps = _get(instance, "/api/dps", token)[1]
-            scaffold_payload = _post(instance, "/api/test/scaffold", {"dp": DP1}, token)[1]
+            scaffold_payload = _post(instance, "/api/test/scaffold", {"dp": DP_W_TYPE}, token)[1]
             scaffold = _ok_data(scaffold_payload)
-            book = _book(DP1)
-            # dp1 declares no context slot: the book is the complete material only.
-            validate_ok = _post(instance, "/api/test/validate", {"dp": DP1, "book": book}, token)[1]
+            book = _book(DP_W_TYPE)
+            # The dispatch entry declares no used context slot: the book is the
+            # complete material only.
+            validate_ok = _post(instance, "/api/test/validate", {"dp": DP_W_TYPE, "book": book}, token)[1]
             validate_placeholder = _post(
                 instance,
                 "/api/test/validate",
-                {"dp": DP1, "book": scaffold["book"]},
+                {"dp": DP_W_TYPE, "book": scaffold["book"]},
                 token,
             )[1]
             history_empty = _get(instance, "/api/test/history", token)[1]
@@ -1403,14 +1529,14 @@ def test_dp_tab_dom_replays_the_captured_json_end_to_end(tmp_path: pathlib.Path)
             submit_ok = _post(
                 instance,
                 "/api/test/submit",
-                {"dp": DP1, "book": book, "submit_id": "sub-dom-1", "observe_only": True},
+                {"dp": DP_W_TYPE, "book": book, "submit_id": "sub-dom-1", "observe_only": True},
                 token,
             )[1]
             history_one = _get(instance, "/api/test/history", token)[1]
             submit_dup = _post(
                 instance,
                 "/api/test/submit",
-                {"dp": DP1, "book": book, "submit_id": "sub-dom-1", "observe_only": True},
+                {"dp": DP_W_TYPE, "book": book, "submit_id": "sub-dom-1", "observe_only": True},
                 token,
             )[1]
             history_two = _get(instance, "/api/test/history", token)[1]
@@ -1418,7 +1544,7 @@ def test_dp_tab_dom_replays_the_captured_json_end_to_end(tmp_path: pathlib.Path)
                 instance,
                 "/api/test/submit",
                 {
-                    "dp": DP1,
+                    "dp": DP_W_TYPE,
                     "book": book,
                     "submit_id": "sub-dom-2",
                     "retry_of": "sub-dom-1",
@@ -1446,7 +1572,7 @@ def test_dp_tab_dom_replays_the_captured_json_end_to_end(tmp_path: pathlib.Path)
                         token=token,
                         origin=instance.origin,
                         body={
-                            "dp": DP1,
+                            "dp": DP_W_TYPE,
                             "book": book,
                             "submit_id": "sub-dom-busy-1",
                             "observe_only": True,
@@ -1464,7 +1590,7 @@ def test_dp_tab_dom_replays_the_captured_json_end_to_end(tmp_path: pathlib.Path)
                 token=token,
                 origin=instance.origin,
                 body={
-                    "dp": DP1,
+                    "dp": DP_W_TYPE,
                     "book": book,
                     "submit_id": "sub-dom-busy-2",
                     "observe_only": True,
@@ -1483,7 +1609,7 @@ def test_dp_tab_dom_replays_the_captured_json_end_to_end(tmp_path: pathlib.Path)
             submit_off = _post(
                 instance,
                 "/api/test/submit",
-                {"dp": DP1, "book": book, "submit_id": "sub-dom-off", "observe_only": True},
+                {"dp": DP_W_TYPE, "book": book, "submit_id": "sub-dom-off", "observe_only": True},
                 token,
             )[1]
             assert _ok_data(submit_off)["state"] != "succeeded"
@@ -1549,14 +1675,14 @@ def test_dp_tab_dom_replays_the_captured_json_end_to_end(tmp_path: pathlib.Path)
                     {
                         "type": "setValue",
                         "target": "#dp-select",
-                        "value": DP8,
+                        "value": DP_GATE,
                         "change": True,
                         "snapshot": "p0",
                     },
                     {
                         "type": "setValue",
                         "target": "#dp-select",
-                        "value": DP1,
+                        "value": DP_W_TYPE,
                         "change": True,
                         "snapshot": "dp1",
                     },
@@ -1604,19 +1730,19 @@ def test_dp_tab_dom_replays_the_captured_json_end_to_end(tmp_path: pathlib.Path)
     dps_call = [c for c in loaded["fetchCalls"] if c["url"] == "/api/dps"][0]
     assert dps_call["headers"].get("X-MW-Monitor-Token") == token
     assert token not in dps_call["url"]
-    assert "25" in (loaded["pgStatus"] or "")
+    assert "8" in (loaded["pgStatus"] or "")
     assert loaded["storage"] == []
     assert loaded["historyStats"] in (None, ""), "internal read statistics are not normal UI"
 
     p0 = _snapshot(result, "p0")
-    assert "dp8-scope-change" in (p0["pgMeta"] or "")
+    assert DP_GATE in (p0["pgMeta"] or "")
     assert "P0" in (p0["pgMeta"] or "")
     assert "当前启用" in (p0["pgMeta"] or "")
     assert "false" in (p0["pgMeta"] or "")
     assert "预算 max_state_bytes" in (p0["pgMeta"] or "")
     assert "required" in (p0["pgFields"] or "") and "optional" in (p0["pgFields"] or "")
-    assert "scope.requested_paths" in (p0["pgFields"] or "")
-    assert "array" in (p0["pgFields"] or "")
+    assert "pm_note.subject" in (p0["pgFields"] or "")
+    assert "string" in (p0["pgFields"] or "")
     assert "observe_only=true" in (p0["pgMeta"] or "")
     assert p0["pgSubmit"] == "", "selecting a DP must not submit anything"
 
@@ -1624,7 +1750,7 @@ def test_dp_tab_dom_replays_the_captured_json_end_to_end(tmp_path: pathlib.Path)
     scaffold_call = [c for c in scaffolded["fetchCalls"] if c["url"] == "/api/test/scaffold"][0]
     assert scaffold_call["method"] == "POST"
     assert scaffold_call["headers"].get("X-MW-Monitor-Token") == token
-    assert _json_body(scaffold_call) == {"dp": DP1}
+    assert _json_body(scaffold_call) == {"dp": DP_W_TYPE}
     assert "占位符" in (scaffolded["pgStatus"] or "")
     validate_calls = [c for c in scaffolded["fetchCalls"] if c["url"] == "/api/test/validate"]
     assert validate_calls == [], "generating a skeleton must not validate automatically"
@@ -1633,12 +1759,14 @@ def test_dp_tab_dom_replays_the_captured_json_end_to_end(tmp_path: pathlib.Path)
     validate_call = [c for c in validated["fetchCalls"] if c["url"] == "/api/test/validate"][-1]
     assert validate_call["headers"].get("X-MW-Monitor-Token") == token
     sent = _json_body(validate_call)
-    assert sent["dp"] == DP1 and sent["book"]["decision_point"] == DP1
+    assert sent["dp"] == DP_W_TYPE and sent["book"]["decision_point"] == DP_W_TYPE
     assert "通过" in (validated["pgValidate"] or "")
     assert "context_sent" in (validated["pgValidate"] or "")
     assert "false" in (validated["pgValidate"] or "")
-    assert "context 原文不发送" in (validated["pgValidate"] or "")
-    # dp1 declares no context slot any more: validate lists none (context_sent is false).
+    assert "本次校验未发送" in (validated["pgValidate"] or "")
+    assert "完整请求预览" in (validated["pgValidate"] or "")
+    # The dispatch entry declares no used context slot: validate lists none
+    # (context_sent is false).
     assert "task_excerpt" not in (validated["pgValidate"] or "")
     submit_calls = [c for c in validated["fetchCalls"] if c["url"] == "/api/test/submit"]
     assert submit_calls == [], "validate must not submit"
@@ -1648,7 +1776,7 @@ def test_dp_tab_dom_replays_the_captured_json_end_to_end(tmp_path: pathlib.Path)
     assert submit_call["headers"].get("X-MW-Monitor-Token") == token
     submit_body = _json_body(submit_call)
     assert submit_body["observe_only"] is True
-    assert submit_body["dp"] == DP1
+    assert submit_body["dp"] == DP_W_TYPE
     assert submit_body["submit_id"].startswith("ui-")
     first_id = submit_body["submit_id"]
     text = submitted["pgSubmit"] or ""

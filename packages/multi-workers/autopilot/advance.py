@@ -24,9 +24,14 @@ the framework script. argv is always list-form (never ``shell=True``).
 from __future__ import annotations
 
 import json
+import os
 import pathlib
+import shlex
 import subprocess
 import sys
+from datetime import datetime, timezone
+
+import decision_policy
 
 
 class AdvanceError(Exception):
@@ -190,3 +195,266 @@ def advance(
     except subprocess.TimeoutExpired:
         return 124, "", f"[advance] advance_phase.py timed out after {_ADVANCE_TIMEOUT_SEC}s"
     return proc.returncode, proc.stdout, proc.stderr
+
+
+# ── H09 phase hard-failure recovery (T26) ──────────────────────────────────
+#
+# AC-009: a failed phase gate is disposed of by the automatic-decision path
+# first; the phase may only advance again after that disposition and a real
+# re-verification. The append-only ledger below keeps the original failure
+# (rc/stdout/stderr verbatim) so "disposed of" can never mean "erased".
+
+FAILURES_REL = pathlib.Path(".agenticdoc/_autopilot/advance-failures")
+POLICY_REL = pathlib.Path(".agenticdoc/_autopilot/decision-policy.json")
+#: The production decision ledger records the real dp-auto request a phase
+#: failure disposition must cite. The file is read, never written, here.
+LIFECYCLE_REL = pathlib.Path(".agenticdoc/_autopilot/decision-lifecycle.jsonl")
+DISPOSITION_ACTIONS = frozenset(
+    {"retry", "narrow", "split", "direct-exec", "escalate"}
+)
+#: A disposition that itself claims work was narrowed/split still needs the
+#: bounded re-verification below; only these actions may ever release an edge.
+RELEASABLE_ACTIONS = frozenset({"retry", "narrow", "split", "direct-exec"})
+
+
+def _ledger_path(project_root: pathlib.Path, key: str) -> pathlib.Path:
+    """One append-only ledger per key (never rewritten, never truncated)."""
+    safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in str(key))
+    return pathlib.Path(project_root) / FAILURES_REL / f"{safe or 'unknown'}.jsonl"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def recovery_enforced(project_root: pathlib.Path) -> bool:
+    """True only when the project's current policy carries a usable recovery rule.
+
+    The enablement is the EXISTING approved policy surface
+    (``recovery{allowed_origins,scope,authority_ref,observation_conditions,
+    stop_conditions}``); no frozen config key and no extra policy field is
+    invented for this consumer. A missing or invalid policy keeps the old
+    advance behaviour byte-for-byte (default off).
+    """
+    try:
+        loaded = decision_policy.load_policy(pathlib.Path(project_root))
+    except Exception:  # noqa: BLE001 - an unreadable policy is not an opt-in
+        return False
+    return bool(loaded.usable and loaded.policy is not None
+                and loaded.policy.recovery is not None)
+
+
+def _rows(project_root: pathlib.Path, key: str) -> list[dict]:
+    path = _ledger_path(project_root, key)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    rows: list[dict] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            # A corrupt row is recorded as an unreadable fact, never skipped as
+            # "nothing happened" by the caller's release decision.
+            rows.append({"kind": "corrupt"})
+            continue
+        rows.append(row if isinstance(row, dict) else {"kind": "corrupt"})
+    return rows
+
+
+def _append(project_root: pathlib.Path, key: str, payload: dict) -> dict:
+    path = _ledger_path(project_root, key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = _rows(project_root, key)
+    record = {
+        **payload,
+        "seq": len(rows) + 1,
+        "recorded_at": _now_iso(),
+    }
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
+def record_failure(
+    project_root: pathlib.Path,
+    key: str,
+    phase: str,
+    code: int,
+    stdout: str,
+    stderr: str,
+) -> dict | None:
+    """Persist one failed advance verbatim. Returns None when not enforced."""
+    project_root = pathlib.Path(project_root)
+    if not recovery_enforced(project_root):
+        return None
+    return _append(project_root, key, {
+        "kind": "failure", "key": str(key), "phase": str(phase),
+        "rc": int(code), "stdout": str(stdout), "stderr": str(stderr),
+    })
+
+
+def record_disposition(
+    project_root: pathlib.Path,
+    key: str,
+    phase: str,
+    *,
+    decision_ref: str,
+    action: str,
+    budget: str | int | float,
+    end_condition: str,
+) -> dict:
+    """Record the automatic disposition of an unresolved failure.
+
+    Every field is material: a disposition without a real decision reference,
+    a bounded budget and a stop condition is refused instead of recorded.
+    """
+    missing = [
+        name for name, value in (
+            ("decision_ref", decision_ref), ("action", action),
+            ("budget", budget), ("end_condition", end_condition),
+        ) if value is None or (isinstance(value, str) and not value.strip())
+    ]
+    if missing:
+        raise ValueError("missing disposition field(s): " + ", ".join(missing))
+    if action not in DISPOSITION_ACTIONS:
+        raise ValueError(f"unknown disposition action {action!r}")
+    project_root = pathlib.Path(project_root)
+    if not _recorded_auto_request(project_root, key, str(decision_ref)):
+        raise ValueError(
+            "decision_ref is not a recorded dp-auto business request for this key"
+        )
+    return _append(project_root, key, {
+        "kind": "disposition", "key": str(key), "phase": str(phase),
+        "decision_ref": str(decision_ref), "action": str(action),
+        "budget": budget if isinstance(budget, (int, float)) else str(budget).strip(),
+        "end_condition": str(end_condition).strip(),
+    })
+
+
+def _recorded_auto_request(project_root: pathlib.Path, key: str, decision_ref: str) -> bool:
+    """Whether the ledger holds a real, answering dp-auto request for this key.
+
+    A caller-supplied reference string is never enough: the row must be the
+    recorded business decision (``kind=request``, one business decision,
+    ``available=true``) of the same key. A damaged ledger refuses instead of
+    looking like "nothing recorded".
+    """
+    path = project_root / LIFECYCLE_REL
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    started: set[str] = set()
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            return False
+        if not isinstance(row, dict):
+            return False
+        logical = row.get("logical_id")
+        if row.get("kind") == "record-start" and isinstance(logical, str):
+            started.add(logical)
+        if (row.get("kind") == "request"
+                and row.get("decision_id") == decision_ref
+                and row.get("key") == key
+                and row.get("dp") == "dp-auto"
+                and row.get("business_decisions") == 1
+                and row.get("available") is True
+                and isinstance(logical, str) and logical in started):
+            return True
+    return False
+
+
+def _run_verification(project_root: pathlib.Path, verify_cmd: str) -> tuple[int, str, str]:
+    """Run the bounded re-verification command and return its ACTUAL result."""
+    argv = shlex.split(verify_cmd, posix=(os.name != "nt"))
+    if not argv:
+        raise ValueError("verification command is empty")
+    try:
+        proc = subprocess.run(
+            argv, cwd=str(project_root), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=_ADVANCE_TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired:
+        return 124, "", f"[verification] timed out after {_ADVANCE_TIMEOUT_SEC}s"
+    except OSError as exc:
+        return 127, "", f"[verification] could not run: {exc}"
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def record_verification(
+    project_root: pathlib.Path,
+    key: str,
+    phase: str,
+    *,
+    verify_cmd: str,
+    rc: int | None = None,
+    stdout: str = "",
+    stderr: str = "",
+) -> dict:
+    """Record the bounded re-verification after a disposition.
+
+    ``rc``/``stdout``/``stderr`` are accepted only for call-site compatibility:
+    the recorded values are the ones the command actually produced just now. A
+    self-reported ``rc=0`` therefore cannot release the phase edge.
+    """
+    del rc, stdout, stderr
+    command = str(verify_cmd or "").strip()
+    if not command:
+        raise ValueError("verification command is missing")
+    project_root = pathlib.Path(project_root)
+    code, out, err = _run_verification(project_root, command)
+    return _append(project_root, key, {
+        "kind": "verification", "key": str(key), "phase": str(phase),
+        "verify_cmd": command, "rc": int(code),
+        "stdout": str(out), "stderr": str(err),
+    })
+
+
+def advance_allowed(
+    project_root: pathlib.Path, key: str, phase: str
+) -> tuple[bool, str, dict | None]:
+    """Whether this (key, target phase) may run `advance_phase.py` now.
+
+    A recorded failure stays open until a valid disposition of that same failure
+    is followed by a verification record with rc=0. Anything unproven
+    (corrupt row, disposition without re-verification) keeps the gate closed.
+    """
+    project_root = pathlib.Path(project_root)
+    if not recovery_enforced(project_root):
+        return True, "", None
+    active_failure: dict | None = None
+    disposition: dict | None = None
+    for row in _rows(project_root, key):
+        if row.get("kind") == "corrupt":
+            return False, "advance-failure ledger is unreadable; inspect before advancing", active_failure
+        if str(row.get("phase")) != str(phase):
+            continue
+        kind = row.get("kind")
+        if kind == "failure":
+            active_failure = row
+            disposition = None
+        elif kind == "disposition" and active_failure is not None:
+            disposition = row
+        elif kind == "verification" and active_failure is not None and disposition is not None:
+            if row.get("rc") == 0 and disposition.get("action") in RELEASABLE_ACTIONS:
+                active_failure = None
+                disposition = None
+    if active_failure is None:
+        return True, "", None
+    if disposition is None:
+        return False, f"phase {phase} failed (rc={active_failure.get('rc')}) and has no automatic disposition", active_failure
+    if disposition.get("action") not in RELEASABLE_ACTIONS:
+        return False, f"disposition {disposition.get('action')!r} does not itself resume this phase", active_failure
+    return (
+        False,
+        f"phase {phase} disposition {disposition.get('decision_ref')} has no passing re-verification",
+        active_failure,
+    )

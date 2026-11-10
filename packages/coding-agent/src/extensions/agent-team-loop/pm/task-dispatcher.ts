@@ -1,9 +1,15 @@
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { promisify } from "node:util";
+import type { ModelRegistry } from "../../../core/model-registry.ts";
 import { TERMINAL_WORKER_STATUSES } from "../autopilot/status-model.ts";
 import { RAG_MARKER_V1, type RagTaskMeta, renderRagBlock } from "../rag/block.ts";
 import { loadRagConfig } from "../rag/config.ts";
+import { LOCAL_CODEX_PROVIDER } from "../shared/codex-proxy.ts";
+import { PREFIX_TO_PROVIDER_ID, parseModelValue } from "../shared/dispatch-models.ts";
 import { acquireLock } from "../shared/file-lock.ts";
+import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
 import { renderToolchainCommand, resolveWorkspaceConfig, type WorkspaceConfig } from "../shared/target-config.ts";
 import { readTaskHeaderScalar, readTaskType } from "../shared/task-frontmatter.ts";
@@ -248,13 +254,14 @@ function insertDenyGlobs(content: string, denyGlobs: string[]): string {
  * line to EOF (AC-019) — including a v1-marked legacy block under partition
  * activation, and a drop to nothing under a non-injecting mode (parked
  * single restores the pre-injection bytes). */
-function injectWorkspaceProfile(taskPath: string): void {
+function injectWorkspaceProfile(taskPath: string, vision?: { checked: string; model: string }): void {
 	const controlRoot = controlRootFromTaskPath(taskPath);
 	const config = resolveWorkspaceConfig(controlRoot);
 	let original: string;
 	try {
 		original = fs.readFileSync(taskPath, "utf8");
 	} catch (err) {
+		if (vision) throw err;
 		console.error(
 			`[mw] profile injection skipped for ${taskPath}: ${err instanceof Error ? err.message : String(err)}`,
 		);
@@ -265,7 +272,18 @@ function injectWorkspaceProfile(taskPath: string): void {
 	// re-append the freshly rendered block at the very end. This keeps both
 	// blocks idempotent under re-dispatch and drops a stale RAG block when the
 	// project no longer enables RAG (D-009).
-	const base = stripRagBlock(original);
+	let pinned = original;
+	if (vision) {
+		if (original !== vision.checked) throw new Error("Vision task changed during model verification");
+		if (readTaskHeaderScalar(original, "model") !== vision.model) {
+			const newline = original.includes("\r\n") ? "\r\n" : "\n";
+			pinned = original.replace(
+				/^\uFEFF?(?:[ \t]*---[ \t]*\r?\n)?/,
+				(prefix) => `${prefix}model: ${vision.model}${newline}`,
+			);
+		}
+	}
+	const base = stripRagBlock(pinned);
 	const existing = findProfileBlock(base);
 	const ownDenyGlobs = /^deny_globs:/m.test(base);
 	let out = base;
@@ -295,9 +313,96 @@ function injectWorkspaceProfile(taskPath: string): void {
 	if (out !== original) fs.writeFileSync(taskPath, out, "utf8");
 }
 
+export type ImageCapability = "yes" | "no" | "unknown";
+
+export interface ImageCapabilityFacts {
+	model: string;
+	provider: string;
+	cli: string;
+	taskType: string;
+	imagesRequired: boolean;
+}
+
+/** Production callers must prove image support before an image-reading vision
+ * task can enter the worker queue. Tests inject the same lookup seam with faux
+ * model facts; no provider call or image read occurs here. */
+export type ImageCapabilityLookup = (facts: ImageCapabilityFacts) => ImageCapability;
+
+export interface DispatchTaskOptions {
+	imageCapability?: ImageCapabilityLookup;
+	/** Runtime catalog supplied by the PM window. UI wiring is owned by T30. */
+	modelRegistry?: ModelRegistry;
+}
+
+// Use the installed launcher's read-only resolver. It owns task.md, YAML
+// validation, CLI compatibility and window fallback. Pass task data as argv.
+const READ_LAUNCH_MODEL = `import pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import launcher
+model, _ = launcher._resolve_entry_model({"task_path": sys.argv[2], "cli": sys.argv[3]}, pathlib.Path(sys.argv[4]))
+print(model)`;
+
+async function imageDispatchCapability(
+	entry: Omit<WorkerEntry, "dispatchedAt" | "updatedAt">,
+	options: DispatchTaskOptions,
+): Promise<{ model: string; capability: ImageCapability }> {
+	const unproven = { model: "", capability: "unknown" } as const;
+	const mw = findMwPy();
+	if (!mw || entry.cli.toLowerCase() !== "pi") return unproven;
+	try {
+		const project = controlRootFromTaskPath(entry.taskPath);
+		const { stdout } = await promisify(execFile)(
+			PYTHON_EXE,
+			[
+				"-I",
+				"-B",
+				"-X",
+				"utf8",
+				"-c",
+				READ_LAUNCH_MODEL,
+				path.dirname(path.resolve(mw)),
+				entry.taskPath,
+				entry.cli,
+				project,
+			],
+			{ timeout: 5000, windowsHide: true, maxBuffer: 65536 },
+		);
+		const model = stdout.trim();
+		if (!model || /\s/u.test(model)) return unproven;
+		const { prefix, modelId } = parseModelValue(model);
+		if (prefix && !Object.hasOwn(PREFIX_TO_PROVIDER_ID, prefix)) return unproven;
+		const provider = prefix ? PREFIX_TO_PROVIDER_ID[prefix] : entry.provider.trim();
+		if (!provider || !modelId) return unproven;
+		if (options.imageCapability) {
+			return {
+				model,
+				capability: options.imageCapability({
+					model,
+					provider,
+					cli: entry.cli,
+					taskType: "vision",
+					imagesRequired: true,
+				}),
+			};
+		}
+		const registry = options.modelRegistry;
+		if (!registry) return unproven;
+		const routedProvider =
+			provider === "openai-codex" && registry.getAll().some((row) => row.provider === LOCAL_CODEX_PROVIDER)
+				? LOCAL_CODEX_PROVIDER
+				: provider;
+		const selected = registry.find(routedProvider, modelId);
+		if (!selected || !Array.isArray(selected.input)) return unproven;
+		return { model, capability: selected.input.includes("image") ? "yes" : "no" };
+	} catch {
+		return unproven;
+	}
+}
+
 export async function dispatchTask(
 	entry: Omit<WorkerEntry, "dispatchedAt" | "updatedAt">,
 	store: WorkerStore,
+	dispatchOptions: DispatchTaskOptions = {},
 ): Promise<DispatchOutcome> {
 	const now = new Date().toISOString();
 	const full: WorkerEntry = {
@@ -326,7 +431,24 @@ export async function dispatchTask(
 		const refusal = writeFaceVerdict({ entry, content, store, options });
 		if (refusal !== null) return refusal;
 
-		injectWorkspaceProfile(entry.taskPath);
+		const taskType = readTaskType(content).type ?? "";
+		const imagesRequired = readTaskHeaderScalar(content, "images") === "yes";
+		let vision: { checked: string; model: string } | undefined;
+		if (taskType === "vision" && imagesRequired) {
+			const { model, capability } = await imageDispatchCapability(entry, dispatchOptions);
+			if (capability !== "yes") {
+				return {
+					ok: false,
+					code: "image-capability-unproven",
+					capability,
+					reason: `image-capability-unproven: ${capability}`,
+					detail: `${entry.taskKey}: vision image capability ${capability}; dispatch blocked`,
+				};
+			}
+			vision = { checked: content, model };
+		}
+
+		injectWorkspaceProfile(entry.taskPath, vision);
 		store.upsertWithinLock(full);
 	} finally {
 		release();
@@ -340,7 +462,11 @@ export async function dispatchTask(
  * are the conductor's codes (`dispatch.py:1173/1198/1208`); the remaining
  * values are the parse-time codes the shared operator emits, which the
  * conductor refuses with the same code (`dispatch.py:1164`). */
-export type DispatchRefusalCode = "write-face-overlap" | "write-face-undeclared" | WriteFaceRejectCode;
+export type DispatchRefusalCode =
+	| "write-face-overlap"
+	| "write-face-undeclared"
+	| "image-capability-unproven"
+	| WriteFaceRejectCode;
 
 /** A zero-side-effect dispatch refusal / D-003 deferral (D-008). The PM audit
  * channel is this return value (the conductor writes `timeline.jsonl`). */
@@ -351,6 +477,8 @@ export interface DispatchRefusal {
 	overlapWith?: string;
 	/** Lexically-provable conflict sample path (provable overlap only). */
 	sample?: string;
+	/** Image capability observed by the vision dispatch hard gate. */
+	capability?: ImageCapability;
 	/** D-003: serial-only deferral, not an invalid task. */
 	serialOnly?: boolean;
 	/** Number of same-owner in-flight workers (undeclared deferral only). */

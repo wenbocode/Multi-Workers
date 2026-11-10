@@ -31,9 +31,11 @@ through advance.advance() → advance_phase.py.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import datetime
 import hashlib
+import json
 import os
 import pathlib
 import re
@@ -42,7 +44,9 @@ import socket
 import subprocess
 import sys
 import threading
+import uuid
 import time
+from collections.abc import Callable, Mapping
 
 # Script-mode bootstrap (same rationale as state.py / dispatch.py).
 _PARENT = pathlib.Path(__file__).resolve().parent.parent
@@ -50,8 +54,17 @@ if str(_PARENT) not in sys.path:
     sys.path.insert(0, str(_PARENT))
 
 import mw_common  # noqa: E402  (path bootstrapped above)
+import codex_pm
+import decision_lifecycle as lifecycle
+import decision
+import decision_points
+import decision_policy
+import decision_validity as validity
+import decision_wire
+import operator_authority
 
 from autopilot import advance, audit_evidence, closure, config, contract_guard, dispatch, effective_config, evidence, gates, index_parallel, roadmap, state, task_graph, timeline, write_face  # noqa: E402
+from autopilot import gate_effects, xkey
 
 # ── Phase machine constants (T-10) ──────────────────────────────────────────
 
@@ -123,8 +136,7 @@ def goal_path(project_root: pathlib.Path) -> pathlib.Path:
 
 
 def goal_mtime_ns(project_root: pathlib.Path) -> int | None:
-    """goal.md mtime in ns, or None when absent. The only goal.md access the
-    conductor ever performs (D-102 change detection baseline)."""
+    """goal.md mtime in ns, or None when absent (the polling watermark)."""
     try:
         return os.stat(goal_path(project_root)).st_mtime_ns
     except OSError:
@@ -568,6 +580,9 @@ class ConductorState:
         self.timeline = tl
         self.goal_baseline = goal_baseline  # mtime_ns snapshot (D-102)
         self.goal_halted = False  # goal-change gate open
+        # Last accepted text, for presentation-only changes during this loop.
+        # Persisted gate/consumption proof is still required after a goal halt.
+        self.goal_text: str | None = None
         # key -> claim_id already skip-notified (event spam control only;
         # the skip decision itself re-derives from files every tick)
         self.skipped_claims: dict[str, str] = {}
@@ -584,12 +599,77 @@ class ConductorState:
 
 
 def open_goal_change_gate(project_root: pathlib.Path) -> bool:
-    """Is there a pending goal-change gate? (Directory truth — survives
-    conductor restarts; also the create-once guard.)"""
-    return any(
-        g.kind == "goal-change" and g.status == "pending"
-        for g in gates.enumerate(gates_dir(project_root))
+    """Is the recorded goal change unresolved, including a rejected adoption?"""
+    goal_gates = [g for g in gates.enumerate(gates_dir(project_root)) if g.kind == "goal-change"]
+    try:
+        text = goal_path(project_root).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        text = None
+    return bool(goal_gates) and _goal_change_approval(project_root, goal_gates, text) is None
+
+
+def _goal_gate_matches(project: pathlib.Path, gate: gates.Gate, text: str | None) -> bool:
+    if text is None or not gate.goal_sha256_after:
+        return False
+    if hashlib.sha256(text.encode("utf-8")).hexdigest() == gate.goal_sha256_after:
+        return True
+    if gate.historical:
+        return (gate.goal_diff or {}).get("after_semantic_version") == validity.semantic_version("prose", text).render()
+    sidecar = _read_json_file(_prepared_gate_sidecar(project, gate.id))
+    if not isinstance(sidecar, Mapping) or not _pm_sidecar_binding_ok(sidecar, gate):
+        return False
+    payload = sidecar.get("payload")
+    after = payload.get("after_text") if isinstance(payload, Mapping) else None
+    return (
+        isinstance(after, str)
+        and hashlib.sha256(after.encode("utf-8")).hexdigest() == gate.goal_sha256_after
+        and validity.compare_dependency_values("prose", after, text).status in ("identical", "equivalent")
     )
+
+
+def _goal_change_approval(
+    project: pathlib.Path, goal_gates: list[gates.Gate], text: str | None,
+) -> gates.Gate | None:
+    """Read the latest goal judgement against the actual current goal.
+
+    A typed gate needs the existing canonical H06 completion chain, not its
+    legacy pending status or an applied flag. A later goal judgement cannot
+    be bypassed by replaying an earlier approval. No gate/history is rewritten.
+    """
+    if not goal_gates or text is None:
+        return None
+    gate = goal_gates[-1]
+    if gate.historical:
+        if (gate.status == "approved" and gate.answered_at and gate.answered_by
+                and not gate.answer_source and not gate.answered_by.startswith("conductor-auto:")
+                and _goal_gate_matches(project, gate, text)):
+            return gate
+        return None
+    if (gate.transport != "answered" or gate.business != "approve"
+            or gate.effect != "applied" or not gate.key):
+        return None
+    adopted = contract_guard.adopted_goal_binding(project, gate.key)
+    if adopted.state != "present" or adopted.decision_ref != gate.decision_ref:
+        return None
+    sidecar = _read_json_file(_prepared_gate_sidecar(project, gate.id))
+    if (not isinstance(sidecar, Mapping) or not _pm_sidecar_binding_ok(sidecar, gate)
+            or sidecar.get("family") != "goal-adoption"):
+        return None
+    payload = sidecar.get("payload")
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("after_text"), str):
+        return None
+    after = payload["after_text"]
+    if hashlib.sha256(after.encode("utf-8")).hexdigest() != gate.goal_sha256_after:
+        return None
+    try:
+        matter = _family_matter(project, "goal-adoption", payload)
+    except gate_effects.GateBlocked:
+        return None
+    if matter.matter_key != gate.matter_ref or matter.substantive_version != gate.substantive_version:
+        return None
+    if validity.compare_dependency_values("prose", after, text).status in ("identical", "equivalent"):
+        return gate
+    return None
 
 
 def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
@@ -607,6 +687,14 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
     # live answer written this tick is applied by the same tick's step F.
     # `off` makes this a no-op (today's behaviour, byte for byte).
     auto_decide_gates(project_root, st, cfg)
+    # T26: collect answered prepared decision gates for their bound PM
+    # consumer. An ordinary tick only surfaces them; it never answers or
+    # consumes as the PM.
+    collect_prepared_gates(project_root, st)
+    # T26: consume the current bounded H11 view for keys this process really
+    # owns. An ordinary tick never creates a recovery request or resumes a
+    # halted stage; it only records one bounded observation action.
+    consume_halted_recoveries(project_root, st)
 
     # §5.1 F: consume answered gates first — a corrupt answer file skips
     # the whole tick (policy per gates.enumerate docstring).
@@ -936,6 +1024,10 @@ def _consume_answered_gates(
     for gate in all_gates:
         if gate.status == "pending":
             continue
+        if _legacy_auto_answer(gate):
+            _record_legacy_auto_ignored(
+                project_root, st, gate, "reply is historical, not a current release")
+            continue
         if gate.kind == "xkey-authorize":
             if (cfg or {}).get("xkey_repair", False) and gate.id not in consumed:
                 _consume_xkey_gate(project_root, st, gate)
@@ -1200,11 +1292,38 @@ def _dispatch_roadmap_writer(
     used = state.used_rounds(_all_workers_dirs(project_root)).get(loop, 0)
     if used >= 2:
         return  # both proposals spent — wait for a human roadmap edit
+    replan_issues = dispatch.roadmap_replan_issues(used, rejected_note)
+    if replan_issues:
+        detail = "roadmap re-plan withheld: " + _one_line("; ".join(replan_issues), 300)
+        if not _timeline_has_event(project_root, "config", "", detail):
+            st.timeline.append("config", detail=detail)
+        return
     attempt = used + 1
+    # T26-H10 / VC-033: before a controlled re-plan publishes a new writer
+    # (whose prompt whole-file rewrites the only `_roadmap.md`), persist the
+    # current rejected proposal's immutable bytes at the producer/dispatch
+    # boundary. A fresh first proposal (attempt==1) has no prior version to
+    # preserve; a re-plan whose only old version is absent has no bytes to
+    # lose. Any real capture failure (unreadable old proposal, an existing
+    # snapshot with different bytes, or a write error) fails closed: no new
+    # queue is published.
+    prior_link = ""
+    rm_path = roadmap.roadmap_path(project_root)
+    if attempt >= 2 and rm_path.is_file():
+        ok, archive_rel = dispatch.preserve_roadmap_prior(
+            project_root, rm_path, stage_number, used,
+        )
+        if not ok:
+            st.timeline.append(
+                "config",
+                detail="roadmap re-plan withheld: prior proposal archive failed",
+            )
+            return  # fail closed: never publish without preserved old bytes
+        prior_link = _roadmap_prior_link(archive_rel, used, rejected_note)
     result = dispatch.dispatch(
         project_root, dispatch.SCRATCH_OWNER,
         f"roadmap-s{stage_number}-a{attempt}", "roadmap-writer",
-        _roadmap_writer_prompt(project_root, stage_number, rejected_note),
+        _roadmap_writer_prompt(project_root, stage_number, rejected_note, prior_link),
         loop=loop, attempt=attempt,
         read_scope=[".agenticdoc"],
         timeline=st.timeline,
@@ -1215,10 +1334,32 @@ def _dispatch_roadmap_writer(
         )
 
 
+def _roadmap_prior_link(archive_rel: str, prior_attempt: int, rejected_note: str) -> str:
+    """H10/VC-033: link the new proposal/version to the archived old source,
+    the exact rejection reason, and the old attempt. Rendered into the a2
+    task.md prompt; the archived bytes and old records are never rewritten."""
+    return (
+        "\n## Prior proposal (immutable archive - do not rewrite)\n\n"
+        f"- old source: the prior `.agenticdoc/_autopilot/_roadmap.md` "
+        f"(attempt {prior_attempt}) was archived byte-for-byte at "
+        f"`{archive_rel}`; read it for the full rejected proposal.\n"
+        f"- prior rejection reason (verbatim): {rejected_note}\n"
+        f"- link: this is the controlled re-plan's new version "
+        f"(attempt {prior_attempt + 1}); it must reference the old source / "
+        "rejection reason / old attempt above. Never rewrite the archive "
+        "file or any old worker/round record.\n"
+    )
+
+
 def _roadmap_writer_prompt(
-    project_root: pathlib.Path, stage_number: int, rejected_note: str
+    project_root: pathlib.Path, stage_number: int, rejected_note: str,
+    prior_link: str = "",
 ) -> str:
-    """D-105 roadmap-writer input list rendered into the task prompt."""
+    """D-105 roadmap-writer input list rendered into the task prompt.
+
+    ``prior_link`` (T26-H10/VC-033) is the immutable-archive reference for a
+    controlled re-plan; empty for a fresh first proposal keeps the a1 render
+    byte-for-byte unchanged."""
     goal = "(missing)"
     goal_file = goal_path(project_root)
     if goal_file.is_file():
@@ -1266,6 +1407,7 @@ def _roadmap_writer_prompt(
         "唯一写入目标：`.agenticdoc/_autopilot/_roadmap.md`（整个文件重写）。"
         "读取仅限 .agenticdoc 下。\n"
         + revision
+        + prior_link
     )
 
 
@@ -1323,6 +1465,22 @@ def _stage_closure(
             "stage-close", stage=stage.number,
             detail=f"dossier stage-{stage.number}-close.md written",
         )
+    # T26/H13: the close gate is opened only from the PM's CURRENT stage
+    # submission. A key that the original rule requires a sign-off for must
+    # still validate as a finalize against the matter and evidence submitted
+    # now; a historical record.material copy can never satisfy it. Opening the
+    # gate still neither closes the stage nor approves the next one.
+    close_check = closure.stage_close_check(
+        project_root, stage.number, [entry.key for entry in stage.keys]
+    )
+    if not close_check.ok:
+        detail = f"stage {stage.number} close withheld: " + _one_line(
+            "; ".join(close_check.issues), 300
+        )
+        dedupe_key = stage.keys[0].key if stage.keys else ""
+        if not _timeline_has_event(project_root, "config", dedupe_key, detail):
+            st.timeline.append("config", key=dedupe_key or None, detail=detail)
+        return
     _create_gate(
         project_root, st, "stage-close",
         f"Stage {stage.number} 全部 key 已终态，闭环 dossier 已写入"
@@ -1557,8 +1715,16 @@ def _timed_advance(
     propagates exactly as before (the callers' existing handling is unchanged).
     """
     started = time.monotonic()
+    enforced = advance.recovery_enforced(project_root)
+    if enforced:
+        allowed, reason, failure = advance.advance_allowed(project_root, key, phase)
+        if not allowed:
+            ms = int(round((time.monotonic() - started) * 1000))
+            return 1, "", reason, ms
     code, out, err = advance.advance(key, phase, project_root, summary=summary)
     ms = int(round((time.monotonic() - started) * 1000))
+    if enforced and code != 0:
+        advance.record_failure(project_root, key, phase, code, out, err)
     return code, out, err, ms
 
 
@@ -2899,9 +3065,11 @@ def _append_pass_line(
         text = ""
         if pm_state.is_file():
             text = pm_state.read_text(encoding="utf-8", errors="replace")
-        if "PASS" in text:
-            return True
         rel = qg_path.relative_to(project_root).as_posix()
+        affected = qg_path.name.startswith("quality-gate-report-contract-")
+        if any("PASS" in line and (not affected or rel in line)
+               for line in text.splitlines()):
+            return True
         line = f"- PASS: L3 quality gate meets — {rel} (autopilot {_iso_now()})"
         pm_state.parent.mkdir(parents=True, exist_ok=True)
         pm_state.write_text(
@@ -2931,6 +3099,291 @@ def _set_index_phase(project_root: pathlib.Path, key: str, phase: str) -> tuple[
         return 1, repr(exc)
 
 
+def _contract_reverification_source(
+    project: pathlib.Path, key: str, task_key: str, *, admit: bool = True,
+) -> tuple[dict, object]:
+    """Read pinned provenance; check live spend only for a new execution."""
+    claim = _pm_owner(project, key)
+    codex_pm.identifier(task_key)
+    task_dir = codex_pm.child(project, ".agenticdoc", key, "workers", task_key)
+    task_path = codex_pm.child(task_dir, "task.md")
+    text = task_path.read_text(encoding="utf-8")
+    rows = [row for row in codex_pm.queue(project)
+            if row.get("task_key") == task_key]
+    if (len(rows) != 1 or rows[0].get("status") != "done"
+            or mw_common.worker_owner_key(rows[0]) != key
+            or pathlib.Path(rows[0]["task_path"]).resolve() != task_path
+            or mw_common.read_run_status(task_dir) != "done"):
+        raise gate_effects.GateBlocked("needs-rerun: no completed original dispatched task source")
+    binding = codex_pm.run_binding(task_dir)
+    role = mw_common.read_task_header_scalar(text, "type")
+    run_path = codex_pm.child(task_dir, "run.json")
+    run = _read_json_file(run_path)
+    if (not isinstance(run, dict) or run.get("schema") != 1
+            or run.get("task_key") != task_key or run.get("owner_key") != key
+            or run.get("kind") != role or run.get("status") != "done"
+            or type(run.get("exit")) is not int or run["exit"] != 0
+            or not isinstance(run.get("run_id"), str)
+            or not run["run_id"].startswith(task_key + "@")):
+        raise gate_effects.GateBlocked(
+            "needs-rerun: original completed run identity unavailable or mismatched")
+    face = write_face.parse_write_face(
+        text, base=dispatch.write_face_base(project),
+        case_insensitive=dispatch.write_face_case_insensitive())
+    if binding is None or role not in ("coding", "research") or not isinstance(
+            face, write_face.WriteFace):
+        raise gate_effects.GateBlocked(
+            "needs-rerun: original role/write face/output binding unavailable")
+    argv = codex_pm.acceptance_argv(text)
+    card_ref = mw_common.read_task_header_scalar(text, "card_path")
+    card_sha = mw_common.read_task_header_scalar(text, "card_sha256")
+    if (not isinstance(card_ref, str) or not card_ref.startswith("tasks/")
+            or pathlib.PurePosixPath(card_ref).parts != ("tasks", pathlib.PurePosixPath(card_ref).name)
+            or not isinstance(card_sha, str)
+            or re.fullmatch(r"[0-9a-f]{64}", card_sha) is None):
+        raise gate_effects.GateBlocked("needs-rerun: original dispatched card identity unavailable")
+    card_path = codex_pm.child(project, ".agenticdoc", key, *pathlib.PurePosixPath(card_ref).parts)
+    card_text = card_path.read_text(encoding="utf-8")
+    entries = dispatch._card_write_face_entries({"extras": dispatch.extract_card_extras(card_text)})
+    card_face = write_face.parse_write_face(
+        dispatch.render_write_face_line(entries or []),
+        base=dispatch.write_face_base(project),
+        case_insensitive=dispatch.write_face_case_insensitive())
+    if (dispatch.card_digest(card_path) != card_sha
+            or codex_pm.acceptance_argv(card_text) != argv
+            or mw_common.read_task_header_scalar(card_text, "type") != role
+            or not isinstance(card_face, write_face.WriteFace)
+            or card_face != face):
+        raise gate_effects.GateBlocked("needs-rerun: dispatched card command/role/write face changed")
+    coverage = set()
+    for field, prefix in (("ac_refs", "AC"), ("vc_refs", "VC")):
+        declared = mw_common.read_task_header_scalar(card_text, field)
+        if declared is not None:
+            coverage.update(re.findall(rf"\b{prefix}-\d{{3}}\b", declared))
+    affected = contract_guard.contract_reverification_binding(
+        project / ".agenticdoc" / key)
+    if affected.get("status") == "pending":
+        uncovered = set(affected["versions"]) - coverage
+        if uncovered:
+            raise gate_effects.GateBlocked(
+                "needs-rerun: pinned card coverage missing " + ", ".join(sorted(uncovered)))
+    cwd = pathlib.Path(mw_common.workspace_root(
+        mw_common.load_target_config(project))).resolve()
+    pinned = re.findall(r"^PM verification cwd: (.+)$", text, re.MULTILINE)
+    if len(pinned) != 1 or pathlib.Path(json.loads(pinned[0])).resolve() != cwd:
+        raise gate_effects.GateBlocked("needs-rerun: original dispatched acceptance cwd unavailable or changed")
+    authority = operator_authority.verify_pm_authority(
+        operator_authority.read_pm_authority(project, key))
+    if authority.claim_id != claim or not authority.policy_sha256:
+        raise gate_effects.GateBlocked("needs-rerun: original claimed authority unproven")
+    usage, spend, reasons = contract_guard._pm_usage_reading(authority, project, key)
+    loaded = decision_policy.load_policy(project)
+    if reasons or not loaded.usable or loaded.policy is None:
+        raise gate_effects.GateBlocked("needs-rerun: current hard budget unproven")
+    for limit in loaded.policy.hard_limits if admit else ():
+        used = usage.get(limit.usage_source)
+        if (type(used) is not int or not 0 <= used < limit.limit
+                or not decision_policy.check_spend(
+                    loaded, unit=limit.unit, amount=spend[limit.unit],
+                    usage={limit.unit: used}).allowed):
+            raise gate_effects.GateBlocked("needs-rerun: current hard budget exhausted")
+    timeout_text = mw_common.read_task_header_scalar(text, "timeout")
+    if timeout_text is not None and (not timeout_text.isdecimal() or int(timeout_text) <= 0):
+        raise gate_effects.GateBlocked("needs-rerun: invalid original task timeout")
+    timeout_s = int(timeout_text) * 60 if timeout_text is not None else 3600
+    return {
+        "key": key, "task_key": task_key, "claim_id": claim,
+        "binding": binding, "role": role,
+        "run_sha256": _family_file_sha(run_path),
+        "card_path": card_ref, "card_sha256": card_sha,
+        "write_face": list(face.allow_entries),
+        "write_face_deny": list(face.deny_entries),
+        "argv": argv, "cwd": str(cwd), "timeout_s": timeout_s,
+        "policy_sha256": authority.policy_sha256,
+        **({"usage": usage, "spend": spend} if admit else {}),
+    }, authority
+
+
+def run_contract_reverification(
+    project_root: pathlib.Path | str, key: str, *, task_key: str,
+) -> dict:
+    """Run only the original dispatched acceptance argv against current adoption.
+
+    No command or authority is accepted from the caller or reverification_plan.
+    Each attempt retains its raw outputs and receipt in a fresh directory.
+    """
+    project = pathlib.Path(project_root).resolve()
+    key_dir = project / ".agenticdoc" / codex_pm.identifier(key)
+    before = contract_guard.contract_reverification_binding(key_dir)
+    if before.get("status") == "unaffected":
+        return before
+    if before.get("status") != "pending":
+        return {"status": "needs-rerun", "reason": before.get("reason")}
+    try:
+        # Serialize admission and durable spending only; never hold this lock
+        # while the original acceptance subprocess runs.
+        with _family_lock(lock_file(project, f"contract-reverification-{key}")):
+            source, authority = _contract_reverification_source(project, key, task_key)
+            folder = codex_pm.child(key_dir, "evidence", "contract-reverification")
+            folder.mkdir(parents=True, exist_ok=True)
+            for previous in folder.glob("*/receipt.json"):
+                observed = _read_json_file(previous)
+                if observed is None or observed.get("status") == "incomplete":
+                    raise gate_effects.GateBlocked(
+                        "needs-rerun: unresolved prior execution; inspect before retry")
+            run_dir = folder / uuid.uuid4().hex
+            run_dir.mkdir()
+            receipt = {
+                "schema": 1, "status": "incomplete", "source": source,
+                "before": before, "started_at": _iso_now(),
+                "started_ns": time.time_ns(),
+            }
+            destination = run_dir / "receipt.json"
+            _write_json_atomic(destination, receipt)
+    except (OSError, ValueError, RuntimeError, operator_authority.AuthorityError) as exc:
+        return {"status": "needs-rerun", "reason": str(exc)}
+    try:
+        result = xkey.run_verification(
+            source["argv"], cwd=source["cwd"], run_dir=str(run_dir),
+            timeout=source["timeout_s"])
+        after = contract_guard.contract_reverification_binding(key_dir)
+        fresh, _fresh_authority = _contract_reverification_source(
+            project, key, task_key, admit=False)
+        provenance = {name: value for name, value in source.items()
+                      if name not in ("usage", "spend")}
+        operator_authority.verify_pm_authority(authority)
+        counts = result.get("red_counts") or {}
+        receipt.update({
+            "after": after, "result": result,
+            "stdout_sha256": _family_file_sha(run_dir / "stdout.txt"),
+            "stderr_sha256": _family_file_sha(run_dir / "stderr.txt"),
+            "finished_at": _iso_now(),
+        })
+        receipt["status"] = ("passed" if before == after and provenance == fresh
+            and type(counts.get("returncode")) is int
+            and counts["returncode"] == 0 and counts.get("timed_out") is False
+            else "needs-rerun")
+    except (OSError, ValueError, RuntimeError, operator_authority.AuthorityError) as exc:
+        receipt.update(status="needs-rerun", reason=str(exc), finished_at=_iso_now())
+    with contract_guard.contract_publication_lock(key_dir):
+        if contract_guard.contract_reverification_binding(key_dir) != before:
+            receipt.update(status="needs-rerun",
+                           reason="adopted contract changed before receipt publication")
+        _write_json_atomic(destination, receipt)
+    return {**receipt, "receipt_path": str(destination)}
+
+
+def _current_contract_reverification(project: pathlib.Path, key: str) -> dict:
+    """Consume retained execution receipts against the current original source."""
+    key_dir = project / ".agenticdoc" / key
+    current = contract_guard.contract_reverification_binding(key_dir)
+    if current.get("status") != "pending":
+        return current
+    folder = key_dir / "evidence" / "contract-reverification"
+    attempts = []
+    for candidate in folder.glob("*/receipt.json"):
+        record = _read_json_file(candidate)
+        if (not isinstance(record, dict)
+                or type(record.get("started_ns")) is not int
+                or record["started_ns"] <= 0):
+            return {**current, "reason": "reverification attempt ordering unproven"}
+        attempts.append((record["started_ns"], candidate))
+    latest = max((stamp for stamp, _path in attempts), default=None)
+    selected = [path for stamp, path in attempts if stamp == latest]
+    if len(selected) != 1:
+        return {**current, "reason": "single latest reverification attempt unproven"}
+    for path in selected:
+        receipt = _read_json_file(path)
+        if (receipt is None or receipt.get("schema") != 1
+                or receipt.get("status") != "passed"
+                or receipt.get("before") != current or receipt.get("after") != current):
+            continue
+        source = receipt.get("source")
+        result = receipt.get("result")
+        if not isinstance(source, dict) or not isinstance(result, dict):
+            continue
+        try:
+            fresh, _authority = _contract_reverification_source(
+                project, key, source.get("task_key"), admit=False)
+            provenance = {name: value for name, value in source.items()
+                          if name not in ("usage", "spend")}
+            if fresh != provenance or path.resolve() != path:
+                continue
+            counts = result.get("red_counts")
+            if (not isinstance(counts, dict)
+                    or type(counts.get("returncode")) is not int
+                    or counts["returncode"] != 0 or counts.get("timed_out") is not False):
+                continue
+            stdout = path.parent / "stdout.txt"
+            stderr = path.parent / "stderr.txt"
+            if (result.get("stdout_path") != str(stdout)
+                    or not receipt.get("stdout_sha256")
+                    or not receipt.get("stderr_sha256")
+                    or _family_file_sha(stdout) != receipt["stdout_sha256"]
+                    or _family_file_sha(stderr) != receipt["stderr_sha256"]):
+                continue
+            raw = stdout.read_bytes()
+            header, separator, payload = raw.partition(b"\n")
+            match = re.fullmatch(rb"# xkey-run .+ bytes=(\d+) sha256=([0-9a-f]{64})", header)
+            if not separator or match is None:
+                continue
+            size = int(match.group(1))
+            digest = hashlib.sha256(payload[:size]).hexdigest()
+            if (len(payload) < size or payload[size:] not in (b"", b"\n")
+                    or digest != match.group(2).decode("ascii")
+                    or digest != result.get("sha256")):
+                continue
+            return {**current, "status": "verified",
+                    "receipt_path": str(path), "receipt_sha256": _family_file_sha(path)}
+        except (OSError, ValueError, TypeError, RuntimeError, operator_authority.AuthorityError):
+            continue
+    return {**current, "reason": "current admitted successful execution receipt missing or stale"}
+
+
+def current_contract_done_problems(key_dir: pathlib.Path) -> list[str]:
+    """Shared read-only receipt/QG consumer for native and conductor closure."""
+    key_dir = pathlib.Path(key_dir).resolve()
+    project = key_dir.parent.parent
+    current = _current_contract_reverification(project, key_dir.name)
+    if current.get("status") == "unaffected":
+        return []
+    if current.get("status") != "verified":
+        return ["needs-rerun: " + str(current.get("reason") or
+                "current adopted-contract execution proof required")]
+    try:
+        pm = (key_dir / "pm-state.md").read_text(encoding="utf-8")
+        for path in (key_dir / "evidence").glob("quality-gate-report-contract-*.md"):
+            content = path.read_text(encoding="utf-8")
+            rows = re.findall(r"^- current_binding: (.+)$", content, re.MULTILINE)
+            if len(rows) != 1:
+                continue
+            binding = json.loads(rows[0])
+            if not isinstance(binding, dict) or binding.get("reverification") != current:
+                continue
+            canonical = json.dumps(binding, ensure_ascii=False, sort_keys=True,
+                                   separators=(",", ":"))
+            digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            if path.name != f"quality-gate-report-contract-{digest}.md":
+                continue
+            source = codex_pm.child(project, *pathlib.PurePosixPath(
+                binding["l3_source"]).parts)
+            text = source.read_text(encoding="utf-8")
+            qg = _md_section(text, "## Quality Gate Report")
+            if (hashlib.sha256(text.encode("utf-8")).hexdigest() != binding.get("l3_sha256")
+                    or qg is None or current["receipt_sha256"] not in qg):
+                continue
+            expected = (f"# Quality Gate Report: {key_dir.name}\n\n"
+                        f"- current_binding: {canonical}\n\n{qg}\n")
+            rel = path.relative_to(project).as_posix()
+            if content == expected and any("PASS" in line and rel in line
+                                            for line in pm.splitlines()):
+                if _current_contract_reverification(project, key_dir.name) == current:
+                    return []
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+        return ["needs-rerun: current contract QG binding unreadable or malformed"]
+    return ["needs-rerun: current execution receipt lacks matching L3/QG/PASS proof"]
+
+
 def _done_transaction(
     project_root: pathlib.Path,
     st: ConductorState,
@@ -2951,6 +3404,16 @@ def _done_transaction(
     from before this feature behave exactly as before (AC-013)."""
     project_root = pathlib.Path(project_root)
     key_dir = project_root / ".agenticdoc" / key
+    # Refreezing authorizes the contract change; it does not prove that the
+    # affected acceptance checks passed against the adopted versions. Check
+    # this before even the crash-after-advance shortcut or any derived write.
+    reverification = _current_contract_reverification(project_root, key)
+    if reverification.get("status") not in ("unaffected", "verified"):
+        detail = "contract reverification needs-rerun: " + str(
+            reverification.get("reason") or "current affected verification receipt required")
+        if not _timeline_has_event(project_root, "config", key, detail):
+            st.timeline.append("config", key=key, detail=detail)
+        return "gated", detail
     ks = state.read_key_states(project_root).get(key)
     if ks is not None and ks.phase.strip().upper() == "DONE":
         return "advanced", ""  # crash-after-advance resume
@@ -2986,12 +3449,41 @@ def _done_transaction(
     achieved = _md_section(text, "## Achieved")
     if qg is None or achieved is None:
         return "below", ""
+    if reverification.get("status") == "verified":
+        # An old L3 PASS cannot be relabelled with a fresh execution receipt.
+        # The submitted QG section must explicitly review that exact receipt.
+        receipt_sha = reverification["receipt_sha256"]
+        if receipt_sha not in qg:
+            return "gated", "needs-rerun: L3 QG does not reference the current reverification receipt SHA256"
     try:
+        if _current_contract_reverification(project_root, key) != reverification:
+            return "gated", "needs-rerun: contract verification changed before QG materialization"
         evidence_dir = key_dir / "evidence"
         evidence_dir.mkdir(parents=True, exist_ok=True)
-        # 1. QG report — timestamped, written once (any existing report is
-        #    reused on a retry; the source verdict has not changed)
-        if list(evidence_dir.glob("quality-gate-report-*.md")):
+        # Affected contracts reuse only the artifact bound to this actual
+        # L3 source and current successful execution receipt. Historical QG
+        # files remain byte-identical. Unaffected keys retain original reuse.
+        if reverification.get("status") == "verified":
+            qg_binding = {
+                "reverification": reverification,
+                "l3_source": l3_output.relative_to(project_root).as_posix(),
+                "l3_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            }
+            binding_text = json.dumps(qg_binding, ensure_ascii=False,
+                                      sort_keys=True, separators=(",", ":"))
+            binding_sha = hashlib.sha256(binding_text.encode("utf-8")).hexdigest()
+            qg_path = evidence_dir / f"quality-gate-report-contract-{binding_sha}.md"
+            content = (f"# Quality Gate Report: {key}\n\n"
+                       f"- current_binding: {binding_text}\n\n{qg}\n")
+            if qg_path.exists():
+                if qg_path.read_text(encoding="utf-8") != content:
+                    return "gated", "current QG artifact binding/content changed"
+            else:
+                with contract_guard.contract_publication_lock(key_dir):
+                    if _current_contract_reverification(project_root, key) != reverification:
+                        return "gated", "needs-rerun: proof changed before QG publication"
+                    qg_path.write_text(content, encoding="utf-8", newline="\n")
+        elif list(evidence_dir.glob("quality-gate-report-*.md")):
             qg_path = next(iter(sorted(evidence_dir.glob("quality-gate-report-*.md"))))
         else:
             qg_path = evidence_dir / (
@@ -3007,6 +3499,8 @@ def _done_transaction(
             )
         # 1b. persist the L3 verdict for the closure dossier (AC-003):
         # l3-verdict.txt + l3-report.md, written once (check-before-write)
+        if _current_contract_reverification(project_root, key) != reverification:
+            return "gated", "needs-rerun: contract verification changed before L3 persistence"
         _persist_l3_verdict(key_dir, "meets", l3_output, st=st)
         # 2. achieved.md draft: write when absent/short; a ≥200B draft is
         #    replaced only when the persisted bad-draft marker authorizes it
@@ -3019,6 +3513,8 @@ def _done_transaction(
         except ConductorLockHeld:
             return "gated", ""  # lock held — retry next tick
         try:
+            if _current_contract_reverification(project_root, key) != reverification:
+                return "gated", "needs-rerun: contract verification changed before achieved materialization"
             current = (
                 achieved_path.read_bytes() if achieved_path.is_file() else None
             )
@@ -3040,10 +3536,18 @@ def _done_transaction(
                 detail="L3 achieved draft < 200B → below (repair path, no padding)",
             )
             return "below", ""
-        # 4. pm-state PASS line under the per-key lock
-        if not _append_pass_line(project_root, st, key, qg_path):
-            return "gated", ""  # lock held — retry next tick
-        # 5. advance done (framework gates re-verify the 三件套)
+        # H08 and receipt publication share this short check-and-publish boundary.
+        with contract_guard.contract_publication_lock(key_dir):
+            if _current_contract_reverification(project_root, key) != reverification:
+                return "gated", "needs-rerun: contract verification changed before PASS materialization"
+            if not _append_pass_line(project_root, st, key, qg_path):
+                return "gated", ""  # lock held — retry next tick
+        # 5. Both closure paths consume the same current receipt/QG binding.
+        problems = current_contract_done_problems(key_dir)
+        if problems:
+            return "gated", "; ".join(problems)
+        if _current_contract_reverification(project_root, key) != reverification:
+            return "gated", "needs-rerun: contract verification changed before advance"
         code, _out, err, ms = _timed_advance(
             key, "done", project_root, summary="autopilot L3 meets"
         )
@@ -3789,28 +4293,55 @@ def tick(project_root: pathlib.Path, st: ConductorState) -> str:
         # acceptance boundaries create the sidecar the done gate consumes.
         _freeze_contract_first_sight(project_root, st, cfg)
 
-        # 3. goal.md change detection (D-102): halt + ONE goal-change gate.
+        # 3. A polling watermark is not a business approval. Reconcile the
+        # actual goal with its bound judgement/consumption before dispatch.
         current = goal_mtime_ns(project_root)
         try:
-            gate_open = open_goal_change_gate(project_root)
+            text = goal_path(project_root).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            text = None
+        try:
+            goal_gates = [g for g in gates.enumerate(gates_dir(project_root)) if g.kind == "goal-change"]
         except gates.GateFormatError as exc:
             # Corrupt gate file (expected degraded state, e.g. a bad hand
             # edit): skip the tick + config event — the policy gates.enumerate
             # documents; the loop survives.
             st.timeline.append("config", detail=f"gate file corrupt, tick skipped: {exc}")
             return "ok"
-        if (
-            not gate_open
-            and not st.goal_halted
-            and current != st.goal_baseline
-        ):
+        approved = _goal_change_approval(project_root, goal_gates, text)
+        same_text = (
+            st.goal_text is not None and text is not None
+            and validity.compare_dependency_values("prose", st.goal_text, text).status in ("identical", "equivalent")
+        )
+        changed = current != st.goal_baseline or (st.goal_text is not None and not same_text)
+        presentation_only = not goal_gates and not st.goal_halted and same_text
+        if approved is not None or presentation_only:
+            if st.goal_halted or changed:
+                st.timeline.append(
+                    "goal-snapshot",
+                    detail=f"baseline refreshed to mtime_ns {current} after "
+                    + (f"bound goal approval {approved.id}" if approved else "presentation-only goal change"),
+                )
+            st.goal_baseline = current
+            st.goal_text = text
+            st.goal_halted = False
+        elif goal_gates or st.goal_halted or changed:
             try:
                 acquire_conductor_lock(project_root, "gates", st.timeline)
             except ConductorLockHeld:
                 return "lock-held"
             try:
-                # Re-check under the lock (create-once).
-                if not open_goal_change_gate(project_root):
+                # Re-check under the lock. An answer arriving concurrently is
+                # reconciled next tick; never overwrite it or mint another gate.
+                latest = [g for g in gates.enumerate(gates_dir(project_root)) if g.kind == "goal-change"]
+                if _goal_change_approval(project_root, latest, text) is not None:
+                    return "ok"
+                existing = latest[-1] if latest else None
+                waiting = existing is not None and (
+                    _goal_gate_matches(project_root, existing, text)
+                    or (not existing.goal_sha256_after and existing.status in ("pending", "rejected"))
+                )
+                if not waiting:
                     goal_gate = gates.create(
                         gates_dir(project_root),
                         "goal-change",
@@ -3818,6 +4349,13 @@ def tick(project_root: pathlib.Path, st: ConductorState) -> str:
                         "new goal and approve resuming, or reject to stay halted.",
                         context_refs=[str(goal_path(project_root))],
                     )
+                    if text is not None:
+                        _rewrite_gate_fields(goal_gate, {
+                            "goal_sha256_after": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                            "goal_diff": json.dumps({
+                                "after_semantic_version": validity.semantic_version("prose", text).render(),
+                            }),
+                        })
                     # T-18: this site creates the gate directly (not through
                     # `_create_gate`), so it must stamp the time-effectiveness
                     # defaults itself — and BEFORE the `created` snapshot, or
@@ -3836,20 +4374,10 @@ def tick(project_root: pathlib.Path, st: ConductorState) -> str:
                     )
             finally:
                 mw_common.release_lock(lock_file(project_root, "gates"))
-            gate_open = True
-
-        if gate_open or st.goal_halted:
-            if gate_open:
-                st.goal_halted = True
-                return "halted-goal-change"
-            # The gate was answered since the halt — refresh the baseline to
-            # the current goal.md and resume.
-            st.goal_baseline = current
-            st.goal_halted = False
-            st.timeline.append(
-                "goal-snapshot",
-                detail=f"baseline refreshed to mtime_ns {current} after goal-change gate",
-            )
+            st.goal_halted = True
+            return "halted-goal-change"
+        else:
+            st.goal_text = text
 
         # 4. Orchestration (T-10/T-11/T-12).
         orchestrate(project_root, st)
@@ -3901,6 +4429,2095 @@ def _deps_satisfied(deps: tuple[str, ...], status_of: dict[str, str]) -> bool:
 
 
 # ── Gate helpers (conductor is the sole gate creator, D-105) ──────────────
+
+_PM_OPERATION = {
+    "stage-confirm": "stage:open",
+    "stage-close": "stage:close",
+    "stalled": "key:resume",
+    "budget-exhausted": "extension:soft-round",
+}
+
+
+def _pm_owner(project: pathlib.Path, owner: str) -> str:
+    rows = [row for row in state.read_index(project) if row["key"] == owner]
+    if len(rows) != 1 or rows[0]["status"] != "active" or os.environ.get("PI_WORKER_TASK"):
+        raise gate_effects.GateBlocked("current PM does not own this key")
+    claim = rows[0]["claim_id"]
+    ids = {f"{socket.gethostname()}:{pid}" for pid in (os.getpid(), os.getppid())}
+    parsed = mw_common.parse_synthetic_claim(claim)
+    identity = f"{parsed[0]}:{parsed[1]}" if parsed else claim
+    if identity not in ids or state.claim_state(claim) != state.CLAIM_LIVE:
+        raise gate_effects.GateBlocked("current process is not the claimed PM host")
+    return claim
+
+
+def _current_pm_trigger(project: pathlib.Path, gate_id: str) -> gates.Gate:
+    if not gates.GATE_ID_RE.fullmatch(gate_id):
+        raise gate_effects.GateBlocked("invalid trigger gate id")
+    path = gates_dir(project) / (gate_id + ".md")
+    if path.resolve() != path:
+        raise gate_effects.GateBlocked("redirected trigger gate")
+    trigger = gates.parse(path)
+    if trigger.id != gate_id or not trigger.historical or trigger.status != "pending" or trigger.kind not in _PM_OPERATION:
+        raise gate_effects.GateBlocked("expected an unresolved H01-H05 conductor trigger")
+    snapshots = (evidence.read_sidecar(path.parent, gate_id) or {}).get("snapshots", [])
+    created = [row for row in snapshots if row.get("reason") == "created"]
+    if len(created) != 1 or (created[0].get("gate_file") or {}).get("sha256") != _gate_file_sha256(path):
+        raise gate_effects.GateBlocked("missing or changed original conductor trigger evidence")
+    return trigger
+
+
+def _pm_gate_matter(project, owner, trigger, material, preparation):
+    if decision_points.entry_material_issues("dp-gate-approve", material):
+        raise gate_effects.GateBlocked("incomplete gate material or PM note")
+    if decision_points.preparation_issues("dp-gate-approve", preparation, material):
+        raise gate_effects.GateBlocked("incomplete prepared gate basis")
+    root_goal = goal_path(project)
+    rm_path = roadmap.roadmap_path(project)
+    if any(p.resolve() != p or not p.is_file() for p in (root_goal, rm_path)):
+        raise gate_effects.GateBlocked("missing or redirected project goal or roadmap")
+    rm = roadmap.load_roadmap(rm_path)
+    if roadmap.validate_roadmap(rm):
+        raise gate_effects.GateBlocked("roadmap structural validation failed")
+    number = trigger.stage or roadmap.stage_of_key(rm).get(trigger.key)
+    stage = roadmap.stage_by_number(rm, number)
+    if stage is None or owner not in stage.key_names or trigger.key not in (None, owner):
+        raise gate_effects.GateBlocked("trigger has no matching claimed stage/key")
+    action = _PM_OPERATION[trigger.kind]
+    if trigger.key and stage.key_status.get(owner) == "pending-review":
+        action = "review:resume"
+    subject = f"stage-{stage.number}" if trigger.kind.startswith("stage-") else owner
+    if action == "extension:soft-round":
+        if len(trigger.context_refs) != 1:
+            raise gate_effects.GateBlocked("missing unique budget loop")
+        subject = trigger.context_refs[0]
+    note = json.dumps(material["pm_note"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    goal = root_goal.read_text(encoding="utf-8").strip()
+    if not goal or not stage.goal.strip():
+        raise gate_effects.GateBlocked("missing project or stage goal; clarify the requested outcome")
+    # Prepared_at and presentation metadata do not create new business matters.
+    dependencies = [
+        validity.DependencyState("goal", "prose", goal),
+        validity.DependencyState("stage", "structured", {"number": stage.number, "goal": stage.goal,
+            "keys": [dataclasses.asdict(key) for key in stage.keys]}),
+        validity.DependencyState("gate_material", "structured", material),
+        validity.DependencyState("basis", "structured", preparation["basis_catalog"]),
+    ]
+    matter = validity.matter_for(owner, subject, action, dependencies, matter_kind="gate-action",
+                                 contract_version="1", authority_required=True)
+    return stage, matter, note
+
+
+def prepare_conductor_gate(project_root: pathlib.Path, trigger_gate_id: str, *, owner_key: str,
+                           material: dict, preparation: dict) -> gates.Gate:
+    """Bind a real unresolved conductor trigger to this PM's original material, once.
+
+    Produces only a pending T17 gate. T23 owns the actual request, parent note
+    and basis records; the separate consumer checks the effect and its scope.
+    """
+    project = pathlib.Path(project_root).resolve()
+    cfg = config.load_config(project)
+    if not cfg["enabled"] or cfg["paused"] or cfg["auto_gate_mode"] != "live":
+        raise gate_effects.GateBlocked("live automation is unavailable")
+    _pm_owner(project, owner_key)
+    with gate_effects._lock(lock_file(project, "gates")):
+        trigger = _current_pm_trigger(project, trigger_gate_id)
+        stage, matter, note = _pm_gate_matter(project, owner_key, trigger, material, preparation)
+        if trigger.kind == "stage-close":
+            # H02: only the PM's CURRENT submission, with every required key
+            # still a valid finalize against the matter/evidence submitted now,
+            # can prepare a close decision. A historical material copy never
+            # qualifies and no other phase gate is waived.
+            check = closure.stage_close_check(project, stage.number, list(stage.key_names))
+            if not check.ok:
+                raise gate_effects.GateBlocked(
+                    "stage-close material is not the current PM submission: "
+                    + "; ".join(check.issues)
+                )
+        for prior in gates.enumerate(gates_dir(project)):
+            if prior.matter_ref != matter.matter_key:
+                continue
+            if prior.substantive_version == matter.substantive_version:
+                return prior
+            if prior.effect in ("unknown", "in-progress"):
+                raise gate_effects.GateBlocked("the previous matter version has an unresolved action")
+        original = f"trigger:{trigger.id}"
+        path = gates.create(gates_dir(project), trigger.kind, trigger.question,
+                            stage=stage.number, key=trigger.key, context_refs=[original],
+                            matter_ref=matter.matter_key, substantive_version=matter.substantive_version, pm_note=note)
+        snapshot_gate_created(project, path)
+        return gates.parse(path)
+
+
+def _prepared_trigger(project: pathlib.Path, gate: gates.Gate) -> gates.Gate:
+    """The one live conductor trigger a prepared gate was created from."""
+    refs = [ref[len("trigger:"):] for ref in gate.context_refs if ref.startswith("trigger:")]
+    if len(refs) != 1 or not refs[0]:
+        raise gate_effects.GateBlocked("prepared gate is not bound to one conductor trigger")
+    trigger = _current_pm_trigger(project, refs[0])
+    # Key-level triggers carry no stage of their own; preparation resolves it
+    # from the roadmap and writes the resolved stage on the prepared gate.
+    if (trigger.kind, trigger.key) != (gate.kind, gate.key) or (
+            trigger.stage is not None and trigger.stage != gate.stage):
+        raise gate_effects.GateBlocked("prepared gate does not match its conductor trigger")
+    return trigger
+
+
+def consume_conductor_gate(project_root: pathlib.Path, gate_id: str, *, store: lifecycle.LifecycleStore,
+                           meta: lifecycle.DecisionMeta, claim_id: str, material: dict, preparation: dict,
+                           observe: Callable[[gates.Gate], gate_effects.GateFacts]) -> gate_effects.GateEffectResult:
+    """Consume an answered gate only through its original H01-H05 trigger.
+
+    The caller owns the object adapter and the trusted facts; this entry binds
+    them back to the real conductor trigger, the PM's unchanged material and the
+    current substantive matter version. A missing authority source is refused
+    before the T18 consumer records anything.
+    """
+    project = pathlib.Path(project_root).resolve()
+    try:
+        cfg = config.load_config(project)
+        if not cfg["enabled"] or cfg["paused"] or cfg["auto_gate_mode"] != "live":
+            raise gate_effects.GateBlocked("live automation is unavailable")
+        claim = _pm_owner(project, meta.key)
+        if claim != claim_id:
+            raise gate_effects.GateBlocked("caller is not the live PM claim for this key")
+        if not isinstance(gate_id, str) or not gates.GATE_ID_RE.fullmatch(gate_id):
+            raise gate_effects.GateBlocked("invalid prepared gate id")
+        path = gates_dir(project) / (gate_id + ".md")
+        if path.resolve() != path:
+            raise gate_effects.GateBlocked("redirected prepared gate")
+        gate = gates.parse(path)
+        if gate.historical or gate.transport is None:
+            raise gate_effects.GateBlocked("expected a prepared H01-H05 decision gate")
+        if gate.key not in (None, meta.key):
+            raise gate_effects.GateBlocked("prepared gate belongs to another key")
+        trigger = _prepared_trigger(project, gate)
+        # An already reserved/applied effect is reconciled from its ledger and
+        # object receipts; a one-way transition (e.g. review:resume -> running)
+        # must not make the original matter unreadable on replay.
+        if gate.effect not in ("applied", "in-progress", "unknown"):
+            stage, matter, note = _pm_gate_matter(project, meta.key, trigger, material, preparation)
+            if (gate.stage, gate.pm_note, gate.matter_ref, gate.substantive_version) != (
+                    stage.number, note, matter.matter_key, matter.substantive_version):
+                raise gate_effects.GateBlocked("prepared gate no longer matches current material or version")
+
+        def observed(current: gates.Gate) -> gate_effects.GateFacts:
+            facts = observe(current)
+            if not facts.authority_source:
+                raise gate_effects.GateBlocked("no trusted authority_source for this gate")
+            return facts
+
+        return gate_effects.consume_gate(
+            project, gate_id, store=store, meta=meta, claim_id=claim, observe=observed)
+    except gate_effects.GateBlocked as exc:
+        return gate_effects.GateEffectResult("blocked", str(exc))
+# ── T26 pm gate entry: normal PM prepare/consume with real object adapters ───
+#
+# The PM window (or a direct child, which is how ``mw.py`` runs) is the only
+# caller these entries accept: conductor triggers and prepared decision gates
+# stay separate, ordinary ticks never impersonate the PM, and the deployed
+# operator authority source is the only authority. The adapters below bind each
+# trigger kind to its real project object (roadmap stage/key, the bounded
+# soft-round budget ledger) and write an effect record only after the object's
+# own lock/CAS succeeded, so the consumer can prove the actual bytes.
+
+_PREPARED_GATE_DIR = pathlib.Path(".agenticdoc") / "_autopilot" / "prepared-gates"
+_GATE_EFFECT_DIR = pathlib.Path(".agenticdoc") / "_autopilot" / "gate-effects"
+_BUDGET_EXTENSIONS = pathlib.Path(".agenticdoc") / "_autopilot" / "budget-extensions.jsonl"
+_PREPARED_GATE_SCHEMA = 1
+_BUDGET_EXTENSION_SCHEMA = 1
+_USAGE_ROUND_SOURCES = frozenset({"rounds", "round", "used_rounds", "attempts"})
+
+
+def _prepared_gate_sidecar(project: pathlib.Path, gate_id: str) -> pathlib.Path:
+    return project / _PREPARED_GATE_DIR / (gate_id + ".json")
+
+
+def _effect_record_path(project: pathlib.Path, gate: gates.Gate) -> pathlib.Path:
+    digest = hashlib.sha256(gate.decision_ref.encode("utf-8")).hexdigest()[:32]
+    return project / _GATE_EFFECT_DIR / f"{gate.kind}-{digest}.json"
+
+
+def _read_json_file(path: pathlib.Path) -> dict | None:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _write_json_atomic(path: pathlib.Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n",
+                   encoding="utf-8", newline="\n")
+    os.replace(tmp, path)
+
+
+def _pm_book_layers(book: object) -> tuple[dict, dict]:
+    """Read the PM's prepared dp-gate-approve book (material + preparation)."""
+    if not isinstance(book, Mapping):
+        raise gate_effects.GateBlocked("prepared book must be an object")
+    dp = book.get("dp") or "dp-gate-approve"
+    if dp != "dp-gate-approve":
+        raise gate_effects.GateBlocked("a gate entry only accepts dp-gate-approve material")
+    body = book.get("book") if isinstance(book.get("book"), Mapping) else book
+    material = body.get("material")
+    preparation = body.get("preparation")
+    if not isinstance(material, Mapping) or not isinstance(preparation, Mapping):
+        raise gate_effects.GateBlocked("prepared book needs material and preparation")
+    material = dict(material)
+    preparation = dict(preparation)
+    if decision_points.entry_material_issues("dp-gate-approve", material):
+        raise gate_effects.GateBlocked("incomplete gate material or PM note")
+    if decision_points.preparation_issues("dp-gate-approve", preparation, material):
+        raise gate_effects.GateBlocked("incomplete prepared gate basis")
+    return material, preparation
+
+
+def _pm_sidecar_binding_ok(read: Mapping, gate: gates.Gate) -> bool:
+    return (
+        read.get("gate_id") == gate.id
+        and read.get("matter_ref") == gate.matter_ref
+        and read.get("substantive_version") == gate.substantive_version
+        and read.get("pm_note_sha256") == hashlib.sha256((gate.pm_note or "").encode("utf-8")).hexdigest()
+    )
+
+
+def _pm_book_meta(book: object, owner_key: str) -> lifecycle.DecisionMeta:
+    """The PM identity frozen in the prepared book (never inferred from argv)."""
+    if not isinstance(book, Mapping):
+        raise gate_effects.GateBlocked("prepared book must be an object")
+    body = book.get("book") if isinstance(book.get("book"), Mapping) else book
+    raw = body.get("meta")
+    if not isinstance(raw, Mapping):
+        raise gate_effects.GateBlocked(
+            "prepared book identity is missing; a real request needs logical_id/key")
+    role = raw.get("actor_role") or "unknown"
+    key = raw.get("key")
+    logical_id = raw.get("logical_id")
+    task_key = raw.get("task_key")
+    if role != "pm" or key != owner_key:
+        raise gate_effects.GateBlocked(
+            "prepared book identity is not the current claimed PM key")
+    if not isinstance(logical_id, str) or not logical_id:
+        raise gate_effects.GateBlocked(
+            "prepared book identity is missing; a real request needs logical_id/key")
+    if task_key is not None and not isinstance(task_key, str):
+        raise gate_effects.GateBlocked("prepared book task_key must be a string")
+    try:
+        return lifecycle.DecisionMeta(
+            key=key, logical_id=logical_id, initiator_role="pm", task_key=task_key)
+    except lifecycle.LifecycleInputError as exc:
+        raise gate_effects.GateBlocked(f"prepared book identity is invalid: {exc}") from exc
+
+
+def _pm_meta_record(
+    book: object, owner_key: str, trigger: gates.Gate, matter: validity.Matter
+) -> dict[str, object]:
+    """The stable PM identity stored with the frozen sidecar at prepare time.
+
+    A book that carries its own ``meta`` keeps that real identity. An older book
+    without one is bound once, deterministically, to this trigger/matter version
+    so a repeated tick never invents a second decision for the same matter.
+    """
+    body = book.get("book") if isinstance(book, Mapping) and isinstance(book.get("book"), Mapping) else book
+    raw = body.get("meta") if isinstance(body, Mapping) else None
+    if isinstance(raw, Mapping):
+        role = raw.get("actor_role") or "unknown"
+        logical_id = raw.get("logical_id")
+        task_key = raw.get("task_key")
+        if role != "pm":
+            raise gate_effects.GateBlocked("prepared book identity is not a PM identity")
+        if isinstance(logical_id, str) and logical_id:
+            if task_key is not None and not isinstance(task_key, str):
+                raise gate_effects.GateBlocked("prepared book task_key must be a string")
+            # The key cell is the real claimed PM; the book's logical id is the
+            # prepared case's stable id and is never replaced by a fresh UUID.
+            return {"actor_role": "pm", "key": owner_key,
+                    "logical_id": logical_id, "task_key": task_key}
+    digest = hashlib.sha256(
+        f"{trigger.id}|{matter.matter_key}|{matter.substantive_version}".encode("utf-8")
+    ).hexdigest()[:24]
+    return {"actor_role": "pm", "key": owner_key, "logical_id": "gateprep-" + digest,
+            "task_key": None}
+
+
+def _pm_meta_from_sidecar(raw: object, owner_key: str) -> lifecycle.DecisionMeta:
+    """Rebuild the frozen PM identity of a prepared sidecar (old ones refuse)."""
+    if not isinstance(raw, Mapping):
+        raise gate_effects.GateBlocked("prepared sidecar has no PM identity")
+    if raw.get("actor_role") != "pm" or raw.get("key") != owner_key:
+        raise gate_effects.GateBlocked("prepared sidecar identity is not the current claimed PM key")
+    logical_id = raw.get("logical_id")
+    task_key = raw.get("task_key")
+    if not isinstance(logical_id, str) or not logical_id:
+        raise gate_effects.GateBlocked("prepared sidecar has no stable logical_id")
+    if task_key is not None and not isinstance(task_key, str):
+        raise gate_effects.GateBlocked("prepared sidecar task_key must be a string")
+    try:
+        return lifecycle.DecisionMeta(
+            key=owner_key, logical_id=logical_id, initiator_role="pm", task_key=task_key)
+    except lifecycle.LifecycleInputError as exc:
+        raise gate_effects.GateBlocked(f"prepared sidecar identity is invalid: {exc}") from exc
+
+
+def _matter_record(matter: validity.Matter) -> dict:
+    return {
+        "subject": matter.subject, "object": matter.object, "action": matter.action,
+        "matter_kind": matter.matter_kind, "contract_version": matter.contract_version,
+        "authority_required": matter.authority_required,
+        "dependencies": [
+            {"name": dep.name, "kind": dep.kind, "value": dep.value}
+            for dep in matter.dependencies
+        ],
+    }
+
+
+def _matter_from_record(raw: object) -> validity.Matter:
+    if not isinstance(raw, Mapping) or not isinstance(raw.get("dependencies"), list):
+        raise gate_effects.GateBlocked("persisted matter is incomplete")
+    try:
+        deps = tuple(
+            validity.DependencyState(str(item["name"]), str(item["kind"]), item.get("value"))
+            for item in raw["dependencies"] if isinstance(item, Mapping)
+        )
+        return validity.matter_for(
+            str(raw["subject"]), str(raw["object"]), str(raw["action"]), deps,
+            matter_kind=str(raw["matter_kind"]), contract_version=str(raw["contract_version"]),
+            authority_required=bool(raw.get("authority_required")),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise gate_effects.GateBlocked(f"persisted matter is invalid ({type(exc).__name__})") from exc
+
+
+def prepare_pm_gate(
+    project_root: pathlib.Path, trigger_gate_id: str, *, owner_key: str, book: object
+) -> gates.Gate:
+    """Prepare one H01-H05 decision gate from the PM's real book, once.
+
+    The trigger must be a live unresolved conductor gate, ``owner_key`` must be
+    the current claimed PM window and a stage-close preparation must already
+    satisfy the current-evidence/sign-off check. The material is persisted next
+    to the prepared gate so the later consumer binds the same submission; the
+    historical trigger keeps its bytes and is never rewritten.
+    """
+    project = pathlib.Path(project_root).resolve()
+    material, preparation = _pm_book_layers(book)
+    _pm_owner(project, owner_key)
+    trigger = _current_pm_trigger(project, trigger_gate_id)
+    for prior in gates.enumerate(gates_dir(project)):
+        if prior.historical or f"trigger:{trigger.id}" not in prior.context_refs:
+            continue
+        if prior.effect in ("applied", "in-progress", "unknown"):
+            raise gate_effects.GateBlocked(
+                f"trigger {trigger.id} already produced an executed decision ({prior.id}); "
+                "a further action needs a new trigger"
+            )
+    if trigger.kind == "stage-close":
+        rm = roadmap.load_roadmap(roadmap.roadmap_path(project))
+        stage = roadmap.stage_by_number(rm, trigger.stage or roadmap.stage_of_key(rm).get(trigger.key))
+        if stage is None:
+            raise gate_effects.GateBlocked("stage-close trigger has no matching stage")
+        check = closure.stage_close_check(project, stage.number, list(stage.key_names))
+        if not check.ok:
+            raise gate_effects.GateBlocked(
+                "stage-close material is not the current PM submission: " + "; ".join(check.issues)
+            )
+    prepared = prepare_conductor_gate(
+        project, trigger_gate_id, owner_key=owner_key, material=material, preparation=preparation
+    )
+    _stage, stored_matter, _note = _pm_gate_matter(project, owner_key, trigger, material, preparation)
+    sidecar = _prepared_gate_sidecar(project, prepared.id)
+    payload = {
+        "schema_version": _PREPARED_GATE_SCHEMA,
+        "gate_id": prepared.id,
+        "trigger_id": trigger.id,
+        "owner_key": owner_key,
+        "meta": _pm_meta_record(book, owner_key, trigger, stored_matter),
+        "matter_ref": prepared.matter_ref,
+        "substantive_version": prepared.substantive_version,
+        "pm_note_sha256": hashlib.sha256((prepared.pm_note or "").encode("utf-8")).hexdigest(),
+        "prepared_at": preparation.get("prepared_at"),
+        "material": material,
+        "preparation": preparation,
+        "matter": _matter_record(stored_matter),
+    }
+    # Compare and persist one canonical JSON value (asdict keeps tuples in
+    # dependency values; the file round-trip must compare equal on replay).
+    payload = json.loads(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    with gate_effects._lock(lock_file(project, "gates")):
+        existing = _read_json_file(sidecar)
+        if existing is not None and existing != payload:
+            raise gate_effects.GateBlocked("prepared gate already has different material")
+        if existing is None:
+            _write_json_atomic(sidecar, payload)
+    return prepared
+
+
+def _pm_lifecycle_store(project: pathlib.Path) -> lifecycle.LifecycleStore:
+    redactor = decision.credential_redactor(None)
+    if redactor is None:
+        raise gate_effects.GateBlocked("the capture filter is unavailable; refusing an unproven ledger")
+    return lifecycle.LifecycleStore.production(project, redact=redactor)
+
+
+def _answered_gate_meta(
+    project: pathlib.Path, gate: gates.Gate, owner_key: str
+) -> tuple[lifecycle.LifecycleStore, lifecycle.DecisionMeta]:
+    """Rebuild the PM meta from the frozen record-start of this gate's decision."""
+    store = _pm_lifecycle_store(project)
+    read = lifecycle.read_lifecycle(store)
+    if any(getattr(read.stats, key) for key in
+           ("bad_json", "bad_utf8", "unknown_schema", "oversized_line", "incomplete_tail")):
+        raise gate_effects.GateBlocked("incomplete decision ledger")
+    logical_id = gate.decision_ref.partition(":")[2] if gate.decision_ref else ""
+    starts = [
+        row for row in read.events
+        if row.get("kind") == "record-start" and row.get("logical_id") == logical_id
+        and row.get("key") == owner_key and row.get("initiator_role") == "pm"
+    ]
+    if len(starts) != 1 or not logical_id:
+        raise gate_effects.GateBlocked("missing or conflicting PM decision record")
+    start = starts[0]
+    meta = lifecycle.DecisionMeta(
+        key=owner_key, logical_id=logical_id, initiator_role="pm",
+        task_key=start.get("task_key"), record_version=start.get("record_version"),
+        task_before=start.get("task_before"),
+    )
+    return store, meta
+
+
+def _pm_authority_source(project: pathlib.Path, owner_key: str):
+    """Read the deployed authority source through the read-only PM adapter.
+
+    ``operator_authority.read_pm_authority`` is the normal claimed-PM face: it
+    derives the project id from the caller's real path, requires the live claim
+    of this process (or its direct bridge parent) and reuses only the deployed
+    T07 records. The observation is re-read before it is handed to a consumer, so
+    a source root/version change is refused instead of being cached as a bearer.
+    """
+    try:
+        observed = operator_authority.read_pm_authority(project, owner_key)
+        fresh = operator_authority.verify_pm_authority(observed)
+        return dict(fresh.records), tuple(fresh.trusted_writers)
+    except Exception:  # noqa: BLE001 - any failure means "no trusted source"
+        return {}, ()
+
+
+def _pm_gate_stage(project: pathlib.Path, trigger: gates.Gate) -> roadmap.RoadmapStage:
+    rm = roadmap.load_roadmap(roadmap.roadmap_path(project))
+    stage = roadmap.stage_by_number(
+        rm, trigger.stage if trigger.stage is not None else roadmap.stage_of_key(rm).get(trigger.key))
+    if stage is None:
+        raise gate_effects.GateBlocked("trigger has no matching stage")
+    return stage
+
+
+def _pm_expected_status(matter: validity.Matter, stage: roadmap.RoadmapStage) -> tuple[str, str]:
+    if matter.action == "stage:open":
+        return "stage", "pending"
+    if matter.action == "stage:close":
+        return "stage", "running"
+    if matter.action == "key:resume":
+        return "key", "stalled"
+    if matter.action == "review:resume":
+        return "key", "pending-review"
+    return "budget", "exhausted"
+
+
+def _pm_hard_checks(
+    project: pathlib.Path, trigger: gates.Gate, matter: validity.Matter, *, applied: bool = False
+) -> dict[str, bool]:
+    """Machine checks evaluated now; a DP approval can never waive one."""
+    cfg = config.load_config(project)
+    checks = {
+        "live-automation": bool(cfg.get("enabled") is True and not cfg.get("paused")
+                                and cfg.get("auto_gate_mode") == "live"),
+        "bound-trigger": trigger.status == "pending",
+        "goal-present": bool(goal_path(project).is_file()
+                             and goal_path(project).read_text(encoding="utf-8").strip()),
+    }
+    rm_path = roadmap.roadmap_path(project)
+    if not rm_path.is_file():
+        checks["roadmap-valid"] = False
+        checks["target-state"] = False
+        return checks
+    try:
+        rm = roadmap.load_roadmap(rm_path)
+        checks["roadmap-valid"] = not roadmap.validate_roadmap(rm)
+    except roadmap.RoadmapError:
+        checks["roadmap-valid"] = False
+        checks["target-state"] = False
+        return checks
+    try:
+        stage = _pm_gate_stage(project, trigger)
+        kind, expected = _pm_expected_status(matter, stage)
+        post = {"stage:open": "running", "stage:close": "closed",
+                "key:resume": "running", "review:resume": "running"}.get(matter.action)
+        allowed = {expected} | ({post} if applied and post else set())
+        if kind == "stage":
+            checks["target-state"] = stage.status in allowed
+            if matter.action == "stage:close":
+                checks["current-material"] = closure.stage_close_check(
+                    project, stage.number, list(stage.key_names)).ok
+        elif kind == "key":
+            checks["target-state"] = stage.key_status.get(str(matter.object)) in allowed
+        else:
+            checks["target-state"] = trigger.status == "pending"
+    except (roadmap.RoadmapError, gate_effects.GateBlocked):
+        checks["target-state"] = False
+    return checks
+
+
+def _pm_usage(project: pathlib.Path, matter: validity.Matter) -> dict[str, int]:
+    """Cumulative usage for the policy's declared sources (unknown stays absent)."""
+    loaded = decision_policy.load_policy(project)
+    if loaded.policy is None:
+        return {}
+    rounds = state.used_rounds(_all_workers_dirs(project))
+    usage: dict[str, int] = {}
+    for limit in loaded.policy.hard_limits:
+        source = limit.usage_source
+        if source in _USAGE_ROUND_SOURCES:
+            usage[source] = int(rounds.get(str(matter.object), 0))
+        elif source in ("credits", "credits_used"):
+            usage[source] = 0
+    return usage
+
+
+def _pm_spend(matter: validity.Matter, loaded: decision_policy.PolicyLoad) -> dict[str, int]:
+    if loaded.policy is None:
+        return {}
+    delta = 1 if matter.action == "extension:soft-round" else 0
+    return {limit.unit: delta for limit in loaded.policy.hard_limits}
+
+
+def _roadmap_effect_apply(
+    project: pathlib.Path, stage_number: int, key: str | None,
+    expected: str, target_status: str, gate: gates.Gate,
+) -> None:
+    rm_path = roadmap.roadmap_path(project)
+    with gate_effects._lock(lock_file(project, "roadmap")):
+        rm = roadmap.load_roadmap(rm_path)
+        stage = roadmap.stage_by_number(rm, stage_number)
+        if stage is None:
+            raise gate_effects.ActionNotApplied()
+        current = stage.key_status.get(key) if key else stage.status
+        if current != expected:
+            raise gate_effects.ActionNotApplied()
+        text = rm_path.read_text(encoding="utf-8")
+        new_text = (roadmap.update_key_status(text, stage_number, key, target_status)
+                    if key else roadmap.update_stage_status(text, stage_number, target_status))
+        if new_text == text:
+            raise gate_effects.ActionNotApplied()
+        gates._write_atomic(rm_path, new_text)
+        data = rm_path.read_bytes()
+        record = {
+            "schema_version": 1,
+            "decision_ref": gate.decision_ref,
+            "gate_id": gate.id,
+            "action": gate.business,
+            "object_path": rm_path.relative_to(project).as_posix(),
+            "object_sha256": hashlib.sha256(data).hexdigest(),
+            "stage": stage_number,
+            "key": key,
+            "field": "key_status" if key else "stage_status",
+            "from": current,
+            "to": target_status,
+        }
+        _write_json_atomic(_effect_record_path(project, gate), record)
+
+
+def _roadmap_effect_inspect(
+    project: pathlib.Path, gate: gates.Gate, stage_number: int, key: str | None,
+    target_status: str,
+):
+    record = _read_json_file(_effect_record_path(project, gate))
+    if record is None or record.get("decision_ref") != gate.decision_ref:
+        return None
+    rm_path = roadmap.roadmap_path(project)
+    if record.get("object_path") != rm_path.relative_to(project).as_posix():
+        return None
+    try:
+        data = rm_path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != record.get("object_sha256"):
+            return None
+        stage = roadmap.stage_by_number(roadmap.load_roadmap(rm_path), stage_number)
+    except (OSError, roadmap.RoadmapError):
+        return None
+    if stage is None:
+        return None
+    current = stage.key_status.get(key) if key else stage.status
+    if current != target_status:
+        return None
+    return gate_effects.ObjectReceipt(gate.decision_ref, hashlib.sha256(data).hexdigest())
+
+
+def _budget_extension_rows(project: pathlib.Path) -> list[dict]:
+    path = project / _BUDGET_EXTENSIONS
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    rows: list[dict] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _budget_effect_apply(project: pathlib.Path, gate: gates.Gate, loop: str) -> None:
+    path = project / _BUDGET_EXTENSIONS
+    with gate_effects._lock(lock_file(project, "budget")):
+        rows = _budget_extension_rows(project)
+        if any(row.get("decision_ref") == gate.decision_ref for row in rows):
+            raise gate_effects.ActionNotApplied()
+        used = state.used_rounds(_all_workers_dirs(project)).get(loop, 0)
+        row = {
+            "schema_version": _BUDGET_EXTENSION_SCHEMA,
+            "decision_ref": gate.decision_ref,
+            "gate_id": gate.id,
+            "loop": loop,
+            "amount": 1,
+            "used_rounds": used,
+            "applied_at": gates._iso_now(),
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _budget_effect_inspect(project: pathlib.Path, gate: gates.Gate, loop: str):
+    path = project / _BUDGET_EXTENSIONS
+    if not path.is_file():
+        return None
+    rows = [row for row in _budget_extension_rows(project)
+            if row.get("decision_ref") == gate.decision_ref and row.get("loop") == loop]
+    if len(rows) != 1 or rows[0].get("amount") != 1:
+        return None
+    return gate_effects.ObjectReceipt(gate.decision_ref, hashlib.sha256(path.read_bytes()).hexdigest())
+
+
+def _pm_bound_action(
+    project: pathlib.Path, trigger: gates.Gate, gate: gates.Gate, matter: validity.Matter
+) -> gate_effects.BoundAction:
+    stage = _pm_gate_stage(project, trigger)
+    kind, expected = _pm_expected_status(matter, stage)
+    key = str(matter.object) if kind == "key" else None
+    if kind == "budget":
+        loop = str(matter.object)
+        return gate_effects.BoundAction(
+            matter.action, _BUDGET_EXTENSIONS,
+            lambda _gate: _budget_effect_apply(project, gate, loop),
+            lambda _gate: _budget_effect_inspect(project, gate, loop),
+            lifecycle_action="record",
+        )
+    target = {"stage:open": "running", "stage:close": "closed"}.get(
+        matter.action, "running")
+    return gate_effects.BoundAction(
+        matter.action, roadmap.roadmap_path(project).relative_to(project),
+        lambda _gate: _roadmap_effect_apply(project, stage.number, key, expected, target, gate),
+        lambda _gate: _roadmap_effect_inspect(project, gate, stage.number, key, target),
+        lifecycle_action="record",
+    )
+
+
+def _pm_gate_facts(
+    project: pathlib.Path, trigger: gates.Gate, gate: gates.Gate, matter_record: object,
+    owner_key: str,
+) -> gate_effects.GateFacts:
+    # The matter is the one recorded at preparation time: applying the effect
+    # mutates the stage it depends on, so a fresh recomputation would make the
+    # same substantive version unreadable on replay.
+    matter = _matter_from_record(matter_record)
+    if (matter.matter_key != gate.matter_ref or matter.substantive_version != gate.substantive_version):
+        raise gate_effects.GateBlocked("persisted matter does not match the prepared gate")
+    loaded = decision_policy.load_policy(project)
+    authority, writers = _pm_authority_source(project, owner_key)
+    settled = gate.effect in ("applied", "in-progress", "unknown")
+    action = (_pm_bound_action(project, trigger, gate, matter)
+              if gate.business == "approve" else None)
+    scope = (matter.action,)
+    return gate_effects.GateFacts(
+        matter=matter,
+        pm_note=gate.pm_note or "",
+        scope=scope,
+        authority_source=authority,
+        trusted_writers=writers,
+        hard_checks=_pm_hard_checks(project, trigger, matter, applied=settled),
+        usage_by_source=_pm_usage(project, matter),
+        spend_by_unit=_pm_spend(matter, loaded),
+        action=action,
+    )
+
+
+def consume_pm_gate(
+    project_root: pathlib.Path, gate_id: str, *, owner_key: str, book: object | None = None
+) -> gate_effects.GateEffectResult:
+    """Consume one answered prepared gate from the current claimed PM window.
+
+    The gate, its persisted preparation and the live trigger must still agree;
+    the real adapter and the deployed operator authority source are bound here,
+    never taken from the request.
+    """
+    project = pathlib.Path(project_root).resolve()
+    try:
+        claim = _pm_owner(project, owner_key)
+        if not isinstance(gate_id, str) or not gates.GATE_ID_RE.fullmatch(gate_id):
+            raise gate_effects.GateBlocked("invalid prepared gate id")
+        path = gates_dir(project) / (gate_id + ".md")
+        if path.resolve() != path:
+            raise gate_effects.GateBlocked("redirected prepared gate")
+        gate = gates.parse(path)
+        if gate.historical or gate.transport != "answered":
+            raise gate_effects.GateBlocked("expected an answered prepared decision gate")
+        if gate.key not in (None, owner_key):
+            raise gate_effects.GateBlocked("prepared gate belongs to another key")
+        sidecar = _read_json_file(_prepared_gate_sidecar(project, gate_id))
+        if sidecar is None:
+            raise gate_effects.GateBlocked("no persisted PM preparation for this gate")
+        if not _pm_sidecar_binding_ok(sidecar, gate):
+            raise gate_effects.GateBlocked("prepared gate changed after the PM submission")
+        material = sidecar.get("material")
+        preparation = sidecar.get("preparation")
+        if not isinstance(material, Mapping) or not isinstance(preparation, Mapping):
+            raise gate_effects.GateBlocked("persisted PM preparation is incomplete")
+        if book is not None:
+            supplied_material, supplied_preparation = _pm_book_layers(book)
+            if (json.dumps(supplied_material, sort_keys=True) != json.dumps(dict(material), sort_keys=True)
+                    or json.dumps(supplied_preparation, sort_keys=True)
+                    != json.dumps(dict(preparation), sort_keys=True)):
+                raise gate_effects.GateBlocked("supplied book differs from the persisted PM submission")
+        trigger = _prepared_trigger(project, gate)
+        store, meta = _answered_gate_meta(project, gate, owner_key)
+        result = consume_conductor_gate(
+            project, gate_id, store=store, meta=meta, claim_id=claim,
+            material=dict(material), preparation=dict(preparation),
+            observe=lambda current: _pm_gate_facts(
+                project, trigger, current, sidecar.get("matter"), owner_key),
+        )
+        if result.state == "applied":
+            st = ConductorState(timeline.Timeline(timeline.timeline_path(project)), None)
+            st.timeline.append(
+                "gate-answered", key=gate.key, stage=gate.stage,
+                detail=f"prepared {gate.kind} {gate.id} applied by its claimed PM ({claim})",
+            )
+            if gate.kind == "stage-close" and gate.stage is not None:
+                _ensure_next_stage_gate(
+                    project, st, roadmap.roadmap_path(project), gate.stage + 1)
+        return result
+    except gate_effects.GateBlocked as exc:
+        return gate_effects.GateEffectResult("blocked", str(exc))
+
+
+def _pm_decision_client(project: pathlib.Path):
+    """The one production decision client for this project (never a mock face)."""
+    cfg, error = decision.DecisionConfig.from_project(project)
+    if error or not cfg.enabled or cfg.transport != "timi-decisions":
+        raise gate_effects.GateBlocked("decision transport is unavailable")
+    return decision.DecisionClient(
+        cfg, project_root=project,
+        credential_snapshot=decision.credential_snapshot(cfg))
+
+
+def request_prepared_gate(
+    project_root: pathlib.Path,
+    prepared: gates.Gate,
+    *,
+    owner_key: str,
+    book: object | None = None,
+    material: object | None = None,
+    preparation: object | None = None,
+    meta: lifecycle.DecisionMeta | None = None,
+    client: object | None = None,
+) -> dict:
+    """Prepare -> one real prepared request -> the formal TS answer writer.
+
+    This is the shared protocol behind the normal PM gate/family CLI and the
+    normal automatic tick. The model answer, its basis and the authorization
+    never come from CLI JSON: the book/sidecar supplies the PM material,
+    preparation and identity, the transport produces the one business decision,
+    and ``gate-writer.ts`` deposits it. A recorded start without a recorded
+    request is an unknown outcome and is not re-sent; a recorded request is
+    reused without a second model call.
+    """
+    blocked = gate_effects.GateBlocked
+    project = pathlib.Path(project_root).resolve()
+    gate = gates.parse(prepared.path)
+    _pm_owner(project, owner_key)
+    sidecar = _read_json_file(_prepared_gate_sidecar(project, gate.id))
+    if (sidecar is None or not _pm_sidecar_binding_ok(sidecar, gate)
+            or sidecar.get("owner_key") != owner_key):
+        raise blocked("prepared request has no valid canonical sidecar")
+    canonical_meta = _pm_meta_from_sidecar(sidecar.get("meta"), owner_key)
+    if book is not None:
+        supplied_material, supplied_preparation = _pm_book_layers(book)
+        supplied_meta = _pm_book_meta(book, owner_key)
+        if (supplied_meta.logical_id != canonical_meta.logical_id
+                or supplied_meta.task_key != canonical_meta.task_key):
+            raise blocked("same matter belongs to the original logical decision; inspect its canonical request")
+        if (supplied_material != sidecar.get("material")
+                or supplied_preparation != sidecar.get("preparation")):
+            raise blocked("prepared book differs from the canonical submission")
+    if meta is not None and (meta.logical_id != canonical_meta.logical_id
+                             or meta.key != canonical_meta.key
+                             or meta.task_key != canonical_meta.task_key):
+        raise blocked("request identity differs from the canonical preparation")
+    meta = canonical_meta
+    material = sidecar.get("material")
+    preparation = sidecar.get("preparation")
+    stored_matter = _matter_from_record(sidecar.get("matter"))
+    if (stored_matter.matter_key != gate.matter_ref
+            or stored_matter.substantive_version != gate.substantive_version):
+        raise blocked("canonical matter does not match the prepared gate")
+    family = sidecar.get("family")
+    if family is not None:
+        payload = sidecar.get("payload")
+        if family not in _FAMILY_KINDS or not isinstance(payload, Mapping):
+            raise blocked("canonical family payload is incomplete")
+        current_matter = _family_matter(project, family, payload)
+        if (current_matter.matter_key != gate.matter_ref
+                or current_matter.substantive_version != gate.substantive_version
+                or _family_note(family, payload) != gate.pm_note):
+            raise blocked("canonical family payload no longer matches the gate")
+    if gate.transport == "answered":
+        return {"stage": "request", "status": "already-answered",
+                "decision_ref": gate.decision_ref}
+    if gate.effect in ("in-progress", "unknown"):
+        raise blocked("prepared gate has an unresolved effect; inspect before retrying")
+    if book is not None:
+        material, preparation = _pm_book_layers(book)
+    if not isinstance(material, Mapping) or not isinstance(preparation, Mapping):
+        raise blocked("prepared request needs material and preparation")
+    if meta is None:
+        if book is None:
+            raise blocked("prepared request needs the frozen PM identity")
+        meta = _pm_book_meta(book, owner_key)
+    if not isinstance(meta, lifecycle.DecisionMeta) or meta.key != owner_key:
+        raise blocked("prepared request identity does not match the claimed PM key")
+    decision_ref = f"dp-gate-approve:{meta.logical_id}"
+    if gate.decision_ref not in (None, "", decision_ref):
+        raise blocked("prepared gate is bound to another logical decision")
+    store = _pm_lifecycle_store(project)
+    try:
+        read = lifecycle.read_lifecycle(store)
+    except (lifecycle.LifecycleInputError, OSError) as exc:
+        raise blocked(f"lifecycle ledger is not readable: {exc}") from exc
+    if any(getattr(read.stats, name) for name in
+           ("bad_json", "bad_utf8", "unknown_schema", "oversized_line", "incomplete_tail")):
+        raise blocked("incomplete decision ledger; inspect before retry")
+    events = list(read.events)
+    start = next((row for row in events if row.get("kind") == "record-start"
+                  and row.get("logical_id") == meta.logical_id), None)
+    request = next((row for row in reversed(events) if row.get("kind") == "request"
+                    and row.get("logical_id") == meta.logical_id), None)
+    if start is not None and request is None:
+        raise blocked("decision start recorded but no request result; inspect before retry")
+    if request is None:
+        # Re-read the original authority and cumulative budget before transport.
+        if family is not None:
+            try:
+                authority = operator_authority.verify_pm_authority(
+                    operator_authority.read_pm_authority(project, owner_key))
+            except operator_authority.AuthorityError as exc:
+                raise blocked(f"authority-source:{exc.reason}") from exc
+            typed = _family_typed_request(family, payload)
+            scope = [stored_matter.action]
+            if family == "cross-key-repair":
+                approval_values = payload.get("approval")
+                if not isinstance(approval_values, Mapping):
+                    raise blocked("repair approval is missing")
+                try:
+                    approval = xkey.RepairApproval(**dict(
+                        approval_values, files=tuple(approval_values.get("files") or ())))
+                except (TypeError, ValueError) as exc:
+                    raise blocked("repair approval is invalid") from exc
+                if (approval.target_key != typed.target_key
+                        or approval.action != typed.action
+                        or set(approval.files) != set(typed.files)
+                        or not typed.files):
+                    raise blocked("repair approval target/action/files scope mismatch")
+                authority_ref = approval.authority_ref
+                scope.extend((f"xkey-action:{typed.action}",
+                              *(f"xkey-file:{file}" for file in typed.files)))
+            else:
+                authority_ref = typed.authority_ref
+                if family == "goal-adoption":
+                    scope.append(f"goal-version:{typed.target_version}")
+                elif family == "contract-refreeze":
+                    scope.extend(f"contract-item:{item}" for item in typed.items)
+            resolved = decision_policy._resolve_authority(
+                authority_ref, authority.records, tuple(scope), authority.trusted_writers)
+            if resolved.issues:
+                raise blocked("current family authority refused: " +
+                              ", ".join(issue.code for issue in resolved.issues))
+            usage, spend, reasons = contract_guard._pm_usage_reading(
+                authority, project, owner_key)
+            if reasons:
+                raise blocked("current family budget refused: " + ", ".join(reasons))
+            supply = contract_guard.TrustedSupply(
+                project_root=project, key=owner_key, gate_id=gate.id,
+                decision_ref=decision_ref, matter_ref=gate.matter_ref,
+                substantive_version=gate.substantive_version,
+                authority_source=authority.records, trusted_writers=authority.trusted_writers,
+                usage=usage, spend=spend)
+            reasons = contract_guard._check_budget(supply, project)
+            if reasons:
+                raise blocked("current family budget refused: " + ", ".join(reasons))
+        try:
+            started = lifecycle.record_start(store, meta, decision_id=decision_ref)
+        except lifecycle.LifecycleInputError as exc:
+            raise blocked(f"decision start was refused: {exc}") from exc
+        if started.status != "written":
+            # A concurrent tick recorded the same start between our read and
+            # this write. It owns the one request; never send a second model
+            # call from here.
+            raise blocked(
+                "decision start is already recorded by another window; inspect before retry")
+        try:
+            noted = lifecycle.record_note(
+                store, meta, decision_id=decision_ref, pm_note=gate.pm_note or "",
+                prepared_at=str(preparation["prepared_at"]))
+        except lifecycle.LifecycleInputError as exc:
+            raise blocked(f"PM note was refused: {exc}") from exc
+        if not noted.recorded:
+            raise blocked("PM note could not be recorded")
+        client = client or _pm_decision_client(project)
+        try:
+            result = client.request_prepared(
+                "dp-gate-approve", dict(material), dict(preparation),
+                actor_role="pm", logical_id=meta.logical_id)
+        except decision.DecisionInputError as exc:
+            raise blocked(f"prepared request was refused: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 - CLI boundary reports, never tracebacks
+            raise blocked(
+                f"prepared request failed ({type(exc).__name__}); no decision result") from exc
+        if not isinstance(result, Mapping):
+            raise blocked("the transport returned no prepared result")
+        if result.get("business_decisions") == 1 and result.get("prepared_at"):
+            try:
+                recorded = lifecycle.record_request(
+                    store, meta, decision_id=decision_ref, result=dict(result),
+                    material=dict(material), preparation=dict(preparation))
+            except lifecycle.LifecycleInputError as exc:
+                raise blocked(f"decision result could not be recorded: {exc}") from exc
+            if not recorded.recorded:
+                raise blocked("decision result could not be recorded")
+        source = "transport"
+    else:
+        if request.get("decision_id") != decision_ref or request.get("dp") != "dp-gate-approve":
+            raise blocked("recorded request does not belong to this prepared gate")
+        if (start is None or start.get("key") != owner_key
+                or start.get("task_key") != meta.task_key
+                or start.get("initiator_role") != "pm"
+                or request.get("key") != owner_key
+                or request.get("task_key") != meta.task_key):
+            raise blocked("recorded request identity does not match the canonical preparation")
+        try:
+            digest = lifecycle._preparation_provenance(
+                store, request, material, preparation)
+        except lifecycle.LifecycleInputError as exc:
+            raise blocked("recorded request preparation is unproven") from exc
+        if request.get("basis_catalog_sha256") != digest:
+            raise blocked("recorded request belongs to another prepared revision")
+        notes = [row for row in events if row.get("kind") == "note"
+                 and row.get("logical_id") == meta.logical_id
+                 and row.get("key") == owner_key
+                 and row.get("task_key") == meta.task_key
+                 and row.get("decision_id") == decision_ref]
+        if (len(notes) != 1 or notes[0].get("pm_note") != gate.pm_note
+                or notes[0].get("prepared_at") != preparation.get("prepared_at")):
+            raise blocked("recorded request lacks the canonical PM note")
+        result = request
+        source = "recorded-request"
+    choice = result.get("choice")
+    basis_text = result.get("basis_text")
+    if result.get("available") is not True or result.get("business_decisions") != 1 \
+            or not isinstance(choice, str) or not choice or not isinstance(basis_text, str) \
+            or not basis_text.strip():
+        raise blocked("the prepared request has no business answer to deposit")
+    claim = _pm_owner(project, owner_key)
+    from . import decision_recovery
+    written = decision_recovery._run_gate_writer({
+        "gateFile": str(prepared.path),
+        "lockFile": str(project / ".mw" / "gates.lock"),
+        "answeredBy": claim,
+        "decision": choice,
+        "modelBasis": basis_text,
+        "decisionRef": decision_ref,
+        "matterRef": prepared.matter_ref,
+        "substantiveVersion": prepared.substantive_version,
+    })
+    if written.get("ok") is not True:
+        raise blocked(f"gate writer refused: {written.get('error')}")
+    answered = gates.parse(prepared.path)
+    if (answered.transport != "answered" or answered.business != choice
+            or answered.decision_ref != decision_ref
+            or answered.model_basis != basis_text
+            or answered.matter_ref != prepared.matter_ref
+            or answered.substantive_version != prepared.substantive_version
+            or answered.answered_by != claim):
+        raise blocked("gate answer does not match the deposited decision")
+    return {"stage": "request", "status": "answered", "source": source,
+            "choice": choice, "decision_ref": decision_ref,
+            "basis_id": result.get("basis_id")}
+
+
+def _prepared_tick_blocked(
+    project: pathlib.Path, st: ConductorState, gate: gates.Gate, detail: str
+) -> None:
+    text = f"prepared gate {gate.id} not evaluated: {detail}"
+    if _timeline_has_event(project, "config", gate.key, text):
+        return
+    st.timeline.append("config", key=gate.key, detail=text)
+
+
+def _prepared_tick_ready(
+    project: pathlib.Path, trigger: gates.Gate, gate: gates.Gate,
+    sidecar: Mapping, owner_key: str,
+) -> str | None:
+    """The protected source/policy/hard-budget/machine checks before a request."""
+    matter = _matter_from_record(sidecar.get("matter"))
+    if (matter.matter_key != gate.matter_ref
+            or matter.substantive_version != gate.substantive_version):
+        raise gate_effects.GateBlocked("persisted matter does not match the prepared gate")
+    facts = _pm_gate_facts(project, trigger, gate, sidecar.get("matter"), owner_key)
+    failed = sorted(name for name, ok in facts.hard_checks.items() if not ok)
+    if failed:
+        return "hard checks failed: " + ", ".join(failed)
+    if not facts.authority_source or not facts.trusted_writers:
+        return "no trusted authority source"
+    cfg = config.load_config(project)
+    loaded = decision_policy.load_policy(project)
+    granted = decision_policy.evaluate_gate(
+        loaded, choice="approve", hard_checks=dict(facts.hard_checks),
+        automation_enabled=bool(cfg.get("enabled") is True and not cfg.get("paused")
+                                and cfg.get("auto_gate_mode") == "live"),
+        required_scope=facts.scope, authority_source=facts.authority_source,
+        trusted_writers=facts.trusted_writers,
+    )
+    issues = [f"{i.code}:{i.field}" for i in granted.reasons if i.code != "choice-not-approve"]
+    if issues:
+        return "policy refused release: " + ", ".join(issues)
+    if not granted.allowed:
+        return "policy refused release"
+    if loaded.policy is None or not loaded.policy.hard_limits:
+        return "missing verifiable hard budget"
+    units = {limit.unit for limit in loaded.policy.hard_limits}
+    if set(facts.spend_by_unit) != units:
+        return "missing or unknown action budget units"
+    for limit in loaded.policy.hard_limits:
+        delta = facts.spend_by_unit[limit.unit]
+        used = facts.usage_by_source.get(limit.usage_source)
+        if type(delta) is not int or delta < 0 or type(used) is not int \
+                or not 0 <= used <= limit.limit:
+            return f"invalid or exhausted hard budget: {limit.unit}"
+        if delta and not decision_policy.check_spend(
+                loaded, unit=limit.unit, amount=delta, usage={limit.unit: used}).allowed:
+            return f"hard budget exceeded: {limit.unit}"
+    dcfg, error = decision.DecisionConfig.from_project(project)
+    if error or not dcfg.enabled or dcfg.transport != "timi-decisions":
+        return "decision transport unavailable"
+    return None
+
+
+def evaluate_prepared_gates(
+    project_root: pathlib.Path, st: ConductorState, cfg: dict
+) -> None:
+    """The normal live tick evaluates one ready prepared gate as the claimed PM.
+
+    The frozen sidecar is the only material/identity source; the calling
+    process must be the live PM (or its direct parent bridge), the protected
+    authority source, policy, hard budget and machine checks must pass, and the
+    one transport request/writer/consumer chain then runs exactly once. Off and
+    shadow keep zero new production requests; a background service without the
+    PM claim only collects.
+    """
+    mode = str(cfg.get("auto_gate_mode", "off") or "off")
+    if mode != "live" or cfg.get("enabled") is not True or cfg.get("paused"):
+        return
+    try:
+        all_gates = gates.enumerate(gates_dir(project_root))
+    except gates.GateFormatError:
+        return
+    for gate in all_gates:
+        if gate.historical or gate.transport != "pending":
+            continue
+        if gate.effect not in (None, "not-started"):
+            continue
+        sidecar = _read_json_file(_prepared_gate_sidecar(project_root, gate.id))
+        if sidecar is None:
+            _prepared_tick_blocked(project_root, st, gate, "missing persisted PM preparation")
+            continue
+        if not _pm_sidecar_binding_ok(sidecar, gate):
+            _prepared_tick_blocked(project_root, st, gate,
+                                   "prepared gate changed after the PM submission")
+            continue
+        owner_key = sidecar.get("owner_key")
+        if not isinstance(owner_key, str) or not owner_key:
+            _prepared_tick_blocked(project_root, st, gate, "sidecar has no owner key")
+            continue
+        try:
+            _pm_owner(project_root, owner_key)
+            meta = _pm_meta_from_sidecar(sidecar.get("meta"), owner_key)
+            material = sidecar.get("material")
+            preparation = sidecar.get("preparation")
+            if not isinstance(material, Mapping) or not isinstance(preparation, Mapping):
+                raise gate_effects.GateBlocked("persisted PM preparation is incomplete")
+            trigger = _prepared_trigger(project_root, gate)
+            reason = _prepared_tick_ready(
+                project_root, trigger, gate, sidecar, owner_key)
+        except (gate_effects.GateBlocked, lifecycle.LifecycleInputError) as exc:
+            _prepared_tick_blocked(project_root, st, gate, str(exc))
+            continue
+        if reason:
+            _prepared_tick_blocked(project_root, st, gate, reason)
+            continue
+        try:
+            request_prepared_gate(
+                project_root, gate, owner_key=owner_key,
+                material=dict(material), preparation=dict(preparation), meta=meta)
+            result = consume_pm_gate(project_root, gate.id, owner_key=owner_key)
+            if result.state == "blocked":
+                _prepared_tick_blocked(project_root, st, gate, result.reason)
+        except gate_effects.GateBlocked as exc:
+            _prepared_tick_blocked(project_root, st, gate, str(exc))
+        except Exception as exc:  # noqa: BLE001 - one gate never kills the tick
+            _prepared_tick_blocked(
+                project_root, st, gate, f"prepared tick error: {type(exc).__name__}")
+
+
+# ── T26 normal consumers: H06/H07/H08 family entry ───────────────────────────
+#
+# The same PM book/prepared request/T10/TS-writer chain as H01-H05, but the
+# three-axis gate is created from the family's typed request and the current
+# project object instead of a conductor trigger. Consumption binds the answer
+# to the persisted preparation, re-records the source transfer in T10, and
+# delegates the actual write to the already-accepted T20 protected-source
+# writers. No second writer, ledger, approval or authority source is added.
+
+_FAMILY_KINDS = {
+    "goal-adoption": "goal-change",
+    "contract-refreeze": "stage-close",
+    "cross-key-repair": "xkey-authorize",
+}
+_FAMILY_QUESTIONS = {
+    "goal-adoption": "Adopt the exact new goal version under the current PM source?",
+    "contract-refreeze": "Re-freeze the exact approved contract items for this key?",
+    "cross-key-repair": "Authorize the exact restricted cross-key repair write?",
+}
+
+
+def _family_payload(book: object) -> tuple[str, dict]:
+    if not isinstance(book, Mapping):
+        raise gate_effects.GateBlocked("prepared family book must be an object")
+    body = book.get("book") if isinstance(book.get("book"), Mapping) else book
+    if (body.get("dp") or "dp-gate-approve") != "dp-gate-approve":
+        raise gate_effects.GateBlocked("a family entry only accepts dp-gate-approve material")
+    family = body.get("family")
+    payload = body.get("payload")
+    if family not in _FAMILY_KINDS:
+        raise gate_effects.GateBlocked("unknown family entry")
+    if not isinstance(payload, Mapping):
+        raise gate_effects.GateBlocked("family payload is missing")
+    return family, dict(payload)
+
+
+def _family_typed_request(family: str, payload: Mapping):
+    request = payload.get("request")
+    if not isinstance(request, Mapping):
+        raise gate_effects.GateBlocked("family request is missing")
+    try:
+        if family == "goal-adoption":
+            return contract_guard.GoalAdoptionRequest(**{
+                name: request[name] for name in (
+                    "key", "previous_version", "current_version", "target_version",
+                    "necessity", "impact", "authority_ref", "reverification_plan",
+                )
+            })
+        if family == "contract-refreeze":
+            values = dict(request)
+            values["items"] = tuple(values.get("items") or ())
+            values["acceptance_reductions"] = tuple(
+                values.get("acceptance_reductions") or ())
+            return contract_guard.FreezeChangeRequest(**values)
+        from autopilot import xkey
+        values = dict(request)
+        values["files"] = tuple(values.get("files") or ())
+        return xkey.RepairRequest(**values)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise gate_effects.GateBlocked(
+            f"family request is invalid ({type(exc).__name__})") from exc
+
+
+def _family_note(family: str, payload: Mapping) -> str:
+    note = payload.get("note")
+    if not isinstance(note, str) or not note.strip():
+        raise gate_effects.GateBlocked("family PM note is missing")
+    return note
+
+
+def _family_matter(project: pathlib.Path, family: str, payload: Mapping):
+    request = _family_typed_request(family, payload)
+    deps = [validity.DependencyState("request", "structured", dataclasses.asdict(request))]
+    if family == "goal-adoption":
+        before = payload.get("before_text")
+        after = payload.get("after_text")
+        if not isinstance(before, str) or not isinstance(after, str):
+            raise gate_effects.GateBlocked("goal texts are missing")
+        deps.append(validity.DependencyState(
+            "goal", "structured", {"before": before, "after": after}))
+        subject = request.key
+        action = f"goal-adopt:{request.key}"
+        obj = request.key
+    elif family == "contract-refreeze":
+        key_dir = project / ".agenticdoc" / request.key
+        deps.append(validity.DependencyState(
+            "contract", "structured",
+            {"before": dict(request.before_versions),
+             "after": dict(request.after_versions), "items": list(request.items)}))
+        subject = request.key
+        action = f"contract-change:{request.key}"
+        obj = str(contract_guard.freeze_path(key_dir).relative_to(project))
+    else:
+        deps.append(validity.DependencyState(
+            "write_scope", "structured",
+            {"files": list(request.files), "target_key": request.target_key}))
+        subject = request.target_key
+        action = f"xkey-repair:{request.target_key}"
+        obj = request.target_key
+    deps.append(validity.DependencyState("note", "structured", _family_note(family, payload)))
+    return validity.matter_for(
+        subject, obj, action, deps, matter_kind="gate-action",
+        contract_version="family-v1", authority_required=True)
+
+
+def _family_gate_fields(family: str, payload: Mapping) -> dict[str, str]:
+    if family == "goal-adoption":
+        return {
+            "goal_sha256_before": hashlib.sha256(
+                str(payload["before_text"]).encode("utf-8")).hexdigest(),
+            "goal_sha256_after": hashlib.sha256(
+                str(payload["after_text"]).encode("utf-8")).hexdigest(),
+        }
+    if family == "contract-refreeze":
+        return {"authorizes": json.dumps(["contract-change"])}
+    request = _family_typed_request(family, payload)
+    return {"write_scope": json.dumps(list(request.files))}
+
+
+def _family_gate(project: pathlib.Path, family: str) -> gates.Gate | None:
+    for gate in gates.enumerate(gates_dir(project)):
+        if gate.historical or f"family:{family}" not in gate.context_refs:
+            continue
+        return gate
+    return None
+
+
+def _family_effect_path(project: pathlib.Path, gate: gates.Gate) -> pathlib.Path:
+    return contract_guard.family_effect_path(project, gate)
+
+
+def _family_target(project: pathlib.Path, family: str, request, payload: Mapping) -> pathlib.Path:
+    """The real object this family entry is allowed to change."""
+
+    if family == "goal-adoption":
+        baseline = payload.get("baseline_path")
+        if not isinstance(baseline, str) or not baseline:
+            raise gate_effects.GateBlocked("goal baseline path is missing")
+        return pathlib.Path(baseline)
+    if family == "contract-refreeze":
+        return contract_guard.freeze_path(project / ".agenticdoc" / request.key)
+    ticket = payload.get("ticket")
+    frozen = ticket.get("frozen_block") if isinstance(ticket, Mapping) else None
+    file_value = frozen.get("file") if isinstance(frozen, Mapping) else None
+    if not isinstance(file_value, str) or not file_value:
+        raise gate_effects.GateBlocked("repair ticket or replacement bytes are missing")
+    return project / file_value
+
+
+def _family_expected_sha(
+    project: pathlib.Path, family: str, request, payload: Mapping
+) -> str | None:
+    """The exact post-write bytes where the original writer is deterministic."""
+
+    if family == "goal-adoption":
+        baseline = pathlib.Path(str(payload["baseline_path"]))
+        try:
+            loaded = json.loads(baseline.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            loaded = {}
+        except (OSError, ValueError):
+            return None
+        if not isinstance(loaded, dict):
+            return None
+        updated = dict(loaded)
+        updated["goal_version"] = request.target_version
+        content = json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+    if family == "cross-key-repair":
+        new_text = payload.get("new_text")
+        ticket = payload.get("ticket")
+        frozen = ticket.get("frozen_block") if isinstance(ticket, Mapping) else None
+        if not isinstance(new_text, str) or not isinstance(frozen, Mapping):
+            return None
+        file_value = frozen.get("file")
+        line_range = frozen.get("line_range")
+        if not isinstance(file_value, str) or not isinstance(line_range, (list, tuple)):
+            return None
+        try:
+            start, end = int(line_range[0]), int(line_range[1])
+            data = (project / file_value).read_bytes()
+        except (OSError, ValueError, TypeError, IndexError):
+            return None
+        from autopilot import xkey
+        lines = xkey._split_bytes_lines(data)
+        if start < 1 or end > len(lines):
+            return None
+        replacement = new_text.encode("utf-8")
+        if replacement:
+            last = lines[end - 1]
+            ending = b"\r\n" if last.endswith(b"\r\n") else (
+                b"\r" if last.endswith(b"\r") else (b"\n" if last.endswith(b"\n") else b""))
+            if ending and not replacement.endswith((b"\n", b"\r")):
+                replacement += ending
+        updated = b"".join(lines[:start - 1]) + replacement + b"".join(lines[end:])
+        return hashlib.sha256(updated).hexdigest()
+    return None
+
+
+def _family_file_sha(path: pathlib.Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _freeze_versions_current(project: pathlib.Path, request) -> dict[str, str]:
+    freeze = contract_guard.read_freeze(project / ".agenticdoc" / request.key)
+    if freeze is None:
+        return {}
+    return contract_guard._freeze_versions(freeze)
+
+
+def _family_freeze_written(project: pathlib.Path, request, record: Mapping) -> bool:
+    versions = _freeze_versions_current(project, request)
+    if not request.items:
+        return False
+    if any(versions.get(item) != request.after_versions.get(item) for item in request.items):
+        return False
+    approval_ref = record.get("approval_ref")
+    log_path = contract_guard.adoption_log_path(project / ".agenticdoc" / request.key)
+    try:
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if (
+            isinstance(row, dict)
+            and row.get("approval_ref") == approval_ref
+            and row.get("items") == list(request.items)
+            and row.get("after_versions") == dict(request.after_versions)
+        ):
+            return True
+    return False
+
+
+def _family_inspect(
+    project: pathlib.Path, family: str, request, record: Mapping
+) -> str | None:
+    """Prove the reserved action from its actual target, never a status word."""
+
+    target_value = record.get("target")
+    if not isinstance(target_value, str) or not target_value:
+        return None
+    target = pathlib.Path(target_value)
+    actual = _family_file_sha(target)
+    if actual is None:
+        return None
+    pre = record.get("pre_sha256")
+    if family in ("goal-adoption", "cross-key-repair"):
+        expected = record.get("expected_sha256")
+        if not isinstance(expected, str) or actual != expected or actual == pre:
+            return None
+        return actual
+    if family == "contract-refreeze":
+        if not _family_freeze_written(project, request, record):
+            return None
+        return actual
+    return None
+
+
+def _family_set_effect(project: pathlib.Path, gate: gates.Gate, effect: str) -> gates.Gate:
+    with gate_effects._lock(lock_file(project, "gates")):
+        current = gates.parse(gate.path)
+        if current.decision_ref != gate.decision_ref:
+            raise gate_effects.GateBlocked("family gate changed during its effect")
+        gate_effects._replace_effect(current, effect)
+    return gates.parse(gate.path)
+
+
+@contextlib.contextmanager
+def _family_lock(path: pathlib.Path):
+    """Wait for the one matter lock: concurrent replays serialize, never co-write."""
+
+    try:
+        mw_common.acquire_lock(path, retries=600, base_delay=0.01, deadline_s=60)
+    except RuntimeError as exc:
+        raise gate_effects.GateBlocked(f"family lock busy: {path.name}") from exc
+    try:
+        yield
+    finally:
+        mw_common.release_lock(path)
+
+
+def _family_write_effect(path: pathlib.Path, payload: dict) -> None:
+    _write_json_atomic(path, payload)
+
+
+def prepare_pm_family_gate(
+    project_root: pathlib.Path, family: str, *, owner_key: str, book: object
+) -> gates.Gate:
+    """Create one real pending family gate from a complete PM book, once."""
+    project = pathlib.Path(project_root).resolve()
+    if family not in _FAMILY_KINDS:
+        raise gate_effects.GateBlocked("unknown family entry")
+    _pm_owner(project, owner_key)
+    material, preparation = _pm_book_layers(book)
+    payload_family, payload = _family_payload(book)
+    if payload_family != family:
+        raise gate_effects.GateBlocked("book family does not match the requested entry")
+    matter = _family_matter(project, family, payload)
+    note = _family_note(family, payload)
+    request = _family_typed_request(family, payload)
+    gate_key = request.target_key if family == "cross-key-repair" else request.key
+    # Serialize the complete publication, including the sidecar, by matter.
+    # The gates lock remains short-lived and is never held over transport.
+    preparation_lock = "family-prepare-" + hashlib.sha256(
+        matter.matter_key.encode("utf-8")).hexdigest()[:32]
+    with _family_lock(lock_file(project, preparation_lock)):
+        return _publish_pm_family_gate(
+            project, family, owner_key, book, material, preparation, payload,
+            matter, note, gate_key)
+
+
+def _publish_pm_family_gate(
+    project, family, owner_key, book, material, preparation, payload,
+    matter, note, gate_key,
+) -> gates.Gate:
+    with gate_effects._lock(lock_file(project, "gates")):
+        for prior in gates.enumerate(gates_dir(project)):
+            if (prior.historical or prior.kind != _FAMILY_KINDS[family]
+                    or prior.matter_ref != matter.matter_key):
+                continue
+            if prior.substantive_version == matter.substantive_version:
+                existing = _read_json_file(_prepared_gate_sidecar(project, prior.id))
+                if (existing is None or not _pm_sidecar_binding_ok(existing, prior)
+                        or existing.get("owner_key") != owner_key
+                        or existing.get("family") != family):
+                    raise gate_effects.GateBlocked("same-matter preparation is missing or corrupt; inspect before retry")
+                _pm_meta_from_sidecar(existing.get("meta"), owner_key)
+                return prior
+            if prior.effect in ("in-progress", "unknown"):
+                raise gate_effects.GateBlocked("an earlier matter version has an unresolved effect")
+        created = gates.create(
+            gates_dir(project), _FAMILY_KINDS[family],
+            _FAMILY_QUESTIONS[family],
+            context_refs=[f"family:{family}", f"key:{owner_key}"],
+            key=gate_key, pm_note=note, matter_ref=matter.matter_key,
+            substantive_version=matter.substantive_version,
+        )
+        _rewrite_gate_fields(created, _family_gate_fields(family, payload))
+        gate = gates.parse(created)
+        sidecar = _prepared_gate_sidecar(project, gate.id)
+        record = {
+            "schema_version": _PREPARED_GATE_SCHEMA,
+            "gate_id": gate.id,
+            "owner_key": owner_key,
+            "family": family,
+            "meta": _pm_meta_record(book, owner_key, gate, matter),
+            "matter_ref": gate.matter_ref,
+            "substantive_version": gate.substantive_version,
+            "pm_note_sha256": hashlib.sha256((gate.pm_note or "").encode("utf-8")).hexdigest(),
+            "prepared_at": preparation.get("prepared_at"),
+            "material": material,
+            "preparation": preparation,
+            "payload": payload,
+            "matter": _matter_record(matter),
+        }
+        record = json.loads(json.dumps(record, ensure_ascii=False, sort_keys=True))
+        _write_json_atomic(sidecar, record)
+    return gate
+
+
+def _family_consumption(project: pathlib.Path, gate: gates.Gate, payload: Mapping,
+                        owner_key: str):
+    family = next((ref[len("family:"):] for ref in gate.context_refs
+                   if ref.startswith("family:")), None)
+    request = _family_typed_request(family, payload)
+    note = _family_note(family, payload)
+    if family == "goal-adoption":
+        baseline = payload.get("baseline_path")
+        if not isinstance(baseline, str) or not baseline:
+            raise gate_effects.GateBlocked("goal baseline path is missing")
+        return contract_guard.consume_goal_adoption(
+            project, request.key, choice=gate.business, request=request,
+            baseline_path=pathlib.Path(baseline),
+            before_text=str(payload["before_text"]), after_text=str(payload["after_text"]),
+            gate_id=gate.id, decision_ref=gate.decision_ref, note=note,
+            expected_matter_ref=gate.matter_ref,
+            expected_version=gate.substantive_version,
+            affected_bindings=tuple(payload.get("affected_bindings") or ()),
+            unaffected_bindings=tuple(payload.get("unaffected_bindings") or ()),
+        )
+    if family == "contract-refreeze":
+        approval = payload.get("approval")
+        if not isinstance(approval, Mapping):
+            raise gate_effects.GateBlocked("freeze approval is missing")
+        approval = dict(approval)
+        approval["items"] = tuple(approval.get("items") or ())
+        approval["acceptance_reductions"] = tuple(
+            approval.get("acceptance_reductions") or ())
+        try:
+            typed = contract_guard.FreezeChangeApproval(**approval)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise gate_effects.GateBlocked(
+                f"freeze approval is invalid ({type(exc).__name__})") from exc
+        return contract_guard.consume_freeze_change(
+            project, project / ".agenticdoc" / request.key, request=request,
+            approval=typed, gate_id=gate.id, decision_ref=gate.decision_ref,
+            note=note, expected_matter_ref=gate.matter_ref,
+            expected_version=gate.substantive_version)
+    from autopilot import xkey
+    approval_payload = payload.get("approval")
+    claim_payload = payload.get("claim_request")
+    if not isinstance(approval_payload, Mapping) or not isinstance(claim_payload, Mapping):
+        raise gate_effects.GateBlocked("repair approval or claim request is missing")
+    approval_values = dict(approval_payload)
+    approval_values["files"] = tuple(approval_values.get("files") or ())
+    try:
+        approval = xkey.RepairApproval(**approval_values)
+        claim_request = validity.ClaimRequest(
+            actor=str(claim_payload["actor"]), task_key=str(claim_payload["task_key"]),
+            files=tuple(claim_payload.get("files") or ()))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise gate_effects.GateBlocked(
+            f"repair claim/approval is invalid ({type(exc).__name__})") from exc
+    prepared = xkey.prepare_repair_consumption(
+        project, key=owner_key, request=request, approval=approval,
+        claim_request=claim_request, actor=claim_request.actor, role="worker",
+        gate_id=gate.id, decision_ref=gate.decision_ref, note=note,
+        expected_matter_ref=gate.matter_ref, expected_version=gate.substantive_version)
+    if prepared.status != "authorized" or gate.business != "approve":
+        return prepared
+    ticket = payload.get("ticket")
+    new_text = payload.get("new_text")
+    if not isinstance(ticket, Mapping) or not isinstance(new_text, str):
+        raise gate_effects.GateBlocked("repair ticket or replacement bytes are missing")
+    return xkey.apply_repair_consumption(prepared, dict(ticket), new_text.encode("utf-8"))
+
+
+def _family_complete(
+    project: pathlib.Path,
+    gate: gates.Gate,
+    gate_file: pathlib.Path,
+    effect_path: pathlib.Path,
+    family: str,
+    record: Mapping,
+    object_sha: str,
+    receipt: Mapping,
+    claim: str,
+    store: lifecycle.LifecycleStore,
+    meta: lifecycle.DecisionMeta,
+    *,
+    duplicate: bool,
+) -> gate_effects.GateEffectResult:
+    """Record the real, inspected write before the gate may say ``applied``."""
+
+    logical = gate.decision_ref.partition(":")[2]
+    rows = lifecycle.read_lifecycle(store).events
+    executed_id, settled_id = "family-executed-" + logical, "family-settled-" + logical
+    executed = [
+        row for row in rows
+        if row.get("kind") == "lifecycle" and row.get("lifecycle") == "executed"
+        and row.get("decision_id") == gate.decision_ref and object_sha in str(row.get("result") or "")
+    ]
+    if not executed:
+        recorded = lifecycle.record_executed(
+            store, meta, decision_id=gate.decision_ref, dp="dp-gate-approve",
+            action="direct-exec", result=json.dumps(dict(receipt), sort_keys=True)[:1000],
+            reason=str(record.get("action") or family),
+            actor=("system", claim), event_id=executed_id)
+        if not recorded.recorded:
+            return gate_effects.GateEffectResult(
+                "unknown", "actual write lacks its lifecycle receipt", gate.decision_ref)
+    settled = [
+        row for row in lifecycle.read_lifecycle(store).events
+        if row.get("kind") == "lifecycle" and row.get("lifecycle") == "settled"
+        and row.get("decision_id") == gate.decision_ref
+    ]
+    if not settled:
+        recorded = lifecycle.record_settled(
+            store, meta, decision_id=gate.decision_ref, dp="dp-gate-approve",
+            outcome="ok", reason="family object changed by its protected writer",
+            actor=("system", claim), event_id=settled_id)
+        if not recorded.recorded:
+            return gate_effects.GateEffectResult(
+                "unknown", "actual write lacks settlement evidence", gate.decision_ref)
+    applied = {
+        "schema_version": 1,
+        "decision_ref": gate.decision_ref,
+        "gate_id": gate.id,
+        "family": family,
+        "action": record.get("action"),
+        "target": record.get("target"),
+        "object_sha256": object_sha,
+        "status": "applied",
+        "receipt": dict(receipt),
+        "recorded_at": _iso_now(),
+    }
+    _write_json_atomic(effect_path, applied)
+    _family_set_effect(project, gate, "applied")
+    return gate_effects.GateEffectResult(
+        "applied", "", gate.decision_ref,
+        receipt=json.dumps(dict(receipt), sort_keys=True), duplicate=duplicate)
+
+
+def consume_pm_family_gate(
+    project_root: pathlib.Path, gate_id: str, *, owner_key: str, book: object | None = None
+) -> gate_effects.GateEffectResult:
+    """Consume one answered family gate through the T20 protected-source writer.
+
+    The order is the T17/T18 one: durable ``in-progress`` reservation and T10
+    consumption first, then the original writer, then the actual target receipt
+    before ``applied`` + executed/settled. An interruption therefore leaves a
+    resumable reservation, never a fake release. Recovery only inspects the real
+    object and never repeats the writer or the PM request.
+    """
+    project = pathlib.Path(project_root).resolve()
+    try:
+        claim = _pm_owner(project, owner_key)
+        if not isinstance(gate_id, str) or not gates.GATE_ID_RE.fullmatch(gate_id):
+            raise gate_effects.GateBlocked("invalid family gate id")
+        path = gates_dir(project) / (gate_id + ".md")
+        if path.resolve() != path:
+            raise gate_effects.GateBlocked("redirected family gate")
+        gate = gates.parse(path)
+        if gate.historical or gate.transport != "answered":
+            raise gate_effects.GateBlocked("expected an answered family gate")
+        family = next((ref[len("family:"):] for ref in gate.context_refs
+                       if ref.startswith("family:")), None)
+        if family not in _FAMILY_KINDS:
+            raise gate_effects.GateBlocked("gate is not a family entry")
+        sidecar = _read_json_file(_prepared_gate_sidecar(project, gate_id))
+        if sidecar is None:
+            raise gate_effects.GateBlocked("no persisted family preparation")
+        if not _pm_sidecar_binding_ok(sidecar, gate) or sidecar.get("family") != family:
+            raise gate_effects.GateBlocked("family gate changed after the PM submission")
+        payload = sidecar.get("payload")
+        if not isinstance(payload, Mapping):
+            raise gate_effects.GateBlocked("persisted family payload is incomplete")
+        if book is not None:
+            supplied_material, supplied_preparation = _pm_book_layers(book)
+            if (json.dumps(supplied_material, sort_keys=True)
+                    != json.dumps(dict(sidecar.get("material") or {}), sort_keys=True)
+                    or json.dumps(supplied_preparation, sort_keys=True)
+                    != json.dumps(dict(sidecar.get("preparation") or {}), sort_keys=True)):
+                raise gate_effects.GateBlocked("supplied book differs from the persisted submission")
+
+        request = _family_typed_request(family, payload)
+        effect_path = _family_effect_path(project, gate)
+        matter_lock = "family-" + hashlib.sha256(gate.matter_ref.encode("utf-8")).hexdigest()[:32]
+        with _family_lock(lock_file(project, matter_lock)):
+            # Re-read under the one matter lock: a concurrent consumer may have
+            # completed, reserved or observed this exact action already.
+            gate = gates.parse(path)
+            recorded = _read_json_file(effect_path)
+            if recorded is None and gate.effect in ("in-progress", "unknown", "applied"):
+                return gate_effects.GateEffectResult(
+                    "unknown",
+                    "unresolved family gate effect has no reservation/effect record; inspect only",
+                    gate.decision_ref, duplicate=True)
+            if recorded is not None and recorded.get("decision_ref") == gate.decision_ref:
+                status = str(recorded.get("status") or "")
+                if status == "applied":
+                    object_sha = _family_file_sha(pathlib.Path(str(recorded.get("target"))))
+                    if object_sha is None or object_sha != recorded.get("object_sha256"):
+                        return gate_effects.GateEffectResult(
+                            "unknown", "applied record does not match the actual object",
+                            gate.decision_ref, duplicate=True)
+                    store, meta = _answered_gate_meta(project, gate, owner_key)
+                    receipt = dict(recorded.get("receipt") or {})
+                    receipt["object_sha256"] = object_sha
+                    return _family_complete(
+                        project, gate, path, effect_path, family,
+                        dict(recorded, action=recorded.get("action") or family),
+                        object_sha, receipt, claim, store, meta, duplicate=True)
+                if status in ("in-progress", "unknown"):
+                    store, meta = _answered_gate_meta(project, gate, owner_key)
+                    object_sha = _family_inspect(project, family, request, recorded)
+                    if object_sha is not None:
+                        receipt = dict(recorded.get("receipt") or {})
+                        receipt["object_sha256"] = object_sha
+                        return _family_complete(
+                            project, gate, path, effect_path, family,
+                            dict(recorded, action=recorded.get("action") or family),
+                            object_sha, receipt, claim, store, meta, duplicate=True)
+                    if gate.effect == "in-progress":
+                        _family_set_effect(project, gate, "unknown")
+                    unresolved = dict(recorded)
+                    unresolved.update({
+                        "status": "unknown", "state": "unknown",
+                        "reason": "reserved effect is not proven by the actual target; inspect only",
+                    })
+                    _write_json_atomic(effect_path, unresolved)
+                    return gate_effects.GateEffectResult(
+                        "unknown",
+                        "reserved family effect is not proven by the actual target; inspect before retry",
+                        gate.decision_ref, duplicate=True)
+                # A terminal refusal is a settled observation, not a release.
+                return gate_effects.GateEffectResult(
+                    str(recorded.get("state") or "blocked"),
+                    str(recorded.get("reason") or "family action was not applied"),
+                    gate.decision_ref, receipt=recorded.get("receipt"), duplicate=True)
+
+            peers = [g for g in gates.enumerate(gates_dir(project))
+                     if g.matter_ref == gate.matter_ref]
+            if any(g.substantive_version != gate.substantive_version
+                   and g.effect in ("in-progress", "unknown") for g in peers):
+                raise gate_effects.GateBlocked("an earlier version has an unresolved effect")
+            same = [g for g in peers if g.substantive_version == gate.substantive_version
+                    and g.transport == "answered"]
+            if any(g.decision_ref != gate.decision_ref or g.business != gate.business for g in same):
+                raise gate_effects.GateBlocked("conflicting approvals for the same substantive matter")
+            owners = [g for g in same if g.id != gate.id
+                      and g.effect in ("in-progress", "unknown", "applied")]
+            if owners:
+                raise gate_effects.GateBlocked(
+                    f"same matter owned by {owners[0].id}")
+
+            if gate.business != "approve":
+                result = _family_consumption(project, gate, payload, owner_key)
+                reasons = "; ".join(result.reasons or ())
+                _write_json_atomic(effect_path, {
+                    "schema_version": 1, "decision_ref": gate.decision_ref,
+                    "gate_id": gate.id, "family": family,
+                    "action": None, "target": None,
+                    "status": "not-applied", "state": "blocked",
+                    "reason": reasons or result.status,
+                    "receipt": dict(result.receipt or {}),
+                    "recorded_at": _iso_now(),
+                })
+                return gate_effects.GateEffectResult(
+                    "blocked", reasons or result.status, gate.decision_ref,
+                    receipt=json.dumps(dict(result.receipt or {}), sort_keys=True))
+
+            store, meta = _answered_gate_meta(project, gate, owner_key)
+            logical = gate.decision_ref.partition(":")[2]
+            target = _family_target(project, family, request, payload)
+            reservation = {
+                "schema_version": 1,
+                "decision_ref": gate.decision_ref,
+                "gate_id": gate.id,
+                "family": family,
+                "action": str(request.action) if family == "cross-key-repair" else family,
+                "target": str(target),
+                "pre_sha256": _family_file_sha(target),
+                "expected_sha256": _family_expected_sha(project, family, request, payload),
+                "approval_ref": (payload.get("approval") or {}).get("approval_ref")
+                if isinstance(payload.get("approval"), Mapping) else None,
+                "matter_ref": gate.matter_ref,
+                "substantive_version": gate.substantive_version,
+                "status": "in-progress",
+                "state": "in-progress",
+                "reserved_at": _iso_now(),
+                "reserved_by": claim,
+                "receipt": {},
+            }
+            # Nothing about the original object may be written before this
+            # durable intent. A crash here resumes by inspection only.
+            _write_json_atomic(effect_path, reservation)
+            gate = _family_set_effect(project, gate, "in-progress")
+            accepted = lifecycle.record_consumed(
+                store, meta, decision_id=gate.decision_ref, dp="dp-gate-approve",
+                answer=gate.business, actor=("system", claim),
+                event_id="family-received-" + logical)
+            if not accepted.recorded and accepted.status != "duplicate":
+                _write_json_atomic(effect_path, dict(
+                    reservation, status="not-applied", state="failed",
+                    reason="family source transfer was not recorded"))
+                _family_set_effect(project, gate, "failed")
+                raise gate_effects.GateBlocked("family source transfer was not recorded")
+
+            try:
+                result = _family_consumption(project, gate, payload, owner_key)
+            except gate_effects.GateBlocked as exc:
+                _write_json_atomic(effect_path, dict(
+                    reservation, status="not-applied", state="blocked",
+                    reason=str(exc), recorded_at=_iso_now()))
+                _family_set_effect(project, gate, "blocked")
+                lifecycle.record_settled(
+                    store, meta, decision_id=gate.decision_ref, dp="dp-gate-approve",
+                    outcome="pending", reason=str(exc),
+                    actor=("system", claim), event_id="family-settled-" + logical)
+                return gate_effects.GateEffectResult(
+                    "blocked", str(exc), gate.decision_ref)
+            except Exception as exc:  # noqa: BLE001 - reconcile, never retry the writer
+                _write_json_atomic(effect_path, dict(
+                    reservation, status="unknown", state="unknown",
+                    reason=f"writer failed ({type(exc).__name__}); inspect the actual target"))
+                _family_set_effect(project, gate, "unknown")
+                return gate_effects.GateEffectResult(
+                    "unknown",
+                    f"writer failed ({type(exc).__name__}); inspect before retry",
+                    gate.decision_ref)
+
+            receipt = dict(result.receipt or {})
+            if result.status == "applied":
+                object_sha = _family_inspect(
+                    project, family, request,
+                    dict(reservation, receipt=receipt))
+                if object_sha is None:
+                    unresolved = dict(
+                        reservation, status="unknown", state="unknown",
+                        receipt=receipt,
+                        reason="writer reported applied but the actual target does not prove it")
+                    _write_json_atomic(effect_path, unresolved)
+                    _family_set_effect(project, gate, "unknown")
+                    return gate_effects.GateEffectResult(
+                        "unknown", "writer reported applied without a real target receipt",
+                        gate.decision_ref, receipt=json.dumps(receipt, sort_keys=True))
+                receipt["object_sha256"] = object_sha
+                return _family_complete(
+                    project, gate, path, effect_path, family,
+                    dict(reservation, receipt=receipt), object_sha, receipt, claim,
+                    store, meta, duplicate=False)
+
+            reasons = "; ".join(result.reasons or ())
+            if _family_inspect(project, family, request,
+                               dict(reservation, receipt=receipt)) is not None:
+                _write_json_atomic(effect_path, dict(
+                    reservation, status="unknown", state="unknown", receipt=receipt,
+                    reason="writer reported a refusal but the target changed; inspect only"))
+                _family_set_effect(project, gate, "unknown")
+                return gate_effects.GateEffectResult(
+                    "unknown", "writer refusal left an actual target change; inspect only",
+                    gate.decision_ref, receipt=json.dumps(receipt, sort_keys=True))
+            _write_json_atomic(effect_path, {
+                "schema_version": 1, "decision_ref": gate.decision_ref,
+                "gate_id": gate.id, "family": family,
+                "action": None, "target": None,
+                "status": "not-applied", "state": "blocked",
+                "reason": reasons or result.status,
+                "receipt": receipt,
+                "recorded_at": _iso_now(),
+            })
+            _family_set_effect(project, gate, "blocked")
+            lifecycle.record_settled(
+                store, meta, decision_id=gate.decision_ref, dp="dp-gate-approve",
+                outcome="pending", reason=reasons or result.status,
+                actor=("system", claim), event_id="family-settled-" + logical)
+            return gate_effects.GateEffectResult(
+                "blocked", reasons or result.status, gate.decision_ref,
+                receipt=json.dumps(receipt, sort_keys=True))
+    except gate_effects.GateBlocked as exc:
+        return gate_effects.GateEffectResult("blocked", str(exc))
+
+
+# ── T26 H11: normal PM recovery and the conductor's one bounded action ───────
+
+_HALTED_RECOVERY_ACTIONS = pathlib.Path(".agenticdoc") / "_autopilot" / "halted-recovery-actions.jsonl"
+
+
+def _halted_recovery_actions(project_root: pathlib.Path) -> list[dict]:
+    """Read-only history of the retired observation-only H11 writer.
+
+    The current conductor never appends here: the real bounded action is
+    executed by :func:`autopilot.decision_recovery.consume_bounded_halted_step`
+    and witnessed by the original queue/task/budget objects and T10 receipts.
+    """
+    path = pathlib.Path(project_root) / _HALTED_RECOVERY_ACTIONS
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    rows: list[dict] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def prepare_pm_halted_recovery(
+    project_root: pathlib.Path, key: str, *, note: object, preparation: object
+) -> dict:
+    """Create the one real stalled gate for the current halt, then return its submission."""
+    from autopilot import decision_recovery
+    project = pathlib.Path(project_root).resolve()
+    _pm_owner(project, key)
+    if not isinstance(note, Mapping) or not isinstance(preparation, Mapping):
+        raise gate_effects.GateBlocked("halted-recovery note and preparation are required")
+    note = dict(note)
+    preparation = dict(preparation)
+    facts = decision_recovery.halted_stage_facts(project)
+    if note.get("stage_version") != facts["stage_version"]:
+        raise gate_effects.GateBlocked("halted-recovery note names another stage version")
+    if note.get("stop_reason") != facts["stop_reason"]:
+        raise gate_effects.GateBlocked("halted-recovery note names another stop reason")
+    if set(note.get("affected_keys") or ()) != set(facts["keys"]):
+        raise gate_effects.GateBlocked("halted-recovery note names other affected keys")
+    grant_ref = decision_recovery.pm_halted_recovery_ref(facts, note)
+    matter = decision_recovery.halted_recovery_matter(key, facts, note, grant_ref)
+    existing = None
+    for gate in gates.enumerate(gates_dir(project)):
+        if (gate.kind == "stalled" and gate.key == key and not gate.historical
+                and gate.matter_ref == matter.matter_key
+                and gate.substantive_version == matter.substantive_version):
+            existing = gate
+            break
+    if existing is None:
+        with gate_effects._lock(lock_file(project, "gates")):
+            path = gates.create(
+                gates_dir(project), "stalled",
+                "Recover the halted stage from its protected PM authority?",
+                stage=facts["stage"], key=key,
+                pm_note=json.dumps(note, ensure_ascii=False, sort_keys=True),
+                matter_ref=matter.matter_key,
+                substantive_version=matter.substantive_version)
+            gate = gates.parse(path)
+    else:
+        gate = existing
+    return {
+        "stage": facts["stage"],
+        "stage_version": facts["stage_version"],
+        "gate_id": gate.id,
+        "pm_note": note,
+        "preparation": preparation,
+    }
+
+
+def consume_halted_recovery(
+    project_root: pathlib.Path, key: str, st: ConductorState
+) -> dict:
+    """Execute at most one real bounded dispatch from the approved H11 note.
+
+    Delegates to the public :func:`decision_recovery.consume_bounded_halted_step`
+    action consumer, which re-reads the live claim, protected authority, policy
+    digest, cumulative hard budget and the original task/card/queue before it
+    writes. The retired observation-only journal is read-only history now; a
+    successful action is evidenced by the real task attempt, queue row, budget
+    counter and the T10 executed/settled receipts. A note without a concrete
+    ``bounded_action`` is refused, a replay only inspects, and a crash window
+    stays ``unknown`` instead of dispatching a second round.
+    """
+    from autopilot import decision_recovery
+    project = pathlib.Path(project_root).resolve()
+    try:
+        _pm_owner(project, key)
+    except gate_effects.GateBlocked as exc:
+        return {"state": "blocked", "reason": str(exc)}
+    result = decision_recovery.consume_bounded_halted_step(project, key)
+    if result.get("ok") is True:
+        replay = bool(result.get("resumed"))
+        state = "duplicate" if replay else "recorded"
+        st.timeline.append(
+            "halted-recovery-action", key=key,
+            detail=(
+                ("bounded dispatch already consumed for " if replay
+                 else "one bounded dispatch queued for ")
+                + str(result.get("task_key")) + " attempt "
+                + str(result.get("attempt")) + " ("
+                + str(result.get("decision_ref")) + ")"))
+        return {
+            "state": state,
+            "decision_ref": result.get("decision_ref"),
+            "task_key": result.get("task_key"),
+            "attempt": result.get("attempt"),
+            "used_rounds": result.get("used_rounds"),
+            "receipt": result.get("receipt"),
+            "action": result,
+        }
+    reason = str(result.get("reason") or "bounded-step-refused")
+    state = "unknown" if reason == "bounded-step-unknown" else "blocked"
+    st.timeline.append(
+        "config", key=key, detail=f"halted-recovery refused: {reason}"
+    )
+    out = {"state": state, "reason": reason}
+    for name in ("task_key", "decision_ref", "detail", "state_detail"):
+        if result.get(name):
+            out[name] = result[name]
+    return out
+
+
+def consume_halted_recoveries(project_root: pathlib.Path, st: ConductorState) -> None:
+    """Ordinary tick: only keys this process actually owns can be consumed."""
+    from autopilot import decision_recovery
+    project = pathlib.Path(project_root).resolve()
+    try:
+        facts = decision_recovery.halted_stage_facts(project)
+    except (decision_recovery.RecoveryBlocked, OSError, ValueError):
+        return
+    for key in facts.get("keys") or ():
+        try:
+            _pm_owner(project, str(key))
+        except gate_effects.GateBlocked:
+            continue
+        consume_halted_recovery(project, str(key), st)
+
+
+def collect_prepared_gates(project_root: pathlib.Path, st: ConductorState) -> None:
+    """Daily tick: surface answered prepared gates; never consume as the PM."""
+    try:
+        all_gates = gates.enumerate(gates_dir(project_root))
+    except gates.GateFormatError:
+        return
+    for gate in all_gates:
+        if gate.historical or gate.transport != "answered":
+            continue
+        if gate.effect in ("applied", "in-progress", "unknown"):
+            continue
+        detail = (f"answered prepared gate {gate.id} awaits its bound PM consumer "
+                  "(an ordinary tick cannot impersonate the PM)")
+        if not _timeline_has_event(project_root, "gate-answered", gate.key, detail):
+            st.timeline.append("gate-answered", key=gate.key, stage=gate.stage, detail=detail)
+
+
+def submit_stage_close_material(
+    project_root: pathlib.Path, number: int, *, owner_key: str, submission: object
+) -> pathlib.Path:
+    """Production PM entry: validate then atomically install current material."""
+    project = pathlib.Path(project_root).resolve()
+    _pm_owner(project, owner_key)
+    if not isinstance(submission, Mapping):
+        raise gate_effects.GateBlocked("stage-close submission must be an object")
+    rm = roadmap.load_roadmap(roadmap.roadmap_path(project))
+    stage = roadmap.stage_by_number(rm, int(number))
+    if stage is None:
+        raise gate_effects.GateBlocked("unknown stage number")
+    issues = closure.stage_close_material_issues(
+        project, int(number), submission, list(stage.key_names))
+    if issues:
+        raise gate_effects.GateBlocked("; ".join(issues))
+    with gate_effects._lock(lock_file(project, "gates")):
+        return closure.write_stage_close_material(project, int(number), dict(submission))
+
 
 def _create_gate(
     project_root: pathlib.Path,
@@ -4068,11 +6685,15 @@ def _gate_open(
 
 def _budget_bonus(project_root: pathlib.Path, loop: str) -> bool:
     """An approved budget-exhausted gate grants exactly one bonus round."""
+    for row in _budget_extension_rows(pathlib.Path(project_root)):
+        if row.get("loop") == loop and row.get("amount") == 1:
+            return True
     for gate in gates.enumerate(gates_dir(project_root)):
         if (
             gate.kind == "budget-exhausted"
             and gate.status == "approved"
             and loop in gate.context_refs
+            and not _legacy_auto_answer(gate)
         ):
             return True
     return False
@@ -4085,6 +6706,7 @@ def _budget_gate_rejected(project_root: pathlib.Path, loop: str) -> bool:
             gate.kind == "budget-exhausted"
             and gate.status == "rejected"
             and loop in gate.context_refs
+            and not _legacy_auto_answer(gate)
         ):
             return True
     return False
@@ -4142,6 +6764,7 @@ def _resume_credits(project_root: pathlib.Path, key: str) -> int:
         1
         for gate in gates.enumerate(gates_dir(project_root))
         if gate.kind == "stalled" and gate.status == "approved" and gate.key == key
+        and not _legacy_auto_answer(gate)
     )
 
 
@@ -4168,6 +6791,9 @@ def _apply_stalled_approvals(
     consumed = _consumed_gate_ids(project_root)
     for gate in gates.enumerate(gates_dir(project_root)):
         if gate.kind != "stalled" or gate.status != "approved":
+            continue
+        if _legacy_auto_answer(gate):
+            _record_legacy_auto_ignored(project_root, st, gate, "stalled approval not applied")
             continue
         if gate.id in consumed:
             # 2026-09-24 (FeatureMigrator incident): consumption is durable — an
@@ -4246,6 +6872,9 @@ def _apply_stalled_rejections(
     consumed = _consumed_gate_ids(project_root)
     for gate in gates.enumerate(gates_dir(project_root)):
         if gate.kind != "stalled" or gate.status != "rejected":
+            continue
+        if _legacy_auto_answer(gate):
+            _record_legacy_auto_ignored(project_root, st, gate, "stalled rejection not applied")
             continue
         if gate.id in consumed:
             continue  # answer already applied (timeline consumption record)
@@ -4560,6 +7189,9 @@ def _apply_review_decisions(
     for gate in gates.enumerate(gates_dir(project_root)):
         if gate.kind not in _REVIEW_GATE_KINDS or gate.status == "pending":
             continue
+        if _legacy_auto_answer(gate):
+            _record_legacy_auto_ignored(project_root, st, gate, "review decision not applied")
+            continue
         if gate.id in consumed:
             continue  # answer already applied (durable gate record / timeline)
         key = gate.key
@@ -4683,6 +7315,9 @@ def _apply_reattests(
     consumed = _consumed_gate_ids(project_root)
     for gate in gates.enumerate(gates_dir(project_root)):
         if gate.status == "pending" or gate.id in consumed:
+            continue
+        if _legacy_auto_answer(gate):
+            _record_legacy_auto_ignored(project_root, st, gate, "re-attest decision not applied")
             continue
         original_id = reattest_of(gate)
         if original_id is None:
@@ -5369,14 +8004,45 @@ def _xkey_proposal_exhaust(
     ticket: dict,
     request_id: str,
     detail: str,
+    *,
+    dispatch_refused: bool = False,
 ) -> None:
-    """Bound reached: record one durable marker + escalation, then stop.
+    """Bound reached: verify the real attempts/artifacts, then record ONE marker.
 
-    ``proposal_exhausted_at`` is the on-disk guard that keeps later ticks from
-    re-dispatching and from re-emitting the escalation event (no timeline
-    spam). A human can clear the field (or land a proposal) to retry."""
+    AC-030/031: the marker is only written from a verified terminal state
+    (``exhausted``). An in-flight or unknown attempt keeps the ticket
+    untouched except for the verified fact and an escalation, so no tick can
+    redispatch or claim success from an unknown result. Existing failure
+    counts, task keys and artifacts are recorded, never reset.
+    """
     if ticket.get("proposal_exhausted_at"):
         return
+    attempts = ticket.get("proposal_attempts")
+    if isinstance(attempts, int) and attempts > 0:
+        rows = mw_common.parse_workers_file(mw_common.workers_path(project_root))
+        verified = dispatch.inspect_proposal_exhaustion(
+            project_root, ticket, rows,
+            proposal_path=_xkey_evidence_root(project_root, request_id) / _XKEY_PROPOSAL_NAME,
+            max_attempts=_XKEY_PROPOSAL_MAX_ATTEMPTS,
+        )
+        if dispatch_refused and verified.state == "unknown" and not verified.task_keys:
+            verified = dataclasses.replace(
+                verified, state="exhausted",
+                reason=verified.reason + "; the last attempt was refused before any dispatch row",
+            )
+        ticket["proposal_verified_state"] = verified.state
+        ticket["proposal_verified_at"] = _iso_now()
+        ticket["proposal_verified_reason"] = _one_line(verified.reason, 300)
+        ticket["proposal_verified_task_keys"] = list(verified.task_keys)
+        ticket["proposal_verified_artifacts"] = list(verified.artifacts)
+        xkey.ticket_write(str(project_root), ticket)
+        if verified.state != "exhausted":
+            _xkey_proposal_escalate(
+                project_root, st, xkey, ticket, request_id,
+                "proposal_exhaustion_unverified",
+                f"state={verified.state}: {verified.reason}; nothing cleared",
+            )
+            return
     ticket["proposal_exhausted_at"] = _iso_now()
     ticket["proposal_exhausted_detail"] = _one_line(detail, 200)
     xkey.ticket_write(str(project_root), ticket)
@@ -5411,9 +8077,41 @@ def _xkey_proposal_one(
     )
     if proposal_path.is_file():
         return  # proposal on disk → T-06 takes over
-    if ticket.get("proposal_exhausted_at"):
-        return  # bound already recorded — never spin
     source_key = str(ticket.get("source_key") or "")
+    if ticket.get("proposal_exhausted_at"):
+        plan, _issues = dispatch.bounded_recovery_plan(ticket)
+        if plan is None:
+            return  # bound already recorded — no authorization to move it
+        version = str(plan["version"])
+        if ticket.get("proposal_recovery_used_at") == version:
+            return  # this recovery version was already dispatched once
+        attempts = _xkey_int(ticket.get("proposal_attempts"), 0)
+        base_stem = f"xkey-{request_id}-proposal-r{version}"
+        if _xkey_proposal_in_flight(rows, source_key, base_stem):
+            return
+        result = dispatch.dispatch(
+            project_root, source_key, base_stem, "phase-writer",
+            _xkey_proposal_prompt(project_root, ticket, target_root),
+            loop=f"xkey-proposal:{request_id}", attempt=attempts + 1,
+            timeline=st.timeline,
+        )
+        if not result.ok:
+            _xkey_proposal_escalate(
+                project_root, st, xkey, ticket, request_id,
+                "proposal_recovery_refused",
+                f"authorized recovery version {version} was refused: {result.reason}",
+            )
+            return
+        ticket["proposal_attempts"] = attempts + 1
+        ticket["proposal_recovery_used_at"] = version
+        ticket["proposal_recovery_task_key"] = result.task_key
+        ticket["proposal_recovery_dispatch_at"] = _iso_now()
+        xkey.ticket_write(str(project_root), ticket)
+        st.timeline.append(
+            "xkey-proposal-dispatched", key=ticket.get("owner_key"),
+            detail=f"{request_id} {result.task_key} recovered version {version}",
+        )
+        return
     if not source_key or source_key == dispatch.SCRATCH_OWNER:
         _xkey_proposal_exhaust(
             project_root, st, xkey, ticket, request_id,
@@ -5459,6 +8157,7 @@ def _xkey_proposal_one(
             project_root, st, xkey, ticket, request_id,
             f"proposal dispatch bound reached ({attempt}/"
             f"{_XKEY_PROPOSAL_MAX_ATTEMPTS}); ticket stays approved",
+            dispatch_refused=True,
         )
 
 
@@ -6594,6 +9293,9 @@ ENGINE_REASON_CODES: tuple[str, ...] = (
     # T-14 / AC-007: the blocker_class fail-closed prefix (a stalled gate with
     # no explicit `paperwork` classification is never auto-released).
     "blocker-class-not-paperwork",
+    # T19: the only live business release is the prepared dp-gate-approve
+    # contract; a legacy rule that would have approved is now a diagnosis.
+    "gate-approve-contract-required",
 )
 
 # Gate kinds whose automatic approval is additionally gated by `blocker_class`
@@ -7741,23 +10443,98 @@ def _key_night_used(rows: list[dict], night: str | None, key: str | None) -> int
     )
 
 
+def _project_registration(project_root: pathlib.Path) -> bool | None:
+    """Enrollment comes only from the fixed protected deployment config.
+
+    ``None`` means the SCM itself proved no service is installed (the only
+    legitimate unmanaged project). Every other failure — identity mismatch,
+    host unavailable, denied ACL, untrusted path, API error — is an unknown
+    deployment and therefore treated as registered (fail closed), never as a
+    licence to use the local writer.
+    """
+    try:
+        operator_authority.load_trust()
+    except operator_authority.ServiceNotDeployed:
+        return None
+    except operator_authority.AuthorityError:
+        return True
+    except Exception:  # noqa: BLE001 - deployed but unprovable: fail closed
+        return True
+    try:
+        return operator_authority.registered_project(
+            decision_wire.project_id_for(project_root)) is True
+    except Exception:  # noqa: BLE001 - deployed but unprovable: fail closed
+        return True
+
+
+def _managed_brake_facts(project_root: pathlib.Path) -> dict:
+    """Read the fixed registered object through the narrow ordinary channel.
+
+    This is the only fact source for a registered project, even when a local
+    brake file looks clear. A deployed service that cannot be reached, or a
+    project whose protected object is missing/replaced, is unknown and
+    therefore active; a deleted file never fakes a clear brake.
+    """
+    try:
+        project_id = decision_wire.project_id_for(project_root)
+        reply = operator_authority.read_brake(project_id)
+    except Exception:  # noqa: BLE001
+        reply = {"ok": False, "reason": "host-unavailable"}
+    if isinstance(reply, dict) and reply.get("ok") is True:
+        facts = reply.get("facts") or {}
+        state = str(facts.get("state") or "unknown")
+        return {
+            "active": bool(facts.get("active", state != "clear")),
+            "reason": facts.get("reason"),
+            "trip": facts.get("trip_id"),
+            "state": state,
+            "generation_verified": bool(facts.get("generation_verified")),
+            "brake_sha256": facts.get("brake_sha256"),
+        }
+    return {"active": True, "reason": "brake-generation-unverified",
+            "trip": None, "state": "unknown", "generation_verified": False}
+
+
 def auto_breaker_state(project_root: pathlib.Path) -> dict:
     """Persisted breaker state (GC-1: re-derived from the brake file every
     call, so a conductor restart is still tripped — an in-memory breaker goes
-    red here)."""
+    red here).
+
+    T26: a registered project's facts always come from its fixed protected
+    object, never from a local file that happens to exist. Only a project with
+    no deployed service keeps the legacy single-object byte parser; an
+    unreadable/corrupt managed file is unknown and therefore active (never
+    "missing means clear")."""
     path = auto_brake_path(project_root)
+    if _project_registration(project_root) is True:
+        return _managed_brake_facts(project_root)
     if not path.is_file():
         return {"active": False, "reason": None, "trip": None}
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return {"active": True, "reason": "unreadable-brake", "trip": None, "state": "unknown"}
+    if "mw-breaker-event: " in raw:
+        try:
+            from autopilot import decision_recovery
+
+            managed = decision_recovery.managed_brake_state(project_root)
+        except Exception:  # noqa: BLE001 — unreadable managed state never clears
+            managed = {"state": "unknown", "active": True, "reason": "brake-generation-unverified", "trip": None}
+        state = str(managed.get("state") or "unknown")
+        return {
+            "active": state != "clear",
+            "reason": managed.get("reason") or (None if state == "clear" else state),
+            "trip": managed.get("trip"),
+            "state": state,
+        }
     reason = None
     trip = None
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("reason:"):
-                reason = line.split(":", 1)[1].strip() or None
-            elif line.startswith("triggered_at:"):
-                trip = line.split(":", 1)[1].strip() or None
-    except OSError:
-        return {"active": True, "reason": "unreadable-brake", "trip": None}
+    for line in raw.splitlines():
+        if line.startswith("reason:"):
+            reason = line.split(":", 1)[1].strip() or None
+        elif line.startswith("triggered_at:"):
+            trip = line.split(":", 1)[1].strip() or None
     return {"active": True, "reason": reason, "trip": trip}
 
 
@@ -7796,9 +10573,62 @@ def _trip_auto_breaker(
     st: ConductorState,
     reason_code: str,
     detail: str,
+    *,
+    rows: list[dict] | None = None,
 ) -> bool:
     """Create-once persisted brake + one escalate record. Returns False when
-    already tripped (idempotent, restart-safe)."""
+    already tripped (idempotent, restart-safe).
+
+    In a deployed project the ordinary conductor cannot replace the protected
+    original object. It submits one narrow trigger over the existing local
+    channel; the service re-reads the ledger, chooses the fixed object and
+    mints the generation there. Only a project with no deployed service keeps
+    the legacy local writer (unmanaged project compatibility)."""
+    path = auto_brake_path(project_root)
+    if auto_breaker_state(project_root).get("active"):
+        return False
+    if _project_registration(project_root):
+        deployed = True
+    else:
+        deployed = False
+    if deployed:
+        evidence = [
+            int(row["seq"]) for row in (rows or auto_decision_rows(project_root))
+            if row.get("phase") == "decide" and row.get("executed") is True
+            and type(row.get("seq")) is int
+        ][-64:]
+        payload = json.dumps({
+            "schema": 1, "purpose": "brake-trigger",
+            "project_id": decision_wire.project_id_for(project_root),
+            "reason_code": reason_code, "detail": _one_line(detail, 300),
+            "evidence": evidence, "request_id": uuid.uuid4().hex,
+        }, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        try:
+            result = operator_authority.trigger_brake(
+                decision_wire.project_id_for(project_root), payload)
+        except Exception as exc:  # noqa: BLE001
+            result = {"ok": False, "reason": f"trigger-error:{type(exc).__name__}"}
+        if result.get("ok") is True:
+            trip = result.get("trip_id")
+            row = next((item for item in auto_decision_rows(project_root)
+                        if item.get("reason_code") == "breaker-tripped"
+                        and item.get("trip_id") == trip), None)
+            if row is not None:
+                st.timeline.append(GATE_AUTO_DECISION_EVENT, data=dict(row))
+            return bool(result.get("created"))
+        st.timeline.append(
+            "config", detail=f"auto breaker trigger refused: {result.get('reason')}")
+        return False
+    return _legacy_trip_auto_breaker(project_root, st, reason_code, detail)
+
+
+def _legacy_trip_auto_breaker(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    reason_code: str,
+    detail: str,
+) -> bool:
+    """Unmanaged project only: the historical direct local brake writer."""
     path = auto_brake_path(project_root)
     if path.is_file():
         return False
@@ -7910,6 +10740,72 @@ def _rewrite_gate_fields(path: pathlib.Path, fields: dict[str, str]) -> None:
 # fields (both inside the frozen 40-name order) name WHO answered and WHICH
 # policy released the gate - no new field is introduced (T-12 / AC-015).
 AUTO_ANSWER_SOURCE = "conductor-auto"
+
+
+def _legacy_auto_answer(gate: gates.Gate) -> bool:
+    """A T-07 automatic answer is history, never a current business release.
+
+    Legacy gates carry no T17 ``transport`` axis. Only an answer written by
+    :func:`answer_gate_auto` (``answer_source``/``auto_policy_id``, or the
+    ``conductor-auto:<rule>`` display identity) is refused here; a human
+    answer on the same legacy shape keeps its original meaning.
+    """
+    if gate.transport is not None:
+        return False
+    return (
+        gate.answer_source == AUTO_ANSWER_SOURCE
+        or str(gate.answered_by or "").startswith(AUTO_ANSWER_SOURCE + ":")
+        or bool(gate.auto_policy_id)
+    )
+
+
+def _record_legacy_auto_ignored(
+    project_root: pathlib.Path, st: ConductorState, gate: gates.Gate, detail: str
+) -> None:
+    """Surface, once, that a legacy auto answer cannot release this object."""
+    text = f"{gate.id} legacy {AUTO_ANSWER_SOURCE} answer ignored: {detail}"
+    if _timeline_has_event(project_root, "config", gate.key, text):
+        return
+    st.timeline.append("config", key=gate.key, detail=text)
+
+
+def _gate_approve_contract_missing(
+    project_root: pathlib.Path, gate: gates.Gate
+) -> list[str]:
+    """Concrete conditions the legacy live pass cannot itself supply.
+
+    The ordinary tick has no PM claim, no prepared material and no protected
+    authority source, so it reports exactly what is missing and leaves the
+    gate pending. It never invents a claim, a PM note or an authorization.
+    """
+    missing: list[str] = []
+    key = gate.key
+    if not key:
+        missing.append("current-key")
+    else:
+        try:
+            _pm_owner(project_root, key)
+        except gate_effects.GateBlocked:
+            missing.append("current-live-pm-claim")
+    prepared = [
+        other for other in gates.enumerate(gates_dir(project_root))
+        if not other.historical and f"trigger:{gate.id}" in other.context_refs
+    ]
+    if not prepared:
+        missing.append("prepared-dp-gate-approve")
+    else:
+        if not any(
+            _read_json_file(_prepared_gate_sidecar(project_root, other.id))
+            for other in prepared
+        ):
+            missing.append("prepared-material-and-basis")
+        if not any(other.transport in ("pending", "answered") for other in prepared):
+            missing.append("decision-transport")
+    if key:
+        records, writers = _pm_authority_source(project_root, key)
+        if not records or not writers:
+            missing.append("protected-authority-source")
+    return missing
 
 
 def answer_gate_auto(
@@ -8420,7 +11316,11 @@ def _auto_decide_one(
         )
         return
 
-    # live
+    # live: the legacy T-07 rule is a read-only diagnostic from here on. A
+    # business release only exists through the prepared dp-gate-approve
+    # contract (T17/T19 migration); the historical proposition/shadow/quota
+    # checks still run as hard checks, but none of them may answer the gate.
+    detail_note = ""
     if decision == "approve":
         if refusal is not None:
             decision, reason_code = "escalate", refusal
@@ -8430,31 +11330,30 @@ def _auto_decide_one(
             decision, reason_code = "escalate", "night-quota-exhausted"
         elif key_used >= AUTO_KEY_CAP:
             decision, reason_code = "escalate", "key-quota-exhausted"
+        else:
+            missing = _gate_approve_contract_missing(project_root, gate)
+            decision = "escalate"
+            reason_code = "gate-approve-contract-required"
+            if missing:
+                detail_note = "missing: " + ", ".join(missing)
 
     before = _gate_file_sha256(gate.path)
-    after: str | None = None
-    executed = False
-    if decision == "approve":
-        after = answer_gate_auto(project_root, st, gate, "approved", rule, _iso_now())
-        if after is None:
-            decision, reason_code = "escalate", "not-bound"
-        else:
-            executed = True
     row = _build_auto_row(
         project_root, gate, cfg, rule,
-        mode="live", executed=executed, decision=decision,
+        mode="live", executed=False, decision=decision,
         reason_code=reason_code, prop_ok=prop.ok,
         evidence_records=evidence.snapshot(
             [str(path) for path in _gate_evidence_pointers(project_root, gate)]
         ),
         budget=budget,
         gate_file_sha256_before=before,
-        gate_file_sha256_after=after,
-        refusal_code=None if executed else (refusal or reason_code if decision == "escalate" else None),
+        gate_file_sha256_after=None,
+        refusal_code=(refusal or reason_code if decision == "escalate" else None),
     )
+    detail = "; ".join(text for text in (prop.detail, detail_note) if text)
     _record_auto_decision(
         project_root, st, row,
-        detail=_auto_decision_detail(gate, decision, reason_code, prop.detail),
+        detail=_auto_decision_detail(gate, decision, reason_code, detail),
     )
 
 
@@ -8488,7 +11387,18 @@ def auto_decide_gates(
         if breaker.get("active"):
             return  # stopped + escalated; nothing else to do this tick
         all_gates = gates.enumerate(gates_dir(project_root))
+        # T26: a prepared decision gate and the historical trigger it was
+        # prepared from belong to the PM, not to the legacy automatic rules.
+        # Otherwise a live auto rule could answer the still-pending trigger and
+        # bypass the decision service for the very matter the PM prepared.
+        superseded = {
+            ref[len("trigger:"):]
+            for gate in all_gates if not gate.historical
+            for ref in gate.context_refs if ref.startswith("trigger:")
+        }
         for gate in all_gates:
+            if not gate.historical or gate.id in superseded:
+                continue
             if gate.status != "pending":
                 continue
             rule = AUTO_RULE_BY_KIND.get(gate.kind)
@@ -8501,6 +11411,10 @@ def auto_decide_gates(
                     "config", key=gate.key,
                     detail=f"auto-decision error for {gate.id}: {exc!r}",
                 )
+        # T19 prepared tick: the normal live pass evaluates one already
+        # prepared gate as the current claimed PM. The legacy loop above never
+        # answers a prepared gate or its superseded trigger.
+        evaluate_prepared_gates(project_root, st, cfg)
     except Exception as exc:  # noqa: BLE001 — a tick never dies (§9)
         st.timeline.append("config", detail=f"auto-decision pass error: {exc!r}")
 

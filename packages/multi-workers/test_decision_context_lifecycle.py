@@ -25,16 +25,20 @@ No real credential, network, LLM, browser, build or service is touched.
 from __future__ import annotations
 
 import builtins
+import hashlib
 import io
 import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 
 import pytest
 
+import decision
 import decision_lifecycle as lifecycle
+import decision_points
 import decision_wire as wire
 
 # Synthetic, deliberately distinctive values (never real credentials).
@@ -713,3 +717,1310 @@ def test_writer_reads_no_credential_files_outside_the_synthetic_home(
     touched = [pathlib.Path(path).as_posix() for path in opened]
     assert not any(path.endswith("auth.json") for path in touched)
     assert str(store.sink) in opened  # the spy did observe the real ledger write
+
+
+# ── T10: real request / PM note / basis provenance / task terminal ─────────
+#
+# Contract under test (design §4.6, spec AC-007/AC-049/AC-050/AC-051):
+# * a request fact keeps transport facts and the one business decision apart -
+#   a transport success with zero business decisions is not an approval;
+# * the selected basis is the PM-prepared catalogue item, its provenance is
+#   re-checked by the single preparation authority and its digest is recorded;
+# * the PM note is its own fact with its own pre-submission time and only a PM
+#   record may author it - the model's basis and the note never mix;
+# * a later `before` cannot replace the creation fact's snapshot (no backfill),
+#   and `null` stays distinct from `[]`;
+# * the task terminal needs its own real observation, never ``settled``;
+# * a successor request links a really recorded parent and is written once.
+
+DP = "dp-pm-steer"
+PREPARED_AT = "2026-10-27T08:15:00+00:00"
+BASIS_TEXT = "the task card already carries the split"
+
+
+def _state(status="running", *, source="agent-report", observed_at="2026-10-27T08:00:00+00:00", completed=None, remaining=None, blockers=None):
+    return dict(
+        status=status,
+        source=source,
+        observed_at=observed_at,
+        completed=completed,
+        remaining=remaining,
+        blockers=blockers,
+    )
+
+
+def _material():
+    return {
+        "task_goal": "ship the split",
+        "task_requirements": "keep both files",
+        "task_deliverables": "two patches",
+    }
+
+
+def _preparation(choice="narrow", prepared_at=PREPARED_AT):
+    return {
+        "basis_catalog": [
+            {
+                "id": "b-narrow",
+                "text": BASIS_TEXT,
+                "material_refs": ["task_goal"],
+                "applies_to": [choice, "split"],
+            },
+            {
+                "id": "b-split",
+                "text": "the remaining work is two independent files",
+                "material_refs": ["task_requirements"],
+                "applies_to": ["split"],
+            },
+        ],
+        "prepared_at": prepared_at,
+    }
+
+
+def _result(**over):
+    base = {
+        "dp": DP,
+        "available": True,
+        "replayed": False,
+        "choice": "narrow",
+        "basis_id": "b-narrow",
+        "basis_text": BASIS_TEXT,
+        "basis_source": "pm-prepared",
+        "prepared_at": PREPARED_AT,
+        "reason": None,
+        "attempts": 1,
+        "transport_attempts": 1,
+        "business_decisions": 1,
+    }
+    base.update(over)
+    return base
+
+
+def _started(store, **meta_kw):
+    meta = _meta(**meta_kw)
+    assert lifecycle.record_start(store, meta).recorded
+    return meta
+
+
+def _decision_id(meta, dp=DP):
+    return f"{dp}:{meta.logical_id}"
+
+
+def _row(store, kind):
+    matches = [row for row in _rows(store) if row.get("kind") == kind]
+    assert len(matches) == 1, f"expected one {kind} row, got {len(matches)}"
+    return matches[0]
+
+
+def test_a_transport_success_without_a_business_decision_is_not_an_approval(store):
+    meta = _started(store)
+    refused = _result(
+        choice=None,
+        basis_id=None,
+        basis_text=None,
+        basis_source=None,
+        business_decisions=0,
+        reason="bad-response",
+        attempts=1,
+        transport_attempts=2,
+    )
+    result = lifecycle.record_request(
+        store,
+        meta,
+        decision_id=_decision_id(meta),
+        result=refused,
+        material=_material(),
+        preparation=_preparation(),
+    )
+    assert result.recorded is True
+
+    row = _row(store, "request")
+    assert row["available"] is True  # the wire really answered
+    assert row["transport_attempts"] == 2 and row["attempts"] == 1
+    assert row["business_decisions"] == 0  # ... and no business decision was made
+    assert row["choice"] is None and row["basis_id"] is None
+    assert row["basis_text"] is None and row["basis_catalog_sha256"] is None
+    assert row["reason"] == "bad-response"
+    # transport facts never fabricate an action, settlement, sign-off or terminal
+    assert {item.get("kind") for item in _rows(store)} == {"record-start", "request"}
+
+
+def test_a_business_decision_records_the_selected_pm_basis_and_its_digest(store):
+    meta = _started(store)
+    preparation = _preparation()
+    assert lifecycle.record_request(
+        store,
+        meta,
+        decision_id=_decision_id(meta),
+        result=_result(),
+        material=_material(),
+        preparation=preparation,
+    ).recorded
+
+    row = _row(store, "request")
+    assert row["business_decisions"] == 1
+    assert row["choice"] == "narrow"
+    assert row["basis_id"] == "b-narrow"
+    assert row["basis_text"] == BASIS_TEXT
+    assert row["basis_source"] == "pm-prepared"
+    assert row["prepared_at"] == PREPARED_AT
+    canonical = json.dumps(
+        preparation, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    assert row["basis_catalog_sha256"] == hashlib.sha256(canonical).hexdigest()
+    assert row["logical_id"] == meta.logical_id
+    assert row["task_key"] == "task-a"
+
+
+def test_a_replayed_result_is_a_record_without_a_new_business_decision(store):
+    meta = _started(store)
+    replay = _result(
+        choice=None,
+        basis_id=None,
+        basis_text=None,
+        basis_source=None,
+        business_decisions=0,
+        reason=None,
+        attempts=0,
+        transport_attempts=0,
+        replayed=True,
+    )
+    assert lifecycle.record_request(
+        store,
+        meta,
+        decision_id=_decision_id(meta),
+        result=replay,
+        material=_material(),
+        preparation=_preparation(),
+    ).recorded
+    row = _row(store, "request")
+    assert row["replayed"] is True
+    assert row["business_decisions"] == 0 and row["choice"] is None
+    # a replay is not a settlement/approval either
+    assert not any(item.get("business_decisions") == 1 for item in _rows(store))
+
+
+@pytest.mark.parametrize(
+    "over,field",
+    [
+        ({"replayed": True, "business_decisions": 1}, "replayed"),
+        ({"available": False, "business_decisions": 1}, "available"),
+        ({"reason": "timeout", "business_decisions": 1}, "reason"),
+        ({"attempts": 0, "business_decisions": 1}, "attempts"),
+        ({"basis_source": "model", "business_decisions": 1}, "basis_source"),
+        (
+            {
+                "choice": None,
+                "basis_id": None,
+                "basis_text": None,
+                "basis_source": None,
+                "business_decisions": 0,
+                "reason": None,
+            },
+            "reason",
+        ),
+        (
+            {
+                "replayed": True,
+                "business_decisions": 0,
+                "reason": "timeout",
+                "choice": None,
+                "basis_id": None,
+                "basis_text": None,
+                "basis_source": None,
+                "attempts": 0,
+                "transport_attempts": 0,
+            },
+            "reason",
+        ),
+    ],
+)
+def test_request_refuses_a_split_that_is_not_a_real_prepared_outcome(store, over, field):
+    meta = _started(store)
+    before = _raw(store)
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_request(
+            store,
+            meta,
+            decision_id=_decision_id(meta),
+            result=_result(**over),
+            material=_material(),
+            preparation=_preparation(),
+        )
+    assert field in str(caught.value)
+    assert _raw(store) == before  # zero writes, prior bytes untouched
+
+
+@pytest.mark.parametrize(
+    "over,prepare,materialize,field",
+    [
+        ({"basis_id": "b-missing"}, True, True, "basis_id"),
+        ({"choice": "escalate"}, True, True, "basis_id"),
+        ({"basis_text": "the model said this was fine"}, True, True, "basis_text"),
+        ({}, False, True, "preparation"),
+        ({}, True, False, "material"),
+    ],
+)
+def test_the_selected_basis_must_come_from_the_submitted_preparation(
+    store, over, prepare, materialize, field
+):
+    meta = _started(store)
+    before = _raw(store)
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_request(
+            store,
+            meta,
+            decision_id=_decision_id(meta),
+            result=_result(**over),
+            material=_material() if materialize else None,
+            preparation=_preparation() if prepare else None,
+        )
+    assert field in str(caught.value)
+    assert _raw(store) == before
+
+
+def test_a_retired_entry_id_cannot_be_recorded_as_a_request(store):
+    meta = _started(store)
+    before = _raw(store)
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_request(
+            store,
+            meta,
+            decision_id=f"dp1-dispatch-type:{meta.logical_id}",
+            result=_result(dp="dp1-dispatch-type"),
+            material=_material(),
+            preparation=_preparation(),
+        )
+    assert "dp" in str(caught.value)
+    assert _raw(store) == before
+
+
+def test_the_prepared_at_must_be_the_preparation_time_not_the_write_clock(store):
+    meta = _started(store)
+    before = _raw(store)
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_request(
+            store,
+            meta,
+            decision_id=_decision_id(meta),
+            result=_result(prepared_at="2026-10-27T09:99:00+00:00"),
+            material=_material(),
+            preparation=_preparation(),
+        )
+    assert "prepared_at" in str(caught.value)
+    assert _raw(store) == before
+
+
+def test_the_pm_note_is_stored_separately_from_the_model_basis(store):
+    meta = _started(store)
+    decision_id = _decision_id(meta)
+    note_text = "matter: split the file; action: narrow; end when both patches land"
+    assert lifecycle.record_note(
+        store,
+        meta,
+        decision_id=decision_id,
+        pm_note=note_text,
+        prepared_at=PREPARED_AT,
+    ).recorded
+    assert lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=_result(),
+        material=_material(),
+        preparation=_preparation(),
+    ).recorded
+
+    note = _row(store, "note")
+    request = _row(store, "request")
+    assert note["pm_note"] == note_text
+    assert note["prepared_at"] == PREPARED_AT
+    assert note["note_source"] == "pm-prepared"
+    assert "basis_id" not in note and "choice" not in note
+    assert "pm_note" not in request
+    assert request["basis_id"] == "b-narrow"
+    assert note["logical_id"] == request["logical_id"] == meta.logical_id
+
+
+def test_a_non_pm_record_cannot_write_a_pm_note(store):
+    meta = _started(store, initiator_role="coding")
+    before = _raw(store)
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_note(
+            store,
+            meta,
+            decision_id=_decision_id(meta),
+            pm_note="a worker must not speak for the PM",
+            prepared_at=PREPARED_AT,
+        )
+    assert "initiator_role" in str(caught.value)
+    assert _raw(store) == before
+
+
+def test_a_later_before_is_refused_while_the_creation_snapshot_can_be_repeated(store):
+    recorded_before = _state("not-queued", source="worker-registry", completed=[], remaining=None, blockers=[])
+    meta = _started(store, task_before=recorded_before)
+    decision_id = _decision_id(meta)
+    assert lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=_result(),
+        material=_material(),
+        preparation=_preparation(),
+        task_before=recorded_before,
+    ).recorded
+    row = _row(store, "request")
+    assert row["task_before"] == recorded_before
+    assert row["task_before"]["completed"] == []
+    assert row["task_before"]["remaining"] is None
+
+    before_bytes = _raw(store)
+    current_state = _state("running", completed=["read the card"], remaining=["split the file"])
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_request(
+            store,
+            meta,
+            decision_id=decision_id,
+            result=_result(),
+            material=_material(),
+            preparation=_preparation(),
+            event_id="t10-backfill",
+            task_before=current_state,
+        )
+    assert "task_before" in str(caught.value)
+    assert _raw(store) == before_bytes
+
+
+def test_a_before_cannot_be_added_after_the_creation_fact(store):
+    meta = _started(store)  # the creation fact recorded no before snapshot
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_note(
+            store,
+            meta,
+            decision_id=_decision_id(meta),
+            pm_note="note without a before",
+            prepared_at=PREPARED_AT,
+            task_before=_state(),
+        )
+    assert "task_before" in str(caught.value)
+
+
+def test_terminal_requires_its_own_real_observation_and_never_follows_from_settled(store):
+    before = _state("running", completed=[], remaining=["split the file"], blockers=None)
+    meta = _started(store, task_before=before)
+    decision_id = _decision_id(meta)
+    assert lifecycle.record_request(
+        store, meta, decision_id=decision_id, result=_result(), material=_material(), preparation=_preparation()
+    ).recorded
+    assert lifecycle.record_executed(
+        store, meta, decision_id=decision_id, dp=DP, action="split", result="split the file"
+    ).recorded
+    assert lifecycle.record_settled(
+        store, meta, decision_id=decision_id, dp=DP, outcome="ok"
+    ).recorded
+    # a settled round is not a task terminal
+    assert not any(row.get("kind") == "terminal" for row in _rows(store))
+
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_terminal(
+            store, meta, decision_id=decision_id, terminal="completed", reason="done", task_after=None
+        )
+    assert "task_after" in str(caught.value)
+
+    too_early = dict(before, observed_at="2026-10-27T07:00:00+00:00")
+    with pytest.raises(lifecycle.LifecycleInputError):
+        lifecycle.record_terminal(
+            store, meta, decision_id=decision_id, terminal="completed", reason="done", task_after=too_early
+        )
+
+    after = _state("done", source="dispatch-result", completed=["two patches"], remaining=[], blockers=[])
+    result = lifecycle.record_terminal(
+        store,
+        meta,
+        decision_id=decision_id,
+        terminal="completed",
+        reason="both patches landed",
+        evidence="workers/t10/evidence/report.md:12",
+        task_after=after,
+    )
+    assert result.recorded is True
+    row = _row(store, "terminal")
+    assert row["terminal"] == "completed"
+    assert row["reason"] == "both patches landed"
+    assert row["task_after"] == after
+    assert "done" not in row  # no fabricated completion flag
+
+    # the recorded after observation is now a floor for any later observation
+    earlier = _state("done", observed_at="2026-10-27T07:30:00+00:00")
+    with pytest.raises(lifecycle.LifecycleInputError):
+        lifecycle.record_terminal(
+            store, meta, decision_id=decision_id, terminal="incomplete", reason="late retry", task_after=earlier
+        )
+
+    assert lifecycle.record_terminal(
+        store, meta, decision_id=decision_id, terminal="completed", reason="both patches landed", task_after=after
+    ).duplicate
+
+
+def test_terminal_refuses_an_undeclared_value_or_a_missing_reason(store):
+    meta = _started(store)
+    after = _state("done")
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_terminal(
+            store, meta, decision_id=_decision_id(meta), terminal="done", reason="x", task_after=after
+        )
+    assert "terminal" in str(caught.value)
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_terminal(
+            store, meta, decision_id=_decision_id(meta), terminal="completed", reason="", task_after=after
+        )
+    assert "reason" in str(caught.value)
+    assert not any(row.get("kind") == "terminal" for row in _rows(store))
+
+
+def test_a_taskless_decision_cannot_claim_a_task_terminal(store):
+    meta = _started(store, task_key=None)
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_terminal(
+            store,
+            meta,
+            decision_id=_decision_id(meta),
+            terminal="completed",
+            reason="nothing to terminate",
+            task_after=_state("done"),
+        )
+    assert "task_key" in str(caught.value)
+
+
+def test_a_successor_request_links_a_recorded_parent_and_is_written_once(store):
+    parent = _started(store)
+    parent_id = f"dp-gate-approve:{parent.logical_id}"
+    assert lifecycle.record_settled(
+        store, parent, decision_id=parent_id, dp="dp-gate-approve", outcome="ok"
+    ).recorded
+
+    child = _started(store)
+    child_id = _decision_id(child)
+    first = lifecycle.record_request(
+        store,
+        child,
+        decision_id=child_id,
+        result=_result(),
+        material=_material(),
+        preparation=_preparation(),
+        parent_ref=parent_id,
+    )
+    assert first.recorded is True
+    assert _row(store, "request")["parent_ref"] == parent_id
+    before = _raw(store)
+
+    again = lifecycle.record_request(
+        store,
+        child,
+        decision_id=child_id,
+        result=_result(),
+        material=_material(),
+        preparation=_preparation(),
+        parent_ref=parent_id,
+    )
+    assert again.status == "duplicate"
+    assert _raw(store) == before  # no second successor request, no extra approval
+    # the parent's own rows were not rewritten as a "release"
+    parent_stages = [row.get("lifecycle") for row in _rows(store) if row.get("decision_id") == parent_id]
+    assert parent_stages == ["settled"]
+
+
+def test_an_unrecorded_or_cross_key_parent_ref_is_refused(store):
+    child = _started(store)
+    before = _raw(store)
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_request(
+            store,
+            child,
+            decision_id=_decision_id(child),
+            result=_result(),
+            material=_material(),
+            preparation=_preparation(),
+            parent_ref="dp-gate-approve:not-recorded-anywhere",
+        )
+    assert "parent_ref" in str(caught.value)
+    assert _raw(store) == before
+
+    other = lifecycle.DecisionMeta.create("mw-other", task_key="task-a", initiator_role="pm")
+    other_id = f"dp-gate-approve:{other.logical_id}"
+    assert lifecycle.record_start(store, other, decision_id=other_id).recorded
+    assert lifecycle.record_settled(
+        store, other, decision_id=other_id, dp="dp-gate-approve", outcome="ok"
+    ).recorded
+    before = _raw(store)
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_request(
+            store,
+            child,
+            decision_id=_decision_id(child),
+            result=_result(),
+            material=_material(),
+            preparation=_preparation(),
+            parent_ref=other_id,
+        )
+    assert "parent_ref" in str(caught.value)
+    assert _raw(store) == before
+
+
+def test_note_and_request_rows_take_the_known_secret_boundary(store):
+    meta = _started(store)
+    decision_id = _decision_id(meta)
+    assert lifecycle.record_note(
+        store,
+        meta,
+        decision_id=decision_id,
+        pm_note="approve: caller pasted " + SECRET,
+        prepared_at=PREPARED_AT,
+    ).recorded
+    assert lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=_result(),
+        material=_material(),
+        preparation=_preparation(),
+    ).recorded
+    raw = _raw(store)
+    assert SECRET.encode() not in raw
+    assert _row(store, "note")["pm_note"] == "approve: caller pasted <redacted>"
+
+    before = raw
+    for field, over in (("choice", {"choice": SECRET, "basis_id": "b-narrow"}),):
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+            lifecycle.record_request(
+                store,
+                meta,
+                decision_id=decision_id,
+                result=_result(**over),
+                material=_material(),
+                preparation=_preparation(),
+                event_id="t10-secret-choice",
+            )
+        assert field in str(caught.value)
+        assert SECRET not in str(caught.value)
+        assert _raw(store) == before
+
+
+def test_an_over_long_note_is_refused_not_truncated(store):
+    meta = _started(store)
+    before = _raw(store)
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_note(
+            store,
+            meta,
+            decision_id=_decision_id(meta),
+            pm_note="x" * (wire.NOTE_TEXT_BYTES + 1),
+            prepared_at=PREPARED_AT,
+        )
+    assert "pm_note" in str(caught.value)
+    assert "not truncated" in str(caught.value)
+    assert _raw(store) == before
+
+
+def test_null_and_empty_progress_axes_stay_distinct_in_the_new_facts(store):
+    before = _state("not-queued", source="worker-registry", completed=[], remaining=None, blockers=[])
+    meta = _started(store, task_before=before)
+    decision_id = _decision_id(meta)
+    assert lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=_result(),
+        material=_material(),
+        preparation=_preparation(),
+        task_before=before,
+    ).recorded
+    after = _state("needs-clarification", completed=None, remaining=[], blockers=["waiting for review"])
+    assert lifecycle.record_terminal(
+        store,
+        meta,
+        decision_id=decision_id,
+        terminal="incomplete",
+        reason="review still pending",
+        task_after=after,
+    ).recorded
+
+    request = _row(store, "request")
+    terminal = _row(store, "terminal")
+    assert request["task_before"]["completed"] == []
+    assert request["task_before"]["remaining"] is None
+    assert terminal["task_after"]["completed"] is None
+    assert terminal["task_after"]["remaining"] == []
+
+
+def test_the_new_facts_are_read_by_the_current_history_reader(tmp_path, redactor):
+    import decision_history
+
+    control = tmp_path / "proj"
+    (control / ".agenticdoc").mkdir(parents=True)
+    store = lifecycle.LifecycleStore.production(control, redact=redactor, warn=lambda line: None)
+    before = _state("running", completed=[], remaining=["split"], blockers=None)
+    meta = _meta(task_before=before)
+    decision_id = _decision_id(meta)
+    assert lifecycle.record_start(store, meta, decision_id=decision_id).recorded
+    assert lifecycle.record_note(
+        store, meta, decision_id=decision_id, pm_note="prepared note", prepared_at=PREPARED_AT
+    ).recorded
+    assert lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=_result(),
+        material=_material(),
+        preparation=_preparation(),
+        task_before=before,
+    ).recorded
+    assert lifecycle.record_executed(
+        store, meta, decision_id=decision_id, dp=DP, action="split", result="split the file"
+    ).recorded
+    assert lifecycle.record_settled(store, meta, decision_id=decision_id, dp=DP, outcome="ok").recorded
+    after = _state("done", source="dispatch-result", completed=["two patches"], remaining=[], blockers=[])
+    assert lifecycle.record_terminal(
+        store, meta, decision_id=decision_id, terminal="completed", reason="landed", task_after=after
+    ).recorded
+
+    snapshot = decision_history.load_history(control, redact=redactor)
+    assert snapshot.stats.unknown_kind == 0
+    assert snapshot.stats.unknown_lifecycle == 0
+    assert snapshot.stats.lifecycle_damaged == 0
+    assert snapshot.stats.invalid_ids == 0
+    assert snapshot.stats.unlinked_events == 0
+    assert snapshot.stats.foreign_rows == 0
+    assert snapshot.stats.lifecycle_events >= 6
+    record = next(item for item in snapshot.records if item.decision_id == decision_id)
+    assert record.key == "mw-demo"
+    assert record.stages["executed"].state == "recorded"
+    assert record.stages["settled"].state == "recorded"
+    kinds = [row.get("kind") for row in _rows(store)]
+    assert kinds.count("note") == 1
+    assert kinds.count("request") == 1
+    assert kinds.count("terminal") == 1
+
+
+# ── T10 R2 (stage A): regressions for the audited lifecycle gaps ───────────
+#
+# Each block below pins one *specification* fact from the PM disposition
+# (evidence/implementation/t05-t10-audit-disposition-20261028/report.md §B) with
+# the real writer and the real single-source validators - no stub, no shadow
+# module, no fake implementation:
+#
+# * S1 - a transport refusal and the later real business decision of the same
+#   request are different facts, so the deterministic ``event_id`` of the first
+#   must not swallow the second; an identical repeat stays idempotent and a
+#   *different* choice has to be visible instead of a silent ``duplicate``;
+# * S3 - ``dp-auto`` may only record an answer that is one of the PM-prepared
+#   ``handling_options``; a missing or invalid candidate set cannot legalise an
+#   invented choice, while a choice inside a valid set still records;
+# * S5 - ``executed``/``settled`` follow the same non-decreasing ``observed_at``
+#   rule the terminal already enforces, and a failed round is never reported as
+#   an executed fact;
+# * S7 - repeating the creation fact's ``before`` (AC-050: echo, never backfill)
+#   also has to work when that snapshot contained a known secret, without ever
+#   storing the secret; ``None`` and ``[]`` stay distinct;
+# * S4 - a Windows case variant of ``.agenticdoc`` is the same production tree,
+#   so the test-scope guard must refuse it (the exact-case path is the control);
+# * S9 - the writer's consumed producer fields/reasons stay a subset of the
+#   frozen producer tuple and the same frozen reason set (one source only).
+#
+# Test-only additions. On the current product the S1/S3/S5/S7/S4 items are
+# expected red and the controls green; this worker did not execute them.
+
+AUTO_DP = "dp-auto"
+
+
+def _auto_candidate(candidate_id, label):
+    return {
+        "id": candidate_id,
+        "label": label,
+        "description": f"prepared handling {candidate_id}",
+        "consequence": f"what follows from {candidate_id}",
+        "risk": "bounded by the current gate",
+        "conditions": "the PM-prepared gate",
+    }
+
+
+def _auto_material(options):
+    return {
+        "question": "which prepared handling option applies now?",
+        "background": {
+            "task_goal": "keep the task moving",
+            "current_state": "one blocking fact is known",
+            "tried": "the direct path was tried",
+            "unknowns": "the remaining cost is unknown",
+            "constraints": "no new authority is granted",
+        },
+        "handling_options": options,
+    }
+
+
+def _auto_preparation(choice, basis_id="b-auto", text="the selected handling option"):
+    return {
+        "basis_catalog": [
+            {
+                "id": basis_id,
+                "text": text,
+                "material_refs": ["question"],
+                "applies_to": [choice],
+            }
+        ],
+        "prepared_at": PREPARED_AT,
+    }
+
+
+def _auto_result(choice, basis_id="b-auto", text="the selected handling option"):
+    return _result(dp=AUTO_DP, choice=choice, basis_id=basis_id, basis_text=text)
+
+
+def test_a_refused_request_does_not_swallow_the_later_real_choice(store):
+    """S1: the refusal's event id must not hide the later real business choice."""
+    meta = _started(store)
+    decision_id = _decision_id(meta)
+    refused = _result(
+        choice=None,
+        basis_id=None,
+        basis_text=None,
+        basis_source=None,
+        business_decisions=0,
+        reason="bad-response",
+        attempts=1,
+        transport_attempts=2,
+    )
+    first = lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=refused,
+        material=_material(),
+        preparation=_preparation(),
+    )
+    assert first.recorded is True
+    assert _row(store, "request")["business_decisions"] == 0
+
+    second = lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=_result(),
+        material=_material(),
+        preparation=_preparation(),
+    )
+
+    requests = [row for row in _rows(store) if row.get("kind") == "request"]
+    real = [
+        row
+        for row in requests
+        if row.get("business_decisions") == 1 and row.get("choice") == "narrow"
+    ]
+    conflict_visible = second.status == "failed" and "conflict" in str(second.error_class)
+    assert real or conflict_visible, (
+        "S1: the refusal's event id swallowed the later real business decision "
+        f"(status={second.status!r}, "
+        f"business_decisions={[row.get('business_decisions') for row in requests]})"
+    )
+    # the refusal row is a recorded fact of its own: it is never rewritten
+    assert requests[0].get("reason") == "bad-response"
+
+
+def test_an_identical_repeated_business_request_stays_idempotent(store):
+    """S1 control: the same content twice is one fact, not two."""
+    meta = _started(store)
+    decision_id = _decision_id(meta)
+    first = lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=_result(),
+        material=_material(),
+        preparation=_preparation(),
+    )
+    assert first.status == "written" and first.recorded is True
+    before = _raw(store)
+
+    again = lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=_result(),
+        material=_material(),
+        preparation=_preparation(),
+    )
+    assert again.status == "duplicate" and again.recorded is True
+    assert again.event_id == first.event_id
+    assert _raw(store) == before
+    assert len([row for row in _rows(store) if row.get("kind") == "request"]) == 1
+
+
+def test_a_different_choice_for_the_same_request_stays_visible(store):
+    """S1: different content under the same request id is never a silent duplicate."""
+    meta = _started(store)
+    decision_id = _decision_id(meta)
+    assert lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=_result(),
+        material=_material(),
+        preparation=_preparation(),
+    ).recorded is True
+
+    split = _result(
+        choice="split",
+        basis_id="b-split",
+        basis_text="the remaining work is two independent files",
+    )
+    second = lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=split,
+        material=_material(),
+        preparation=_preparation(),
+    )
+
+    requests = [row for row in _rows(store) if row.get("kind") == "request"]
+    written_second = len(requests) == 2 and requests[1].get("choice") == "split"
+    conflict_visible = second.status == "failed" and "conflict" in str(second.error_class)
+    assert written_second or conflict_visible, (
+        "S1: a different business choice was reported as a duplicate without any "
+        f"conflict signal (status={second.status!r}, "
+        f"choices={[row.get('choice') for row in requests]})"
+    )
+
+
+@pytest.mark.parametrize(
+    "material,choice",
+    [
+        ({"question": "which prepared handling option applies now?"}, "c-ghost"),
+        (_auto_material([_auto_candidate("c-one", "the only option")]), "c-one"),
+    ],
+    ids=["no-handling-options", "single-candidate-set"],
+)
+def test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded(
+    store, material, choice
+):
+    """S3: an illegal dp-auto answer is refused before anything is recorded."""
+    meta = _started(store)
+    decision_id = f"{AUTO_DP}:{meta.logical_id}"
+    before = _raw(store)
+    with pytest.raises(lifecycle.LifecycleInputError) as caught:
+        lifecycle.record_request(
+            store,
+            meta,
+            decision_id=decision_id,
+            result=_auto_result(choice),
+            material=material,
+            preparation=_auto_preparation(choice),
+        )
+    message = str(caught.value)
+    assert "handling_options" in message or "choice" in message or "material" in message
+    assert _raw(store) == before
+
+
+def test_a_dp_auto_choice_inside_the_prepared_candidates_is_recorded(store):
+    """S3 control: a real prepared candidate is still a recordable business fact."""
+    meta = _started(store)
+    decision_id = f"{AUTO_DP}:{meta.logical_id}"
+    material = _auto_material(
+        [
+            _auto_candidate("c-a", "take the prepared option a"),
+            _auto_candidate("c-b", "take the prepared option b"),
+        ]
+    )
+    result = lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=_auto_result("c-a"),
+        material=material,
+        preparation=_auto_preparation("c-a"),
+    )
+    assert result.recorded is True
+    row = _row(store, "request")
+    assert row["dp"] == AUTO_DP
+    assert row["business_decisions"] == 1
+    assert row["choice"] == "c-a" and row["basis_id"] == "b-auto"
+    assert row["basis_source"] == "pm-prepared"
+
+
+def test_executed_and_settled_observations_stay_non_decreasing(store):
+    """S5: executed/settled observations are non-decreasing like the terminal."""
+    before = _state("running", completed=[], remaining=["split the file"], blockers=None)
+    meta = _started(store, task_before=before)
+    decision_id = _decision_id(meta)
+    # legal control: an increasing observation order is still accepted
+    assert lifecycle.record_executed(
+        store,
+        meta,
+        decision_id=decision_id,
+        dp=DP,
+        action="split",
+        result="split the file",
+        task_after=_state(observed_at="2026-10-27T09:00:00+00:00"),
+    ).recorded is True
+    assert lifecycle.record_settled(
+        store,
+        meta,
+        decision_id=decision_id,
+        dp=DP,
+        outcome="ok",
+        task_after=_state(
+            "done", source="dispatch-result", observed_at="2026-10-27T10:00:00+00:00"
+        ),
+    ).recorded is True
+    before_bytes = _raw(store)
+
+    with pytest.raises(lifecycle.LifecycleInputError):
+        lifecycle.record_settled(
+            store,
+            meta,
+            decision_id=decision_id,
+            dp=DP,
+            outcome="rework",
+            event_id="t10-order-settled",
+            task_after=_state(
+                "done", source="dispatch-result", observed_at="2026-10-27T09:30:00+00:00"
+            ),
+        )
+    with pytest.raises(lifecycle.LifecycleInputError):
+        lifecycle.record_executed(
+            store,
+            meta,
+            decision_id=decision_id,
+            dp=DP,
+            action="continue",
+            result="older observation",
+            event_id="t10-order-executed",
+            task_after=_state(observed_at="2026-10-27T09:15:00+00:00"),
+        )
+    assert _raw(store) == before_bytes
+
+
+def test_a_failed_executed_round_is_never_recorded_as_executed(tmp_path, redactor):
+    """S5 control: a failed round reports failure and writes no executed fact."""
+    store = lifecycle.LifecycleStore.test(
+        tmp_path / "decide-test",
+        project_id="proj-test",
+        redact=redactor,
+        lock_budget_s=0.05,
+        lock_retries=2,
+        warn=lambda line: None,
+    )
+    meta = _started(store)
+    decision_id = _decision_id(meta)
+    lock = store.sink.with_name(store.sink.name + ".lock")
+    lock.write_text("held", encoding="utf-8")
+
+    result = lifecycle.record_executed(
+        store,
+        meta,
+        decision_id=decision_id,
+        dp=DP,
+        action="record",
+        result="not really executed",
+    )
+    assert result.status == "failed"
+    assert result.recorded is False
+    assert result.error_class == "lock-timeout"
+    assert not any(row.get("lifecycle") == "executed" for row in _rows(store))
+
+
+def test_a_secret_bearing_creation_before_can_be_repeated(store):
+    """S7: the recorded before is repeatable even when it held a known secret."""
+    before = _state(
+        "running", completed=[SECRET + " private step"], remaining=[], blockers=None
+    )
+    meta = _started(store, task_before=before)
+    decision_id = _decision_id(meta)
+
+    result = lifecycle.record_request(
+        store,
+        meta,
+        decision_id=decision_id,
+        result=_result(),
+        material=_material(),
+        preparation=_preparation(),
+        task_before=before,
+    )
+    assert result.recorded is True
+    row = _row(store, "request")
+    assert row["task_before"]["completed"] == ["<redacted> private step"]
+    # a repeated snapshot keeps the recorded axes: [] is observed, None is not
+    assert row["task_before"]["remaining"] == []
+    assert row["task_before"]["blockers"] is None
+    assert SECRET.encode() not in _raw(store)
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="the case-insensitive path rule is a Windows fact"
+)
+@pytest.mark.parametrize(
+    "relative",
+    [
+        (".AgenticDoc", "_autopilot", "decisions-wire.jsonl"),
+        (".AgenticDoc", "lifecycle.jsonl"),
+    ],
+    ids=["wire-sink", "lifecycle-sink"],
+)
+def test_a_case_variant_agenticdoc_path_is_refused_in_test_scope(tmp_path, relative):
+    """S4: on Windows a case variant is the same production tree and is refused."""
+    sink = tmp_path.joinpath(*relative)
+    with pytest.raises(wire.WireScopeError):
+        wire.WireScope(
+            sink=sink,
+            project_id="proj-test",
+            scope_kind="test",
+            redact=wire.SubstringRedactor([SECRET]),
+        )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        (".agenticdoc", "_autopilot", "decisions-wire.jsonl"),
+        (".agenticdoc", "lifecycle.jsonl"),
+    ],
+    ids=["wire-sink", "lifecycle-sink"],
+)
+def test_the_exact_agenticdoc_path_is_refused_in_test_scope(tmp_path, relative):
+    """S4 control: the exact-case production path is already refused."""
+    sink = tmp_path.joinpath(*relative)
+    with pytest.raises(wire.WireScopeError):
+        wire.WireScope(
+            sink=sink,
+            project_id="proj-test",
+            scope_kind="test",
+            redact=wire.SubstringRedactor([SECRET]),
+        )
+
+
+def test_the_writer_consumes_the_producers_frozen_prepared_contract():
+    """S9: one frozen producer contract, no second vocabulary in the writer."""
+    assert set(lifecycle.REQUEST_RESULT_FIELDS) <= set(decision._PREPARED_RESULT_FIELDS)
+    assert lifecycle.REQUEST_REASONS == decision._PREPARED_REASONS
+    assert lifecycle.BASIS_SOURCE == decision_points.BASIS_SOURCE
+    # the one dynamic entry has no static menu: its legal set is the prepared set
+    assert decision_points.resolve_entry_choices(AUTO_DP) == ()
+    options = [
+        _auto_candidate("c-a", "take the prepared option a"),
+        _auto_candidate("c-b", "take the prepared option b"),
+    ]
+    assert decision_points.resolve_entry_choices(AUTO_DP, _auto_material(options)) == (
+        "c-a",
+        "c-b",
+    )
+
+
+# ── T10 R3: terminal replay and lock-scoped observation floor ─────────────
+
+
+def test_an_earlier_terminal_replays_after_a_later_observation_without_writes(store):
+    before = _state("running", observed_at="2026-10-27T08:00:00+00:00")
+    earlier = _state("done", observed_at="2026-10-27T09:00:00+00:00")
+    later = _state("done", observed_at="2026-10-27T10:00:00+00:00")
+    meta = _started(store, task_before=before)
+    decision_id = _decision_id(meta)
+    args = {
+        "decision_id": decision_id,
+        "terminal": "completed",
+        "reason": "finished",
+        "task_after": earlier,
+        "event_id": "terminal-r3-replay",
+    }
+
+    first = lifecycle.record_terminal(store, meta, **args)
+    assert first.status == "written"
+    assert lifecycle.record_settled(
+        store,
+        meta,
+        decision_id=decision_id,
+        outcome="ok",
+        task_after=later,
+        event_id="terminal-r3-later-settlement",
+    ).recorded
+    saved = _raw(store)
+
+    replay = lifecycle.record_terminal(store, meta, **args)
+    assert replay.status == "duplicate" and replay.recorded
+    assert replay.event_id == first.event_id
+    assert _raw(store) == saved
+    assert not store.error_sink.exists()
+
+
+def test_a_new_earlier_terminal_is_refused_after_a_later_observation(store):
+    before = _state("running", observed_at="2026-10-27T08:00:00+00:00")
+    later = _state("done", observed_at="2026-10-27T10:00:00+00:00")
+    earlier = _state("done", observed_at="2026-10-27T09:00:00+00:00")
+    meta = _started(store, task_before=before)
+    decision_id = _decision_id(meta)
+    assert lifecycle.record_settled(
+        store,
+        meta,
+        decision_id=decision_id,
+        outcome="ok",
+        task_after=later,
+        event_id="terminal-r3-floor",
+    ).recorded
+    saved = _raw(store)
+
+    with pytest.raises(lifecycle.LifecycleInputError):
+        lifecycle.record_terminal(
+            store,
+            meta,
+            decision_id=decision_id,
+            terminal="incomplete",
+            reason="stale new observation",
+            task_after=earlier,
+            event_id="terminal-r3-new-stale",
+        )
+    assert _raw(store) == saved
+
+
+def test_terminal_rechecks_the_observation_floor_inside_the_append_lock(
+    store, monkeypatch
+):
+    before = _state("running", observed_at="2026-10-27T08:00:00+00:00")
+    candidate = _state("done", observed_at="2026-10-27T09:00:00+00:00")
+    raced = _state("done", observed_at="2026-10-27T10:00:00+00:00")
+    meta = _started(store, task_before=before)
+    decision_id = _decision_id(meta)
+    saved = _raw(store)
+    real_ledger_facts = lifecycle._ledger_facts
+    calls = 0
+    lock_observed = False
+
+    def ledger_facts_with_race(current_store, current_meta):
+        nonlocal calls, lock_observed
+        start, events = real_ledger_facts(current_store, current_meta)
+        calls += 1
+        if calls == 2:
+            lock = current_store.sink.with_name(current_store.sink.name + ".lock")
+            lock_observed = lock.exists()
+            events = [
+                *events,
+                {"logical_id": current_meta.logical_id, "task_after": raced},
+            ]
+        return start, events
+
+    monkeypatch.setattr(lifecycle, "_ledger_facts", ledger_facts_with_race)
+    with pytest.raises(lifecycle.LifecycleInputError):
+        lifecycle.record_terminal(
+            store,
+            meta,
+            decision_id=decision_id,
+            terminal="completed",
+            reason="candidate lost the race",
+            task_after=candidate,
+            event_id="terminal-r3-race",
+        )
+
+    assert calls == 2
+    assert lock_observed is True
+    assert _raw(store) == saved
+    assert not store.sink.with_name(store.sink.name + ".lock").exists()
+
+
+# ── T10 R4: first-import order in a fresh interpreter ──────────────────────
+#
+# decision_wire -> mw_common -> contract_guard -> decision_lifecycle is a real
+# dependency chain, so a process that imports the wire first executes the
+# lifecycle body while the wire is only partially initialised. A module-level
+# ``decision_wire.EVENT_ID_PATTERN`` alias fails there; importing the lifecycle
+# (or a module that reaches it through the wire) first masked it. Every case
+# below is a brand-new interpreter: nothing may pre-warm a dependency cache.
+
+_IMPORT_ORDERS = (
+    ("decision_wire",),
+    ("decision_lifecycle",),
+    ("mw_common",),
+    ("autopilot.contract_guard",),
+    ("autopilot.conductor",),
+    ("decision", "decision_wire"),
+)
+
+
+def _isolated_import_env(tmp_path, package_dir):
+    """A credential-free environment with synthetic HOME/TEMP roots.
+
+    Only the OS variables needed to start the interpreter are inherited; no
+    provider key, agentic key or real user profile is visible to the child.
+    """
+    names = (
+        "PATH",
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+    )
+    env = {name: os.environ[name] for name in names if name in os.environ}
+    for var in ("HOME", "USERPROFILE", "TMP", "TEMP", "APPDATA", "LOCALAPPDATA"):
+        folder = tmp_path / var.lower()
+        folder.mkdir()
+        env[var] = str(folder)
+    env.update(
+        PYTHONPATH=str(package_dir),
+        PYTHONUTF8="1",
+        PYTHONDONTWRITEBYTECODE="1",
+    )
+    return env
+
+
+@pytest.mark.parametrize(
+    "first_modules",
+    _IMPORT_ORDERS,
+    ids=["-".join(order) for order in _IMPORT_ORDERS],
+)
+def test_every_module_imports_first_in_a_fresh_interpreter(tmp_path, first_modules):
+    package_dir = pathlib.Path(__file__).resolve().parent
+    script = (
+        "import importlib, sys\n"
+        "for name in sys.argv[1:]:\n"
+        "    importlib.import_module(name)\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-B", "-c", script, *first_modules],
+        cwd=package_dir,
+        env=_isolated_import_env(tmp_path, package_dir),
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert completed.returncode == 0, (
+        f"first import order {first_modules} failed in a fresh interpreter:\n"
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["a", "A1", "logical_id.with:@+-chars", "x" * 128],
+)
+def test_the_lifecycle_token_check_accepts_the_wire_pattern(token):
+    assert lifecycle._check_token("token", token) == token
+    assert wire.EVENT_ID_PATTERN.match(token) is not None
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["", "-leading", ".leading", "with space", "slash/id", "x" * 129],
+)
+def test_the_lifecycle_token_check_refuses_outside_the_wire_pattern(token):
+    with pytest.raises(lifecycle.LifecycleInputError):
+        lifecycle._check_token("token", token)
+
+
+def test_the_lifecycle_token_check_reads_the_wire_pattern_at_call_time(monkeypatch):
+    """One source: the check follows the wire pattern instead of copying it."""
+    monkeypatch.setattr(wire, "EVENT_ID_PATTERN", re.compile(r"^wire-only$"))
+    assert lifecycle._check_token("token", "wire-only") == "wire-only"
+    with pytest.raises(lifecycle.LifecycleInputError):
+        lifecycle._check_token("token", "logical_id")
+    with pytest.raises(lifecycle.LifecycleInputError):
+        lifecycle._check_token("token", 5)

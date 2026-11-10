@@ -2222,6 +2222,42 @@ def read_run_status(task_dir: pathlib.Path) -> str | None:
     return status
 
 
+def read_worker_reachability(task_dir: pathlib.Path, owner_key: str, task_key: str) -> dict | None:
+    """Read the real, incomplete conclusion of this exact worker run."""
+    try:
+        path = task_dir / "run.json"
+        if path.is_symlink() or task_dir.is_symlink():
+            return None
+        run = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(run, dict) or (
+        run.get("owner_key"), run.get("task_key"), run.get("status"), run.get("exit")
+    ) != (owner_key, task_key, "failed", 1):
+        return None
+    if not isinstance(run.get("run_id"), str) or not run["run_id"].startswith(task_key + "@"):
+        return None
+    if not isinstance(run.get("ended_at"), str) or not run["ended_at"].strip():
+        return None
+    evidence = run.get("reachability")
+    if not isinstance(evidence, dict) or not {"choice", "decision_id"}.issubset(evidence):
+        return None
+    required = ("reason", "completed", "remaining", "blockers", "evidence")
+    if any(not isinstance(evidence.get(k), str) or not evidence[k].strip() for k in required):
+        return None
+    decision = evidence.get("decision_id")
+    choice = evidence.get("choice")
+    if choice is None:
+        if decision is not None:
+            return None
+    elif choice not in ("terminate", "investigate") or not isinstance(decision, str) or not re.fullmatch(
+        r"dp-w-check-task:[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", decision
+    ):
+        return None
+    return {"key": owner_key, "task_key": task_key, "run_id": run.get("run_id"), "decision_id": decision,
+            "choice": choice, **{k: evidence[k] for k in required}}
+
+
 def mark_run_lost(task_dir: pathlib.Path) -> str | None:
     """Record ``status="lost"`` in a worker-written ``run.json`` (T-20/D-022).
 
@@ -3327,7 +3363,16 @@ def _doctor_queue(project_dir: pathlib.Path) -> dict:
     # conflict, never a re-run candidate. Present only when T-20's run.json
     # exists, so this stays quiet on historical projects.
     run_ledger_conflict: list[dict] = []
+    reachability = []
     for e in entries:
+        if e["status"] == "failed":
+            task_dir = pathlib.Path(e["task_path"]).parent
+            owner = worker_owner_key(e)
+            expected = project_dir / ".agenticdoc" / owner / "workers" / e["task_key"]
+            if task_dir.absolute() == expected.absolute():
+                conclusion = read_worker_reachability(task_dir, owner, e["task_key"])
+                if conclusion:
+                    reachability.append(conclusion)
         if e["status"] in _TERMINAL_STATUSES:
             continue
         run_status = read_run_status(pathlib.Path(e["task_path"]).parent)
@@ -3351,6 +3396,7 @@ def _doctor_queue(project_dir: pathlib.Path) -> dict:
         "version": queue["version"],
         "alarm_delta": _queue_alarm_delta(project_dir),
         "run_ledger_conflict": run_ledger_conflict,
+        **({"worker_reachability": reachability} if reachability else {}),
     }
 
 
@@ -4169,7 +4215,7 @@ def _blocked_on_human(project_dir: pathlib.Path, pending_count: int) -> bool:
             gate = gate_protocol.parse(entry)
         except (gate_protocol.GateFormatError, OSError):
             continue
-        if gate.status == "pending":
+        if (gate.transport or gate.status) == "pending":
             pending_keys.append(gate.key or "")
     if not pending_keys:
         # The count says there is a pending gate but its key could not be
@@ -4250,8 +4296,16 @@ def _doctor_gates(project_dir: pathlib.Path) -> dict:
         version = str(gate.gate_schema)
         section["schema_versions"][version] = section["schema_versions"].get(version, 0) + 1
 
-    pending = [gate for gate in parsed_gates if gate.status == "pending"]
-    answered = [gate for gate in parsed_gates if gate.status != "pending"]
+    pending = [gate for gate in parsed_gates if (gate.transport or gate.status) == "pending"]
+    answered = [gate for gate in parsed_gates if gate.transport == "answered" or
+                (gate.transport is None and gate.status != "pending")]
+    decisions = [{"id": gate.id, "transport": gate.transport, "business": gate.business, "effect": gate.effect,
+                  "pm_note": gate.pm_note, "model_basis": gate.model_basis, "decision_ref": gate.decision_ref,
+                  "matter_ref": gate.matter_ref, "substantive_version": gate.substantive_version,
+                  "closure_kind": gate.closure_kind}
+                 for gate in parsed_gates if gate.transport is not None]
+    if decisions:
+        section["decisions"] = decisions
     section["pending_count"] = len(pending)
     section["blocked_on_human"] = _blocked_on_human(project_dir, section["pending_count"])
     now = datetime.datetime.now(datetime.timezone.utc)

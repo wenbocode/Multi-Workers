@@ -833,7 +833,30 @@ export const GATE_FRONTMATTER_FIELDS = [
  * guess, never derived from `question`/`note`. */
 export const MISSING_FIELD_SENTINEL = "unknown (no field)";
 
+const GATE_DECISION_FIELDS = [
+	"transport",
+	"business",
+	"effect",
+	"decision_ref",
+	"matter_ref",
+	"substantive_version",
+	"pm_note",
+	"model_basis",
+	"closure_kind",
+] as const;
+interface GateDecisionFields {
+	transport: string;
+	business: string | null;
+	effect: string;
+	decisionRef: string | null;
+	matterRef: string;
+	substantiveVersion: string;
+	pmNote: string;
+	modelBasis: string | null;
+	closureKind: string | null;
+}
 export interface GateRecord {
+	decision?: GateDecisionFields;
 	id: string;
 	kind: string;
 	status: string;
@@ -900,7 +923,7 @@ const GATE_JSON_OBJ_FIELDS = new Set(["goal_diff", "blast_radius"]);
 /** Scalar extension fields recognized OUTSIDE the frozen 40-name order — the
  * `authorizes` pattern applied to a scalar (T-14 / AC-007). A scalar must NOT
  * join GATE_JSON_LIST_FIELDS: those members are JSON-decoded. */
-export const GATE_SCALAR_EXTENSION_FIELDS = new Set(["blocker_class"]);
+export const GATE_SCALAR_EXTENSION_FIELDS = new Set(["blocker_class", ...GATE_DECISION_FIELDS]);
 const GATE_FIELD_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
 const GATE_LIST_ITEM_RE = /^[ \t]+-[ \t]+(.*)$/;
 const GATE_NULL_LITERALS = new Set(["", "~", "-", "null", "Null", "NULL"]);
@@ -1109,11 +1132,69 @@ export function parseGateFile(text: string, file: string): GateRecord {
 		throw new GateFormatError(`${file}: gate_schema must be one of 1, 2, got ${gateSchema}`);
 	}
 
+	const decisionNames = GATE_DECISION_FIELDS.filter((name) => fields.has(name));
+	let decision: GateDecisionFields | undefined;
+	if (decisionNames.length) {
+		const transport = optional("transport");
+		const business = optional("business");
+		const effect = optional("effect");
+		if (decisionNames.length !== GATE_DECISION_FIELDS.length || status !== "pending" || optional("note") !== null)
+			throw new GateFormatError(`${file}: incomplete or mixed decision gate`);
+		if (
+			!transport ||
+			!["pending", "answered", "failed"].includes(transport) ||
+			!effect ||
+			!["not-started", "in-progress", "applied", "blocked", "failed", "unknown"].includes(effect)
+		)
+			throw new GateFormatError(`${file}: invalid decision gate transport or effect`);
+		if (
+			(business !== null && !["approve", "steer", "need_fix", "reject"].includes(business)) ||
+			(transport === "answered") !== (business !== null)
+		)
+			throw new GateFormatError(`${file}: business choice requires an answered transport`);
+		const matterRef = required("matter_ref");
+		const substantiveVersion = required("substantive_version");
+		const pmNote = required("pm_note");
+		if (![matterRef, substantiveVersion, pmNote].every((value) => value.trim()))
+			throw new GateFormatError(`${file}: missing prepared gate material`);
+		const decisionRef = optional("decision_ref");
+		const modelBasis = optional("model_basis");
+		const closureKind = optional("closure_kind");
+		if (transport === "answered") {
+			if (![decisionRef, modelBasis, answeredAt, optional("answered_by")].every((value) => value?.trim()))
+				throw new GateFormatError(`${file}: answered gate lacks decision identity or basis`);
+		} else if (
+			[modelBasis, answeredAt, optional("answered_by"), optional("consumed_at"), optional("consumed_seq")].some(
+				(value) => value !== null,
+			) ||
+			effect === "in-progress" ||
+			effect === "applied"
+		)
+			throw new GateFormatError(`${file}: unanswered gate cannot carry an answer or applied effect`);
+		if (
+			(closureKind !== null && (closureKind !== "legacy" || business !== "reject")) ||
+			(effect === "applied" && business !== "approve" && !closureKind)
+		)
+			throw new GateFormatError(`${file}: unsupported closure or effect`);
+		decision = {
+			transport,
+			business,
+			effect,
+			decisionRef,
+			matterRef,
+			substantiveVersion,
+			pmNote,
+			modelBasis,
+			closureKind,
+		};
+	}
+
 	return {
 		id,
 		kind,
 		status,
 		stage,
+		...(decision ? { decision } : {}),
 		key: optional("key"),
 		question,
 		createdAt,
@@ -1568,6 +1649,7 @@ export interface StageKeyView {
 	/** Optional so every pre-T-05 model shape (and every exact `toEqual` on it)
 	 * stays valid; set only when a run.json actually carries claims. */
 	claims?: ClaimMetricsView;
+	workerReachability?: WorkerReachabilityReport[];
 }
 
 export interface StageView {
@@ -1576,7 +1658,64 @@ export interface StageView {
 	keys: StageKeyView[];
 }
 
+export interface WorkerReachabilityReport {
+	taskKey: string;
+	decisionId: string | null;
+	choice: "terminate" | "investigate" | null;
+	reason: string;
+	completed: string;
+	remaining: string;
+	blockers: string;
+	evidence: string;
+}
+
+/** Project only a terminal observation from the worker's own run. Legacy
+ * outputs and progress snapshots cannot supply a missing conclusion. */
+export function readWorkerReachability(
+	taskDir: string,
+	ownerKey: string,
+	taskKey: string,
+): WorkerReachabilityReport | undefined {
+	try {
+		const file = path.join(taskDir, "run.json");
+		if (fs.lstatSync(taskDir).isSymbolicLink() || !fs.lstatSync(file).isFile()) return undefined;
+		const run = JSON.parse(fs.readFileSync(file, "utf8"));
+		if (
+			run?.owner_key !== ownerKey ||
+			run.task_key !== taskKey ||
+			run.status !== "failed" ||
+			run.exit !== 1 ||
+			typeof run.run_id !== "string" ||
+			!run.run_id.startsWith(`${taskKey}@`) ||
+			typeof run.ended_at !== "string" ||
+			!run.ended_at.trim()
+		)
+			return undefined;
+		const facts = run.reachability;
+		if (
+			!facts ||
+			!["reason", "completed", "remaining", "blockers", "evidence"].every(
+				(name) => typeof facts[name] === "string" && facts[name].trim(),
+			)
+		)
+			return undefined;
+		const { decision_id: decisionId, choice, reason, completed, remaining, blockers, evidence } = facts;
+		if (
+			choice === null
+				? decisionId !== null
+				: !["terminate", "investigate"].includes(choice) ||
+					typeof decisionId !== "string" ||
+					!/^dp-w-check-task:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(decisionId)
+		)
+			return undefined;
+		return { taskKey, decisionId, choice, reason, completed, remaining, blockers, evidence };
+	} catch {
+		return undefined;
+	}
+}
+
 export interface GateView {
+	decision?: GateDecisionFields;
 	id: string;
 	kind: string;
 	status: string;
@@ -1820,6 +1959,17 @@ export function deriveStatusModel(projectDir: string, nowMs: number = Date.now()
 			// D-109 N8 shape lock: the key exists only when a run.json measured
 			// claims, so a project without claims serializes exactly as before.
 			if (claims !== undefined) view.claims = claims;
+			try {
+				const reports = fs
+					.readdirSync(workersDir, { withFileTypes: true })
+					.filter((entry) => entry.isDirectory())
+					.flatMap(
+						(entry) => readWorkerReachability(path.join(workersDir, entry.name), row.key, entry.name) ?? [],
+					);
+				if (reports.length) view.workerReachability = reports;
+			} catch {
+				/* A new key may not have any worker directories yet. */
+			}
 			keys.push(view);
 		}
 	}
@@ -1834,6 +1984,7 @@ export function deriveStatusModel(projectDir: string, nowMs: number = Date.now()
 			id: g.id,
 			kind: g.kind,
 			status: g.status,
+			...(g.decision ? { decision: g.decision } : {}),
 			ageMs: Number.isNaN(createdMs) ? null : Math.max(0, nowMs - createdMs),
 		};
 	});
@@ -1905,11 +2056,16 @@ export function renderStatusText(model: StatusModel): string {
 					claims,
 			);
 		}
+		for (const key of status.stage.keys)
+			for (const report of key.workerReachability ?? [])
+				lines.push(
+					`  ${report.taskKey} failed: ${report.reason}; remaining=${report.remaining}; blockers=${report.blockers}`,
+				);
 		if (status.stage.keys.length === 0) lines.push("  (no keys)");
 	} else {
 		lines.push("stage: none (no roadmap — autopilot not initialized or no stages parsed)");
 	}
-	const pending = status.gates.filter((g) => g.status === "pending");
+	const pending = status.gates.filter((g) => (g.decision?.transport ?? g.status) === "pending");
 	lines.push(`gates: ${status.gates.length} total, ${pending.length} pending`);
 	for (const g of status.gates) {
 		// D-009: pending age in the human row ("age=?" when unknown).
@@ -1918,7 +2074,10 @@ export function renderStatusText(model: StatusModel): string {
 		// "who is holding this gate" from the status line itself.
 		const blocker = model.gateBlockerClasses?.[g.id];
 		const blockerToken = blocker === undefined ? "" : ` blocker=${blocker}`;
-		lines.push(`  ${g.id} ${g.kind} ${g.status} age=${age}${blockerToken}`);
+		const display = g.decision
+			? `transport=${g.decision.transport} business=${g.decision.business ?? "—"} effect=${g.decision.effect}`
+			: g.status;
+		lines.push(`  ${g.id} ${g.kind} ${display} age=${age}${blockerToken}`);
 	}
 	lines.push(`timeline: seq=${status.timeline.seq} ts=${status.timeline.ts}`);
 	lines.push(

@@ -22,13 +22,21 @@ Rules implemented here:
   reading half of five fields is worse off than reading four complete ones.
 * :func:`validate_context` reports problems as a list; it never raises (the same
   fail-soft contract as the rest of the decide layer).
-* :func:`redact_context` runs ``decision._redact`` over every string so a
-  context hand-off can never leak a credential the state itself would redact.
+* The slot table is not a transport for business material. No slot name may
+  equal a declared state path (``required_state_fields`` /
+  ``optional_state_fields``) or a ``preparation`` key, so core evidence -- the
+  task text, the sign-key four-part material, the PM-prepared ``basis_catalog``
+  -- can never be sent as a slot and trimmed away while the request still looks
+  valid. :func:`trimmable_slot_conflicts` reports such a collision (the TS
+  generator refuses to render one), and ``preparation.*`` is never a slot.
+* Slot provenance names the eight post-consolidation entries
+  (``decision_points.ACTIVE_DP_IDS``): a retired id is history and never a
+  producer, so a slot whitelist cannot resurrect an old callable dp.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 from typing import Any
 
@@ -51,6 +59,10 @@ CONTEXT_KEY_OVERHEAD = 16
 #: removed (never the number kept), so a reader can judge what it lost.
 TRUNCATION_MARKER = "…truncated {removed} chars…"
 
+#: The PM-prepared basis lives under this state root (D-012A). It is a required,
+#: fully transported input, so nothing under it may become a cuttable slot.
+PREPARATION_ROOT = "preparation"
+
 #: Frozen slot order: also the order ``contextSlots`` renders in the generated
 #: TS registry, so the same registry always produces the same bytes.
 SLOT_ORDER: tuple[str, ...] = (
@@ -63,8 +75,11 @@ SLOT_ORDER: tuple[str, ...] = (
 
 #: Slot table: ``type`` is the JSON-native kind, ``max_chars``/``max_items`` +
 #: ``item_max_chars`` the caps, ``producers`` the dp ids allowed to emit it.
-#: ``error_excerpt`` is produced by the failure-carrying dps (dp4/dp6/dp7) and
-#: stays in the table so the cut order can name it.
+#: ``error_excerpt`` is produced by the two entries that carry a failure into a
+#: live decision: ``dp-QG`` (a fix/reopen verdict reads the failing gate/test
+#: output) and ``dp-auto``, which absorbed the retired dp4/dp7 handling. The old
+#: numbered ids are read-only history and never producers again.
+#: The slot stays in the table so the cut order can name it.
 CONTEXT_SLOTS: Mapping[str, Mapping[str, Any]] = MappingProxyType(
     {
         "task_excerpt": MappingProxyType(
@@ -107,7 +122,7 @@ CONTEXT_SLOTS: Mapping[str, Mapping[str, Any]] = MappingProxyType(
             {
                 "type": "string",
                 "max_chars": 1500,
-                "producers": ("dp4-failure-handling", "dp6-qg-verdict", "dp7-gate-failure"),
+                "producers": ("dp-QG", "dp-auto"),
                 "description": "Tail of the failing gate/test output (head 60% + tail 40%).",
             }
         ),
@@ -136,6 +151,26 @@ def slot_names_for(dp_id: str) -> tuple[str, ...]:
     return tuple(
         name for name in SLOT_ORDER if dp_id in CONTEXT_SLOTS[name].get("producers", ())
     )
+
+
+def trimmable_slot_conflicts(declared_paths: Iterable[str]) -> tuple[str, ...]:
+    """Slot names that collide with business material or preparation paths.
+
+    ``declared_paths`` is the union of every entry's required and optional state
+    paths (``decision_points.REQUIRED_STATE_FIELDS`` /
+    ``OPTIONAL_STATE_FIELDS``). A non-empty result means core evidence could be
+    sent as a *cuttable* context slot, so the generated TS registry must refuse
+    to render (T04 / D-012A: the basis is not context either).
+    """
+    declared = {str(path) for path in declared_paths}
+    conflicts = {
+        name
+        for name in SLOT_ORDER
+        if name in declared
+        or name == PREPARATION_ROOT
+        or name.startswith(PREPARATION_ROOT + ".")
+    }
+    return tuple(name for name in SLOT_ORDER if name in conflicts)
 
 
 def _truncate_text(text: str, max_chars: int) -> str:

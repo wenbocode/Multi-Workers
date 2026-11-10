@@ -2,7 +2,19 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import { killTrackedDetachedChildren } from "../../../utils/shell.ts";
-import { buildDecisionToolMeta, resolveHandlingSelection, validateDecisionMaterial } from "../pm/decision-tool.ts";
+import { isTaskStateSnapshot } from "../pm/decision-task-state.ts";
+import {
+	ASK_DECISION_TOOL,
+	buildDecisionToolMeta,
+	DECISION_RECEIPT_TOOL,
+	type DecisionToolMeta,
+	initiatorRoleFromWorkerTask,
+	type LifecycleRunner,
+	resolveHandlingSelection,
+	runLifecycleMw,
+	validateDecisionMaterial,
+	writeDecisionLifecycle,
+} from "../pm/decision-tool.ts";
 import {
 	DP2_NARROW_MARKER,
 	DP2_STEER_FILE,
@@ -19,7 +31,7 @@ import {
 import { WRITE_SURFACE_MARKER, WRITE_SURFACE_MARKER_END } from "../pm/ui-bridge.ts";
 import { Breaker, Budget } from "../rag/budget.ts";
 import { requiredFor } from "../rag/config.ts";
-import { appendEvidence } from "../rag/evidence.ts";
+import { appendEvidence, redactSecrets } from "../rag/evidence.ts";
 import { researchDocEvidence, scanCitations, validateResearchDoc } from "../rag/research-doc.ts";
 import {
 	applyRagTools,
@@ -51,6 +63,7 @@ import {
 	RUN_SCHEMA,
 	type RunState,
 	type RunStatus,
+	readRunState,
 	runMarker,
 	writeRunState,
 } from "../shared/run-store.ts";
@@ -2987,6 +3000,7 @@ export interface WorkerModeOptions {
 	/** Test seam for the dp3 decision service (production uses the triage
 	 * client's `runDecideMw`, which reuses `findMwPy()` + `PYTHON_EXE`). */
 	dp3Runner?: DecideRunner;
+	reachabilityLifecycleRunner?: LifecycleRunner;
 }
 
 export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeOptions): Promise<void> {
@@ -3351,6 +3365,47 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	pi.on("before_agent_start", () => {
 		applyRagTools(pi, ragRuntime, meta.type);
 		consumeDp2NarrowSteer("before_agent_start");
+	});
+
+	pi.on("tool_call", (event, ctx) => {
+		if (
+			event.toolName === DECISION_RECEIPT_TOOL &&
+			typeof event.input.decision_id === "string" &&
+			event.input.decision_id.startsWith("dp-w-check-task:")
+		)
+			return { block: true, reason: "The worker records reachability receipts from observed actions." };
+		if (taskDone && runState.reachability) return { block: true, reason: "This worker run has ended." };
+		if (blockedDecision && !(event.toolName === ASK_DECISION_TOOL && event.input.dp === "dp-w-check-task"))
+			return { block: true, reason: blockedDecision.reason };
+		if (reachability?.choice !== "investigate") return;
+		if (Date.now() - startedAt >= budgetMs) {
+			reachability.blocked = "The existing worker budget has expired.";
+			return { block: true, reason: reachability.blocked };
+		}
+		if (reachability.blocked) return { block: true, reason: reachability.blocked };
+		if (reachability.observed) {
+			if (
+				event.toolName === ASK_DECISION_TOOL &&
+				event.input.dp === "dp-w-check-task" &&
+				asPlainRecord(event.input.material)?.reachability_facts !== reachability.material.reachability_facts
+			)
+				return;
+			return {
+				block: true,
+				reason: "Reassess dp-w-check-task using the observed evidence. Supply fresh reachability_facts.",
+			};
+		}
+		if (event.toolName === "read" && typeof event.input.path === "string" && reachability.source) {
+			try {
+				if (fs.realpathSync(path.resolve(ctx.cwd, event.input.path)) === reachability.source) return;
+			} catch {
+				/* report the same closed source boundary */
+			}
+		}
+		return {
+			block: true,
+			reason: "Investigation is limited to the prepared evidence_source read and its stop condition.",
+		};
 	});
 
 	// W8: the decision role's fixed contract + its two runtime guards. The prompt
@@ -4185,157 +4240,279 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		return judgedType !== undefined && (isWritelessRole(meta.type) || hasReportProduct(taskDir));
 	}
 
-	// dp3 state: the process-level budget (`Dp3Attempted`) bounds the auto-answer
-	// to ONE follow-up round per run, so a second NC can never loop (design Q4.3);
-	// the two counters are the `nc_raw` / `nc_human` metric pair (Q3.3).
-	let dp3RawClarifications = 0;
-	let dp3HumanClarifications = 0;
-	let dp3AutoAnswered = false;
+	// The registered decision tool owns identity, preparation and the consumed receipt.
+	// The worker records an action only after it happens inside this run.
+	let blockedDecision: { reason: string; material: Record<string, unknown> } | undefined;
+	let reachability:
+		| {
+				choice: "continue" | "investigate";
+				meta: DecisionToolMeta;
+				id: string;
+				material: Record<string, unknown>;
+				source?: string;
+				observed: boolean;
+				blocked?: string;
+		  }
+		| undefined;
 
-	/** Insert-point hook for dp3 (`finishSuccess`, after `exitCode`, before
-	 * `writeOutputGuarded`). Returns true when an auto-answer was injected — the
-	 * caller then returns WITHOUT writing any terminal product. Every other path
-	 * (3b, suggest, all four degradations, budget spent) returns false and the
-	 * original human path proceeds byte-identically. Never throws. */
-	function attemptDp3Clarification(harnessDetail: string): boolean {
-		try {
-			const projectDir = process.cwd();
-			const policy = readDp3Policy(projectDir);
-			// D-007 complete bypass: a disabled dp3 performs ZERO spawn and ZERO write
-			// (not even a trace row), which is what keeps the closed state identical.
-			if (!policy.enabled) return false;
-			dp3RawClarifications += 1;
-			const triggerId = `${meta.taskKey}#nc${dp3RawClarifications}`;
-			const decisionId = `${DP3_ID}:${triggerId}`;
-			if (dp3AutoAnswered) {
-				// Budget spent: never ask the service twice — the human path resumes.
-				dp3HumanClarifications += 1;
-				appendTrace(
-					meta.taskKey,
-					meta.agenticdocRoot,
-					formatDp3TraceLine({
-						triggerId,
-						acted: false,
-						mode: policy.mode,
-						escalatedReason: "-",
-						decisionId,
-						ncRaw: dp3RawClarifications,
-						ncHuman: dp3HumanClarifications,
-					}),
-				);
-				return false;
-			}
-			const risk = lastCheckpoint?.risk ?? "mid";
-			const decision = decideDp3WorkerClarify({
-				projectDir,
-				taskKey: meta.taskKey,
-				ncIndex: dp3RawClarifications,
-				key: path.basename(path.dirname(meta.agenticdocRoot)),
-				phase: meta.phase ?? "EXECUTE",
-				taskType: dp3TaskType(meta.type),
-				risk,
-				riskSource: lastCheckpoint === undefined ? "pm-label" : "machine",
-				question: lastAssistantText,
-				harnessDetail,
-				taskDir,
-				taskPath,
-				taskContent,
-				trueRoot: meta.trueAgenticdocRoot,
-				keyDir: path.dirname(meta.agenticdocRoot),
-				policy,
-				runner: options?.dp3Runner,
+	async function receiptFor(
+		action: { id: string; meta: DecisionToolMeta },
+		verb: "continue" | "record",
+		result: string,
+	): Promise<void> {
+		const persisted = readRunState(taskDir) as WorkerRunState | undefined;
+		if (!persisted || persisted.run_id !== runState.run_id || persisted.owner_key !== runState.owner_key) return;
+		const observed = persisted.reachability;
+		const envelope = {
+			meta: action.meta,
+			decision_id: action.id,
+			dp: "dp-w-check-task",
+			task_after: {
+				status: persisted.status,
+				source: "agent-report" as const,
+				observed_at: new Date().toISOString(),
+				completed: observed ? [observed.completed] : null,
+				remaining: observed ? [observed.remaining] : null,
+				blockers: observed ? [observed.blockers] : null,
+			},
+		};
+		const withinBudget: LifecycleRunner = (request) => {
+			const remaining = startedAt + budgetMs - Date.now();
+			if (remaining <= 0) return Promise.resolve({ status: null, stdout: "", stderr: "", timedOut: true });
+			return (options?.reachabilityLifecycleRunner ?? runLifecycleMw)({
+				...request,
+				timeoutMs: Math.min(request.timeoutMs, remaining),
 			});
-			if (decision.kind === "answer" && decision.detail !== undefined) {
-				// FIX-J §5: which local candidate was consumed and from where. The frozen
-				// `[DECIDE]` row keeps its key order, so the detail rides its own line.
-				appendTrace(meta.taskKey, meta.agenticdocRoot, `[DECISION] dp3 detail=${decision.detail}`);
-			}
-			if (decision.kind === "handling") {
-				// T04/AC-006: the native `handling` choice is a RECEIPT for the asking
-				// agent, never an executed action. No steer is injected and no business
-				// step (narrow/split/kill/授权) is taken from a model selection; the
-				// question goes back to the worker/human with the chosen option traced.
-				dp3HumanClarifications += 1;
-				appendTrace(
-					meta.taskKey,
-					meta.agenticdocRoot,
-					formatDp3TraceLine({
-						triggerId,
-						sub: "3a",
-						acted: false,
-						mode: decision.mode,
-						escalatedReason: "-",
-						decisionId: decision.decisionId,
-						ncRaw: dp3RawClarifications,
-						ncHuman: dp3HumanClarifications,
-					}),
-				);
-				appendTrace(
-					meta.taskKey,
-					meta.agenticdocRoot,
-					`[DECISION] dp3 handling=${decision.option.id} label=${decision.option.label ?? "-"} ` +
-						`decision_id=${decision.decisionId} acted=0`,
-				);
-				return false;
-			}
-			if (decision.kind === "answer" && decision.mode === "auto") {
-				// D-041: adoption happens HERE, at the point that injects the steer.
-				// The child's own `acted` only says Python did not execute the action
-				// itself; the auto-answered clarification IS the consumed decision.
-				// `decision.mode` is Python's verdict on the spawned path (D-036).
-				const actedDecision = { ...decision, acted: true };
-				dp3AutoAnswered = true;
-				appendTrace(
-					meta.taskKey,
-					meta.agenticdocRoot,
-					formatDp3TraceLine({
-						triggerId,
-						sub: actedDecision.sub,
-						acted: actedDecision.acted === true,
-						mode: actedDecision.mode,
-						escalatedReason: "-",
-						decisionId: actedDecision.decisionId,
-						ncRaw: dp3RawClarifications,
-						ncHuman: dp3HumanClarifications,
-					}),
-				);
-				// Association marker (same shape dp2 uses): the one line a settle/
-				// report can correlate without parsing the frozen `[DECIDE]` row.
-				appendTrace(
-					meta.taskKey,
-					meta.agenticdocRoot,
-					`[DECISION] dp3 acted=1 decision_id=${actedDecision.decisionId}`,
-				);
-				// The steer carrier (design Q3): a settle-time follow-up turn, the same
-				// mechanism the recovery self-check uses. The original question is never
-				// rewritten and `## Questions` is not written at all yet.
-				pi.sendUserMessage(formatDp3AnswerSteer(actedDecision, lastAssistantText), { deliverAs: "followUp" });
-				return true;
-			}
-			// Every other outcome is the human path: 3b by default, `suggest` mode,
-			// low confidence, unavailable service, incomplete input, budget spent.
-			dp3HumanClarifications += 1;
-			appendTrace(
-				meta.taskKey,
-				meta.agenticdocRoot,
-				formatDp3TraceLine({
-					triggerId,
-					sub: decision.sub,
-					acted: false,
-					mode: decision.kind === "answer" ? decision.mode : policy.mode,
-					escalatedReason: decision.kind === "escalate" ? decision.reason : "-",
-					decisionId,
-					ncRaw: dp3RawClarifications,
-					ncHuman: dp3HumanClarifications,
-				}),
-			);
-			return false;
-		} catch {
-			// Structural fail-soft: a bug in the dp3 hook must never change the
-			// terminal verdict. The caller falls through to the original NC path.
-			return false;
-		}
+		};
+		const executed = await writeDecisionLifecycle(
+			controlRoot,
+			{ ...envelope, stage: "executed", event_id: `executed-${action.meta.logical_id}`, action: verb, result },
+			withinBudget,
+		);
+		appendTrace(
+			meta.taskKey,
+			meta.agenticdocRoot,
+			`[REACHABILITY] decision_id=${action.id} executed_receipt=${executed.status}`,
+		);
+		if (!executed.recorded) return;
+		const settled = await writeDecisionLifecycle(
+			controlRoot,
+			{
+				...envelope,
+				stage: "settled",
+				event_id: `settled-${action.meta.logical_id}`,
+				outcome: "ok",
+				reason: result,
+			},
+			withinBudget,
+		);
+		appendTrace(
+			meta.taskKey,
+			meta.agenticdocRoot,
+			`[REACHABILITY] decision_id=${action.id} settled_receipt=${settled.status}`,
+		);
 	}
+
+	function finishUnreachable(
+		id: string | null,
+		choice: "terminate" | "investigate" | null,
+		material: Record<string, unknown>,
+		reason: string,
+	): boolean {
+		if (taskDone) return false;
+		taskDone = true;
+		clearWatchdogTimers();
+		clearInterval(heartbeat);
+		const secrets = Object.keys(process.env).filter((name) =>
+			/(?:API_KEY|TOKEN|PASSWORD|SECRET|CREDENTIAL)$/i.test(name),
+		);
+		const text = (name: string) =>
+			typeof material[name] === "string" && String(material[name]).trim()
+				? redactSecrets(String(material[name]), secrets)
+				: "Not recorded";
+		runState.reachability = {
+			decision_id: id,
+			choice,
+			reason,
+			completed: text("completed"),
+			remaining: text("remaining"),
+			blockers: text("blockers"),
+			evidence: text("reachability_facts"),
+		};
+		process.exitCode = 1;
+		try {
+			writeOutputGuarded({
+				taskKey: meta.taskKey,
+				agenticdocRoot: meta.agenticdocRoot,
+				exitCode: 1,
+				summary: `Completed: ${runState.reachability.completed}\nRemaining: ${runState.reachability.remaining}\nBlockers: ${runState.reachability.blockers}\nEvidence: ${runState.reachability.evidence}`,
+				verificationSteps: runState.reachability.evidence,
+				exitReason: id ? `${reason} (${id})` : reason,
+				changedFiles: collectArtifacts(taskDir),
+			});
+			outputWritten = fs.readFileSync(path.join(taskDir, "output.md"), "utf8").includes(runMarker(runState));
+		} catch {
+			outputWritten = false;
+		}
+		if (!outputWritten) runState.reachability.reason += ". Worker terminal output unavailable";
+		try {
+			if (!outputWritten)
+				appendTrace(meta.taskKey, meta.agenticdocRoot, "[REACHABILITY] terminal output unavailable");
+			recordEnd(1);
+		} catch {
+			// A damaged trace or product must not strand a partially ended run.
+			finishRun("failed", 1);
+		}
+		const persisted = readRunState(taskDir) as WorkerRunState | undefined;
+		return (
+			outputWritten &&
+			persisted?.run_id === runState.run_id &&
+			persisted.status === "failed" &&
+			persisted.reachability?.decision_id === id
+		);
+	}
+
+	pi.on("tool_result", async (event, ctx) => {
+		if (taskDone) return;
+		if (event.isError) {
+			if (event.toolName === ASK_DECISION_TOOL && event.input.dp === "dp-w-check-task") {
+				blockedDecision = {
+					reason: "Worker reachability action blocked: decision tool error",
+					material: asPlainRecord(event.input.material) ?? {},
+				};
+			}
+			return;
+		}
+		const active = reachability;
+		if (event.toolName !== ASK_DECISION_TOOL) {
+			if (!active || !activeToolsForType(meta.type).includes(event.toolName)) return;
+			if (active.choice === "investigate") {
+				if (active.observed || active.blocked || event.toolName !== "read" || typeof event.input.path !== "string")
+					return;
+				let actual: string;
+				try {
+					actual = fs.realpathSync(path.resolve(ctx.cwd, event.input.path));
+				} catch {
+					return;
+				}
+				if (actual !== active.source || Date.now() - startedAt >= budgetMs) return;
+				active.observed = true;
+				await receiptFor(active, "record", "Read the prepared evidence_source with the existing read tool.");
+				return {
+					content: [
+						...event.content,
+						{
+							type: "text",
+							text: "The bounded read ended. Reassess reachability from the actual result and prepare a continue or terminate decision.",
+						},
+					],
+				};
+			}
+			reachability = undefined;
+			await receiptFor(
+				active,
+				"continue",
+				`Worker completed an authorized ${event.toolName} call after the decision.`,
+			);
+			return;
+		}
+		if (event.input.dp !== "dp-w-check-task") return;
+		const details = asPlainRecord(event.details);
+		const selection = asPlainRecord(details?.selection);
+		const choice = selection?.id;
+		const id = details?.decision_id;
+		const material = asPlainRecord(event.input.material);
+		if (details?.available !== true || details.mode !== "auto") {
+			const cause = typeof details?.unavailable === "string" ? details.unavailable : "advisory or invalid response";
+			blockedDecision = { reason: `Worker reachability action blocked: ${cause}`, material: material ?? {} };
+			return;
+		}
+		if (
+			details.acted !== false ||
+			typeof id !== "string" ||
+			!/^dp-w-check-task:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(id) ||
+			!material ||
+			(choice !== "continue" && choice !== "terminate" && choice !== "investigate")
+		) {
+			blockedDecision = {
+				reason: "Worker reachability action blocked: invalid decision binding",
+				material: material ?? {},
+			};
+			return;
+		}
+		blockedDecision = undefined;
+		const role = initiatorRoleFromWorkerTask(taskPath);
+		if (role === "unknown" || role === "pm") return;
+		const local: DecisionToolMeta = {
+			record_version: 2,
+			logical_id: id.slice("dp-w-check-task:".length),
+			key: runState.owner_key,
+			task_key: meta.taskKey,
+			initiator_role: role,
+			retry_of: null,
+			...(isTaskStateSnapshot(event.input.task_before) ? { task_before: event.input.task_before } : {}),
+		};
+		const decision = { id, meta: local };
+		appendTrace(meta.taskKey, meta.agenticdocRoot, `[REACHABILITY] decision_id=${id} choice=${choice}`);
+		if (choice === "terminate") {
+			reachability = undefined;
+			if (finishUnreachable(id, choice, material, "Worker cannot finish this run within its existing limits"))
+				await receiptFor(
+					decision,
+					"record",
+					"Persisted incomplete output.md and failed run.json for this worker run.",
+				);
+			ctx.abort();
+			ctx.shutdown();
+			return;
+		}
+		if (choice === "continue") {
+			reachability = { ...decision, choice, material, observed: false };
+			return;
+		}
+		const plan = asPlainRecord(material.investigation);
+		let source: string | undefined;
+		let blocked: string | undefined;
+		if (active?.choice === "investigate" && active.observed)
+			blocked = "The bounded investigation ended; only a fresh continue or terminate conclusion can follow.";
+		else if (
+			!plan ||
+			!["unknown", "evidence_source", "budget", "stop_condition"].every(
+				(field) => typeof plan[field] === "string" && String(plan[field]).trim(),
+			) ||
+			Date.now() - startedAt >= budgetMs
+		)
+			blocked = "Investigation requires a viable evidence_source, remaining budget and stop condition.";
+		else {
+			try {
+				const target = path.resolve(ctx.cwd, String(plan.evidence_source));
+				source = fs.realpathSync(target);
+				if (!fs.statSync(source).isFile() || !activeToolsForType(meta.type).includes("read")) throw new Error();
+				if (readScopeConfig) {
+					for (const candidate of [target, source])
+						if (!checkReadScopeCall(process.cwd(), readScopeConfig, readScopeState, "read", candidate).allowed)
+							throw new Error();
+				} else if (
+					![ctx.cwd, taskDir, process.cwd()].some((root) => isSameOrUnder(fs.realpathSync(root), source ?? ""))
+				)
+					throw new Error();
+			} catch {
+				blocked = "Investigation evidence_source is unavailable or outside this worker's read authority.";
+			}
+		}
+		reachability = { ...decision, choice, material, source, blocked, observed: false };
+		return {
+			content: [
+				...event.content,
+				{
+					type: "text",
+					text:
+						blocked ??
+						"Use the existing read tool on the prepared evidence_source, then reassess with the real result. The original deadline and permissions apply.",
+				},
+			],
+		};
+	});
 
 	/** Success path. Does NOT process.exit: this handler runs inside pi's
 	 * agent_settled emit — returning lets pi's print mode resolve, print the
@@ -4346,8 +4523,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		// AC-010②: a second settle in the same process is a no-op — without this the
 		// append-only writer (output-writer.ts D-117) adds a second harness block,
 		// a second `[END]` and (for an NC run) a second no-product alarm.
-		// The terminal lock itself is taken LOWER DOWN, after the dp3 clarification
-		// hook: an auto-answered NC must return with the run still open (T-06).
+		// The terminal lock is taken after the existing narrow-steer check.
 		if (taskDone) return;
 		// dp2 narrow steer (T-07b): a request that arrived while this turn was
 		// running is consumed HERE, before the terminal write-out. It is injected as
@@ -4464,17 +4640,12 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				? undefined
 				: `recovery-incomplete: ${gapsReason}`
 			: `no-product: ${evidence.detail}`;
-		// ── dp3 clarification substitution (mw-decision-substitution T-06) ──────
-		// The ONLY insertion point (design Q1.2): every dp3 input is in scope here
-		// (`evidence`, `gaps`, `lastAssistantText`), the NC product is NOT written
-		// yet, the terminal run record is not committed, and this process can still
-		// continue the same run. An auto-answer returns WITHOUT closing the run:
-		// `taskDone` stays false and the watchdog/heartbeat timers stay armed, so the
-		// next settle re-judges the same predicates and only the human path (or a
-		// delivered product) commits a terminal state.
-		if (exitCode === 2 && attemptDp3Clarification([evidence.detail, gapsReason].filter((p) => p !== "").join("; "))) {
-			return;
-		}
+		if (exitCode === 2)
+			appendTrace(
+				meta.taskKey,
+				meta.agenticdocRoot,
+				"[REACHABILITY] No agent-prepared decision; preserving the actual incomplete worker result.",
+			);
 		// Terminal from here on: take the lock, stop the liveness timers and land
 		// the single write-out exactly as before (byte-identical when dp3 is off).
 		taskDone = true;
@@ -4739,6 +4910,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				contextTerminalExit(lastContextPolicyCode);
 				return;
 			}
+
 			// Model-error branch (design §3.1 / D1/D3/D4, revised 2026-10-15): an error
 			// settle must never advance the phase machine or reach the success path
 			// (AC-003), so it sits ahead of EVERY initialSettled / phase /
@@ -4763,6 +4935,19 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				// boundary can never be counted twice.
 				lastErrorInfo = undefined;
 				modelExhaustedExit(lastErrorText);
+				return;
+			}
+			if (blockedDecision) {
+				finishUnreachable(null, null, blockedDecision.material, blockedDecision.reason);
+				return;
+			}
+			if (reachability?.choice === "investigate") {
+				finishUnreachable(
+					reachability.id,
+					"investigate",
+					reachability.material,
+					reachability.blocked ?? "Bounded investigation ended without a valid follow-up conclusion",
+				);
 				return;
 			}
 			if (!initialSettled) {
@@ -4952,6 +5137,15 @@ type WorkerRunState = RunState & {
 	context_policy_code?: string;
 	context_policy_details?: Record<string, unknown>;
 	aborted?: boolean;
+	reachability?: {
+		decision_id: string | null;
+		choice: "terminate" | "investigate" | null;
+		reason: string;
+		completed: string;
+		remaining: string;
+		blockers: string;
+		evidence: string;
+	};
 };
 
 /** `PI_WORKER_TRIED_MODELS` csv -> ordered, deduped model labels

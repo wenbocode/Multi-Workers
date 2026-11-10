@@ -56,6 +56,7 @@ import decide_archive
 import decision_book
 import decision_history
 import decision_monitor
+import decision_points
 import decision_wire as wire
 import mw_common
 
@@ -131,18 +132,29 @@ def _hold_isolated_block(size: int = 100) -> tuple[int, list[socket.socket]]:
     pytest.skip(f"no isolated {size}-port block was free; occupiers left untouched: {rejected}")
 
 
-def _book(dp: str = "dp1-dispatch-type", state: dict | None = None) -> dict:
-    """A decision-book-shaped payload (the provider still owns ``check_book``)."""
-    fields: dict[str, object] = {
+def _book(dp: str = "dp-w-type", material: dict | None = None, **extra: object) -> dict:
+    """A schema-3 decision-book-shaped payload (the provider owns ``check_book``).
+
+    The monitor seam only scans the *structure* for execution/authorization key
+    names; the injected spy provider never validates material, so these books
+    carry the business layer without a full preparation catalogue.
+    """
+    book: dict[str, object] = {
         "schema_version": decision_book.BOOK_SCHEMA_VERSION,
         "decision_point": dp,
+        "material": {
+            "task_goal": "deliver the observed scenario with zero production writes",
+            "task_requirements": "one explicit observe-only request",
+            "task_deliverables": "report.md",
+            **(material or {}),
+        },
+        "preparation": {
+            "basis_catalog": [],
+            "prepared_at": "2026-11-01T00:00:00+00:00",
+        },
     }
-    fields.update(state or {})
-    return {
-        "schema_version": decision_book.BOOK_SCHEMA_VERSION,
-        "decision_point": dp,
-        "state": fields,
-    }
+    book.update(extra)
+    return book
 
 
 def _publish_stale(root: pathlib.Path, port: int, *, instance_id: str = "stale-instance-001") -> dict:
@@ -785,7 +797,7 @@ def test_sec_fetch_site_closed_set_and_origin_rules(tmp_path):
             "POST",
             "/api/test/scaffold",
             token=page_token,
-            body={"dp": "dp1-dispatch-type"},
+            body={"dp": "dp-w-type"},
         )
         assert status == 403
         assert _envelope_error(payload)["code"] == "origin-not-allowed"
@@ -1110,14 +1122,14 @@ def test_playground_routes_are_unavailable_without_a_provider(tmp_path):
     with _running(root, deps=decision_monitor.MonitorDeps(redactor=REDACTOR)) as instance:
         page_token = _page_token(instance)
         requests = [
-            ("POST", "/api/test/scaffold", {"dp": "dp1-dispatch-type"}),
-            ("POST", "/api/test/validate", {"dp": "dp1-dispatch-type", "book": {"dp": "dp1-dispatch-type"}}),
+            ("POST", "/api/test/scaffold", {"dp": "dp-w-type"}),
+            ("POST", "/api/test/validate", {"dp": "dp-w-type", "book": _book()}),
             (
                 "POST",
                 "/api/test/submit",
                 {
-                    "dp": "dp1-dispatch-type",
-                    "book": {"dp": "dp1-dispatch-type"},
+                    "dp": "dp-w-type",
+                    "book": _book(),
                     "submit_id": "sub-1",
                     "observe_only": True,
                 },
@@ -1154,8 +1166,8 @@ def test_playground_requires_the_redactor_before_any_provider_call(tmp_path):
             token=page_token,
             origin=instance.origin,
             body={
-                "dp": "dp1-dispatch-type",
-                "book": {"dp": "dp1-dispatch-type"},
+                "dp": "dp-w-type",
+                "book": _book(),
                 "submit_id": "sub-1",
                 "observe_only": True,
             },
@@ -1177,7 +1189,7 @@ def test_submit_is_closed_set_and_refuses_execution_or_authorization_fields(tmp_
     with _running(root, deps=deps) as instance:
         page_token = _page_token(instance)
         base = {
-            "dp": "dp1-dispatch-type",
+            "dp": "dp-w-type",
             "book": _book(),
             "submit_id": "sub-1",
             "observe_only": True,
@@ -1256,8 +1268,8 @@ def test_submit_refuses_nested_execution_fields_before_any_provider_call(tmp_pat
     spy = _SpyPlayground()
     deps = decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy)
     smuggled = {
-        "state field": _book(state={"act": "apply"}),
-        "deep state field": _book(state={"nested": {"authorization": "grant"}}),
+        "material field": _book(material={"act": "apply"}),
+        "deep material field": _book(material={"nested": {"authorization": "grant"}}),
         "context slot": {**_book(), "context": {"command": "rm -rf /"}},
         "envelope": {**_book(), "executor": "spawn"},
     }
@@ -1271,7 +1283,7 @@ def test_submit_refuses_nested_execution_fields_before_any_provider_call(tmp_pat
                 token=page_token,
                 origin=instance.origin,
                 body={
-                    "dp": "dp1-dispatch-type",
+                    "dp": "dp-w-type",
                     "book": book,
                     "submit_id": "sub-nested",
                     "observe_only": True,
@@ -1283,22 +1295,58 @@ def test_submit_refuses_nested_execution_fields_before_any_provider_call(tmp_pat
 
 
 def test_submit_accepts_registered_typed_fields_whose_names_look_forbidden(tmp_path):
-    """No blind recursion: dp12 action.command / dp24 project.path are real fields."""
+    """No blind recursion/substring match: real typed fields may be named like
+    the execution vocabulary (the gate's ``pm_note.basis.authority``, the auto
+    entry's prepared candidate objects)."""
     root = _root(tmp_path)
     spy = _SpyPlayground()
     deps = decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy)
+    gate_material = {
+        "gate_background": "a bounded stage close needs one gate answer",
+        "current_state": "the stage is ready and no action was executed",
+        "condition_evidence": ["cmd: true"],
+        "pm_note": {
+            "subject": "close stage S1",
+            "planned_action": "record the stage close only",
+            "basis": {
+                "goal": "goal.md requires the stage close",
+                "evidence": "evidence/report.md:1",
+                "budget": "25 minutes remain",
+                "authority": "the key's worker write face only",
+            },
+        },
+    }
+    auto_material = {
+        "question": "which bounded next step should close the gap?",
+        "background": {
+            "task_goal": "deliver the observed flow",
+            "current_state": "the projection is missing one field",
+            "tried": "wired the field once and reverted a default",
+            "unknowns": "whether the field exists upstream",
+            "constraints": "no production write",
+        },
+        "handling_options": [
+            {
+                "id": "wire-now",
+                "label": "wire the field now",
+                "description": "add the missing field to the list projection",
+                "consequence": "the gap closes now",
+                "risk": "low, read-only display",
+                "conditions": "the field exists upstream",
+            },
+            {
+                "id": "escalate",
+                "label": "ask the human",
+                "description": "confirm the order before any write",
+                "consequence": "the round pauses",
+                "risk": "low",
+                "conditions": "the order really needs a human",
+            },
+        ],
+    }
     books = [
-        (
-            "dp12-destructive",
-            _book(
-                "dp12-destructive",
-                {"action.command": "rm -rf build", "action.targets": ["build"]},
-            ),
-        ),
-        (
-            "dp24-pi-trust",
-            _book("dp24-pi-trust", {"project.path": "/repo", "project.trust_state": "trusted"}),
-        ),
+        ("dp-gate-approve", _book("dp-gate-approve", gate_material)),
+        ("dp-auto", _book("dp-auto", auto_material)),
     ]
     with _running(root, deps=deps) as instance:
         page_token = _page_token(instance)
@@ -1320,8 +1368,25 @@ def test_submit_accepts_registered_typed_fields_whose_names_look_forbidden(tmp_p
             assert payload["ok"] is True, (dp, payload)
         assert [call[0] for call in spy.calls] == ["submit", "submit"]
 
-        # The removed free-object subtree is refused before any provider call:
-        # dp1 no longer declares ``history``, so it is not a registered field.
+        # An undeclared subtree key that *is* the execution vocabulary is still
+        # refused before any provider call.
+        status, _headers, payload, _raw = _http(
+            instance.port,
+            "POST",
+            "/api/test/submit",
+            token=page_token,
+            origin=instance.origin,
+            body={
+                "dp": "dp-w-type",
+                "book": _book(material={"history": {"command": "archived", "exec": 1}}),
+                "submit_id": "sub-removed-subtree",
+                "observe_only": True,
+            },
+        )
+        assert status == 400, payload
+        assert payload["error"]["code"] == "forbidden-field"
+
+        # A retired id is an explicit refusal with no provider call and no alias.
         status, _headers, payload, _raw = _http(
             instance.port,
             "POST",
@@ -1330,13 +1395,13 @@ def test_submit_accepts_registered_typed_fields_whose_names_look_forbidden(tmp_p
             origin=instance.origin,
             body={
                 "dp": "dp1-dispatch-type",
-                "book": _book("dp1-dispatch-type", {"history": {"command": "archived", "exec": 1}}),
-                "submit_id": "sub-removed-subtree",
+                "book": _book("dp1-dispatch-type"),
+                "submit_id": "sub-retired",
                 "observe_only": True,
             },
         )
         assert status == 400, payload
-        assert payload["error"]["code"] == "forbidden-field"
+        assert payload["error"]["code"] == "retired-dp"
         assert len(spy.calls) == 2, "a refused book never reaches the provider"
 
 
@@ -1391,7 +1456,7 @@ def test_passive_routes_never_reach_submit(tmp_path):
             "/api/test/scaffold",
             token=page_token,
             origin=instance.origin,
-            body={"dp": "dp1-dispatch-type"},
+            body={"dp": "dp-w-type"},
         )
         _http(
             instance.port,
@@ -1399,7 +1464,7 @@ def test_passive_routes_never_reach_submit(tmp_path):
             "/api/test/validate",
             token=page_token,
             origin=instance.origin,
-            body={"dp": "dp1-dispatch-type", "book": {"dp": "dp1-dispatch-type"}},
+            body={"dp": "dp-w-type", "book": _book()},
         )
         names = [call[0] for call in spy.calls]
         assert "submit" not in names
@@ -1429,16 +1494,16 @@ def test_the_questions_field_is_optional_and_forwarded_verbatim(tmp_path):
             token=page_token,
             origin=instance.origin,
             body={
-                "dp": "dp1-dispatch-type",
-                "book": {"dp": "dp1-dispatch-type"},
+                "dp": "dp-w-type",
+                "book": _book(),
                 "questions": questions,
             },
         )
         assert status == 200, payload
         assert spy.calls[-1] == (
             "validate",
-            "dp1-dispatch-type",
-            {"dp": "dp1-dispatch-type"},
+            "dp-w-type",
+            _book(),
             questions,
         )
         # Without the field the provider keeps its previous two-argument call.
@@ -1448,10 +1513,10 @@ def test_the_questions_field_is_optional_and_forwarded_verbatim(tmp_path):
             "/api/test/validate",
             token=page_token,
             origin=instance.origin,
-            body={"dp": "dp1-dispatch-type", "book": {"dp": "dp1-dispatch-type"}},
+            body={"dp": "dp-w-type", "book": _book()},
         )
         assert status == 200, payload
-        assert spy.calls[-1] == ("validate", "dp1-dispatch-type", {"dp": "dp1-dispatch-type"})
+        assert spy.calls[-1] == ("validate", "dp-w-type", _book())
 
 
 def test_a_forbidden_key_inside_questions_is_refused_before_the_provider(tmp_path):
@@ -1467,8 +1532,8 @@ def test_a_forbidden_key_inside_questions_is_refused_before_the_provider(tmp_pat
             token=page_token,
             origin=instance.origin,
             body={
-                "dp": "dp1-dispatch-type",
-                "book": {"dp": "dp1-dispatch-type"},
+                "dp": "dp-w-type",
+                "book": _book(),
                 "questions": {"triage_type": {"authority": "binding"}},
             },
         )
@@ -1482,14 +1547,16 @@ def test_the_case_shell_requires_the_native_questions(tmp_path):
     cases = tmp_path / "cases"
     cases.mkdir()
     shipped = json.loads(
-        (pathlib.Path(decision_monitor.DECIDE_CASES_DIR) / "dp1.json").read_text(encoding="utf-8")
+        (pathlib.Path(decision_monitor.DECIDE_CASES_DIR) / "dp-w-type.json").read_text(
+            encoding="utf-8"
+        )
     )
     shipped.pop("questions")
-    (cases / "dp1.json").write_text(
+    (cases / "dp-w-type.json").write_text(
         json.dumps(shipped, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     with pytest.raises(decision_monitor.CaseError) as excinfo:
-        decision_monitor.load_case("dp1-dispatch-type", cases_dir=cases)
+        decision_monitor.load_case("dp-w-type", cases_dir=cases)
     assert excinfo.value.kind == "case-invalid"
     assert "questions" in str(excinfo.value)
 
@@ -1503,15 +1570,86 @@ def test_dps_route_is_read_only_registry_and_authorization(tmp_path):
         )
         assert status == 200
         data = payload["data"]
-        assert len(data["points"]) == 25
-        assert {point["id"] for point in data["points"]} >= {
-            "dp1-dispatch-type",
-            "dp25-signoff-conclusion",
+        assert len(data["points"]) == 8
+        assert data["callable_count"] == 8
+        assert [point["id"] for point in data["points"]] == list(
+            decision_points.ACTIVE_DP_IDS
+        )
+        retired = data["retired"]
+        assert len(retired) == 25
+        assert {entry["id"] for entry in retired} == set(decision_points.RETIRED_DP_IDS)
+        assert not {entry["id"] for entry in retired} & {
+            point["id"] for point in data["points"]
         }
+        for entry in retired:
+            assert entry["disposition"] in ("migrated", "retired")
+            assert "migrated_to" in entry
+        assert data["projection"]["points_source"]
+        assert "decide_registry.json" in data["projection"]["generated_snapshot"]
         first = data["points"][0]
         for name in ("tier", "enabled", "mode", "config_source"):
             assert name in first
         assert data["transport"]["state"] == "unknown"
+
+
+def test_every_retired_id_is_refused_at_every_entry_with_zero_provider_calls(tmp_path):
+    """AC-002/AC-003: the 25 old ids are explicit refusals, never an alias.
+
+    Every runtime entry (scaffold / validate / submit / case filter) refuses a
+    retired id before any provider is consulted; the case menu keeps the eight
+    active ids and explains the four legacy files read-only.
+    """
+    root = _root(tmp_path)
+    spy = _SpyPlayground()
+    deps = decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy)
+    retired_ids = sorted(decision_points.RETIRED_DP_IDS)
+    assert len(retired_ids) == 25
+    with _running(root, deps=deps) as instance:
+        page_token = _page_token(instance)
+        status, _headers, payload, _raw = _http(
+            instance.port, "GET", "/api/test/cases", token=page_token
+        )
+        assert status == 200, payload
+        menu = {case["dp"] for case in payload["data"]["cases"]}
+        assert menu == set(decision_monitor.CASE_IDS)
+        assert menu == set(decision_points.ACTIVE_DP_IDS)
+        assert not menu & set(retired_ids)
+
+        for dp in retired_ids:
+            for path, body in (
+                ("/api/test/scaffold", {"dp": dp}),
+                ("/api/test/validate", {"dp": dp, "book": _book(dp)}),
+                (
+                    "/api/test/submit",
+                    {
+                        "dp": dp,
+                        "book": _book(dp),
+                        "submit_id": "sub-retired",
+                        "observe_only": True,
+                    },
+                ),
+            ):
+                status, _headers, payload, _raw = _http(
+                    instance.port,
+                    "POST",
+                    path,
+                    token=page_token,
+                    origin=instance.origin,
+                    body=body,
+                )
+                assert status == 400, (dp, path, payload)
+                assert _envelope_error(payload)["code"] == "retired-dp", (dp, path, payload)
+            status, _headers, payload, _raw = _http(
+                instance.port, "GET", "/api/test/cases?dp=" + dp, token=page_token
+            )
+            assert status == 400, (dp, payload)
+            # The case menu only knows the four legacy *case* files; any other
+            # retired dp is simply not a case filter (both are explicit refusals).
+            expected = (
+                "case-retired" if dp in decision_monitor.LEGACY_CASE_IDS else "invalid-filter"
+            )
+            assert _envelope_error(payload)["code"] == expected, (dp, payload)
+        assert spy.calls == [], "a retired id never reaches the provider"
 
 
 # ---------------------------------------------------------------------------

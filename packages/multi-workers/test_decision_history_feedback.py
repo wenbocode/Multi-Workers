@@ -16,20 +16,28 @@ import test_decision_dashboard_assets as assets
 
 _isolated_environment = ui._isolated_environment
 
+#: T20's record shape is one entry with one business choice; the writer chain only
+#: accepts an active entry now, and a retired id must not be re-enabled as an
+#: alias (T27). The assertions here are about the projection, not the old id, so
+#: the fixture uses the active ``dp-w-type`` entry (its own ``triage_type``
+#: question, whose choices include ``research``). A retired ``dp1-dispatch-type``
+#: record is covered read-only by test_dp_consolidation_history.py.
+DP = "dp-w-type"
+
 
 def _record(tmp_path):
     root = backend._root(tmp_path)
     store = backend._store(root)
     meta = backend._meta()
-    decision_id = backend._append_archive(root, dp=backend.DP1, trigger_id="t20",
+    decision_id = backend._append_archive(root, dp=DP, trigger_id="t20",
         authority="advisory", escalated_reason=None, confidence=0.94)
     lifecycle.record_start(store, meta, decision_id=decision_id)
     lifecycle.record_consumed(store, meta, decision_id=decision_id, answer="research", reason="PM received the suggestion")
     lifecycle.record_executed(store, meta, decision_id=decision_id, action="type-read",
         result="kept-type:research", reason="explicit role retained")
     lifecycle.record_settled(store, meta, decision_id=decision_id, outcome="ok", reason="dispatch round finished")
-    backend._add_call(root, decision_id=decision_id, dp=backend.DP1, confidence=0.94)
-    backend._add_decision_end(root, decision_id=decision_id, dp=backend.DP1,
+    backend._add_call(root, decision_id=decision_id, dp=DP, confidence=0.94)
+    backend._add_decision_end(root, decision_id=decision_id, dp=DP,
         status="suggested", escalated_reason=None, mode="suggest", intent="answer")
     snapshot = history.load_history(root, redact=wire.SubstringRedactor((backend.SECRET,)))
     record = next(r for r in snapshot.records if r.decision_id == decision_id)

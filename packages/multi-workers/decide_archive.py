@@ -827,6 +827,20 @@ class FoldResult:
     stats: FoldStats = field(default_factory=FoldStats)
 
 
+def require_authority_change(row: object) -> Mapping:
+    """Typed consumer guard: only a ``kind=authority-change`` row passes.
+
+    A key-signoff result (or any other decision archive product) is a different
+    contract and must never be consumed as an authority change, and vice versa
+    (``decision_signoff_result.validate_key_signoff`` refuses this kind).
+    """
+    if not isinstance(row, Mapping) or row.get("kind") != "authority-change":
+        raise DecisionArchiveError(
+            "row is not an authority-change product"
+        )
+    return row
+
+
 def _coerce_fold_row(raw: object) -> tuple[dict | None, str]:
     """Normalise one fold input row: ``(row, status)`` with parsed/unparsable/non_dict."""
     if isinstance(raw, Mapping):

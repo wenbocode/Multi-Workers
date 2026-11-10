@@ -21,6 +21,8 @@ from __future__ import annotations
 import argparse
 import copy
 from collections.abc import Mapping
+import ctypes
+from ctypes import wintypes
 import hashlib
 import json
 import os
@@ -28,6 +30,7 @@ import pathlib
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -44,12 +47,16 @@ import decide_signoff
 import decision_book
 import decision
 import decision_backends
+import decision_context
 import decision_lifecycle
 import decision_monitor
 import decision_points
+import decision_policy
 import decision_signoff_result
 import decision_wire
 import mw_common
+import operator_authority
+import operator_host
 import rag_templates
 import thinking_config
 import usage
@@ -61,9 +68,11 @@ from mw_common import (
 from autopilot import dispatch as dispatch_module
 from autopilot import config as _ap_config
 from autopilot import conductor as _ap_conductor
+from autopilot import decision_recovery as _ap_recovery
 from autopilot import contract_guard
 from autopilot import review_split as _review_split_module
 from autopilot import roadmap as _ap_roadmap
+from autopilot import state as mw_state
 from autopilot import timeline as _ap_timeline
 
 _SCRIPT_DIR = pathlib.Path(__file__).parent
@@ -958,6 +967,273 @@ def _decide_read_envelope_json(args: argparse.Namespace) -> tuple[dict | None, s
     return payload, None
 
 
+#: The production (T11/T23) prepared-request envelope: exactly these keys.
+_DECIDE_PREPARED_KEYS: tuple[str, ...] = (
+    "material",
+    "preparation",
+    "meta",
+    "context",
+    "parent_decision_ref",
+)
+
+
+#: The lifecycle records a Worker's own card type; the protocol entry gate uses
+#: the coarse ``worker`` role. The mapping is eligibility-only (never a grant).
+_WORKER_CARD_ROLES: tuple[str, ...] = ("coding", "research", "review")
+
+
+def _decide_protocol_actor_role(initiator_role: object) -> object:
+    """Map the real initiating role onto the entry protocol's actor role."""
+    if initiator_role == "pm":
+        return "pm"
+    if initiator_role in _WORKER_CARD_ROLES:
+        return "worker"
+    return initiator_role
+
+
+def _decide_worker_card_role(card_type: object) -> str | None:
+    """Normalise one card header type onto the lifecycle role vocabulary.
+
+    The three lifecycle card roles stay as-is. A registered autopilot dispatch
+    type (``autopilot.dispatch.REGISTRY``) mirrors the TS ``dp3TaskType`` /
+    ``hasWriteTools`` mapping: any ``write``/``edit`` tool means ``coding``,
+    otherwise ``research``. Unknown, ``fallback``, ``pm`` and retired/renamed
+    types resolve to ``None`` (no fallback bucket, no alias).
+    """
+    if not isinstance(card_type, str):
+        return None
+    if card_type in _WORKER_CARD_ROLES:
+        return card_type
+    entry = dispatch_module.REGISTRY.get(card_type)
+    if entry is None:
+        return None
+    tools = entry.tools
+    return "coding" if "write" in tools or "edit" in tools else "research"
+
+
+def _decide_parent_pid(pid: int) -> int | None:
+    """Best-effort OS parent of one PID (``None`` when it cannot be proven)."""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    if os.name != "nt":
+        try:
+            stat = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        close = stat.rfind(")")
+        if close < 0:
+            return None
+        fields = stat[close + 1:].split()
+        if len(fields) < 2:
+            return None
+        try:
+            parent = int(fields[1])
+        except ValueError:
+            return None
+        return parent if parent > 0 else None
+
+    class _ProcessEntry32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_void_p),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        kernel32.Process32FirstW.restype = wintypes.BOOL
+        kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry32)]
+        kernel32.Process32NextW.restype = wintypes.BOOL
+        kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry32)]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)  # TH32CS_SNAPPROCESS
+        if snapshot in (None, wintypes.HANDLE(-1).value):
+            return None
+        try:
+            entry = _ProcessEntry32()
+            entry.dwSize = ctypes.sizeof(_ProcessEntry32)
+            if not kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+                return None
+            while True:
+                if entry.th32ProcessID == pid:
+                    parent = int(entry.th32ParentProcessID)
+                    return parent if parent > 0 else None
+                if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                    return None
+        finally:
+            kernel32.CloseHandle(snapshot)
+    except (OSError, AttributeError):
+        return None
+
+
+def _decide_process_chain(pid: int, limit: int = 8) -> list[int]:
+    """The PID plus its live parent chain (bounded; never loops)."""
+    chain = [pid]
+    current = pid
+    for _ in range(limit):
+        parent = _decide_parent_pid(current)
+        if parent is None or parent in chain:
+            break
+        chain.append(parent)
+        current = parent
+    return chain
+
+
+def _decide_worker_binding(
+    project_dir: pathlib.Path, meta: object
+) -> tuple[str | None, str | None, str | None]:
+    """Prove a Worker caller from its real run, queue row and task card.
+
+    ``PI_WORKER_TASK`` only locates the card: the owner key/task key must match
+    the submitted meta, the card's header type must be the submitted role, the
+    worker-written ``run.json`` must belong to this exact live process (or an
+    ancestor) and the production queue row must agree. Any missing or foreign
+    fact refuses; the environment value alone never grants a role.
+    """
+    raw = os.environ.get("PI_WORKER_TASK") or ""
+    if not raw.strip():
+        return None, "actor-unbound", "the caller has no worker task binding"
+    task_md = pathlib.Path(raw.strip())
+    try:
+        task_md = task_md.resolve()
+    except OSError:
+        return None, "actor-unbound", "PI_WORKER_TASK cannot be resolved"
+    root = pathlib.Path(project_dir).resolve()
+    agenticdoc = root / ".agenticdoc"
+    if (
+        task_md.name != "task.md"
+        or not task_md.is_file()
+        or task_md.parent.parent.name != "workers"
+        or not task_md.is_relative_to(agenticdoc)
+    ):
+        return None, "actor-unbound", (
+            "PI_WORKER_TASK does not name .agenticdoc/<key>/workers/<task>/task.md "
+            "inside this project"
+        )
+    task_dir = task_md.parent
+    task_key = task_dir.name
+    owner_key = task_dir.parent.parent.name
+    meta_key = getattr(meta, "key", None)
+    meta_task = getattr(meta, "task_key", None)
+    if meta_key != owner_key or meta_task != task_key:
+        return None, "actor-unbound", (
+            "the submitted key/task does not belong to the real worker run "
+            "(owner/task mismatch)"
+        )
+    try:
+        reading = mw_common.read_task_type(task_md.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return None, "actor-unbound", "the worker task card is unreadable"
+    if reading.source != "header":
+        return None, "actor-unbound", "the worker task card has no header type"
+    role = _decide_worker_card_role(reading.type)
+    if role is None:
+        return None, "actor-unbound", (
+            "the worker task card header type is not a lifecycle role or a "
+            "registered framework dispatch type"
+        )
+    try:
+        run = json.loads((task_dir / "run.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, "actor-unbound", "the worker run.json is missing or unreadable"
+    if not isinstance(run, dict):
+        return None, "actor-unbound", "the worker run.json is not an object"
+    if run.get("owner_key") != owner_key or run.get("task_key") != task_key:
+        return None, "actor-unbound", "the worker run.json names another key/task"
+    if run.get("status") != "running":
+        return None, "actor-unbound", (
+            "the worker run is not running (run.json status is not 'running')"
+        )
+    pid = run.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None, "actor-unbound", "the worker run.json has no real process identity"
+    chain = _decide_process_chain(os.getpid())
+    if pid not in chain:
+        return None, "actor-unbound", (
+            "the worker run PID is neither this process nor one of its live ancestors"
+        )
+    if not mw_common._is_alive(pid):  # noqa: SLF001 - the shared liveness probe
+        return None, "actor-unbound", "the worker run PID is not alive"
+    rows = mw_common.parse_workers_file(mw_common.workers_path(project_dir))
+    expected = os.path.normcase(os.path.normpath(str(task_md)))
+    matching = [
+        row
+        for row in rows
+        if row.get("task_key") == task_key
+        and row.get("status") == "running"
+        and os.path.normcase(
+            os.path.normpath(str(pathlib.Path(str(row.get("task_path") or "")).resolve()))
+        )
+        == expected
+    ]
+    if not matching:
+        return None, "actor-unbound", (
+            "the production worker queue has no running row for this exact task"
+        )
+    return role, None, None
+
+
+def _decide_pm_binding(
+    project_dir: pathlib.Path, meta: object
+) -> tuple[str | None, str | None, str | None]:
+    """Prove the PM caller from one active key row and its live claim."""
+    key = getattr(meta, "key", None)
+    if not isinstance(key, str) or not key:
+        return None, "actor-unbound", "the submitted meta has no key"
+    rows = [row for row in mw_state.read_index(project_dir) if row.get("key") == key]
+    if len(rows) != 1:
+        return None, "actor-unbound", "the key is not unique in _index.parallel"
+    if rows[0].get("status") != "active":
+        return None, "actor-unbound", "the key row is not active"
+    claim_id = rows[0].get("claim_id") or ""
+    synthetic = mw_common.parse_synthetic_claim(claim_id)
+    identity = f"{synthetic[0]}:{synthetic[1]}" if synthetic else claim_id
+    host = socket.gethostname()
+    local = {f"{host}:{os.getpid()}", f"{host}:{os.getppid()}"}
+    if identity not in local:
+        return None, "actor-unbound", (
+            "the live claim does not belong to this process or its direct parent bridge"
+        )
+    if mw_state.claim_state(claim_id) != mw_state.CLAIM_LIVE:
+        return None, "actor-unbound", "the key claim is not live on this host"
+    return "pm", None, None
+
+
+def _decide_actor_binding(
+    project_dir: pathlib.Path, meta: object
+) -> tuple[str | None, str | None, str | None]:
+    """Identify the real initiating role of this process, never from JSON.
+
+    A present ``PI_WORKER_TASK`` is a worker context claim: if it does not
+    prove the worker, dropping the flag is not a way to become the PM. Without
+    it, the PM must own the unique active key claim itself or through its
+    direct parent bridge. The returned role is compared with the submitted
+    meta by the caller; a mismatch is a refusal, never a grant.
+    """
+    if (os.environ.get("PI_WORKER_TASK") or "").strip():
+        role, reason, detail = _decide_worker_binding(project_dir, meta)
+    else:
+        role, reason, detail = _decide_pm_binding(project_dir, meta)
+    if role is None:
+        return None, reason, detail
+    submitted = getattr(meta, "initiator_role", None)
+    if submitted != role:
+        return None, "role-forbidden", (
+            f"the submitted initiator_role {submitted!r} does not match the real "
+            f"process role {role!r}"
+        )
+    return role, None, None
+
+
 def _decide_meta_from_payload(raw: object) -> tuple[object | None, str | None]:
     """Validate the local meta of one versioned record (no defaulting to PM).
 
@@ -1009,6 +1285,237 @@ def _decide_envelope(
     return dict(material), meta, None
 
 
+def _decide_prepared_envelope(
+    payload: dict,
+) -> tuple[
+    dict | None,
+    dict | None,
+    object | None,
+    dict | None,
+    str | None,
+    str | None,
+]:
+    """Read the T11/T23 ``{material, preparation, meta, context?, parent}`` envelope.
+
+    The prepared request has three sendable layers (business material, PM
+    preparation) plus two local-only facts (meta, parent reference) and the
+    optional engineered context. Unknown keys are refused instead of ignored,
+    so an extra path cannot ride along as a second business surface.
+    """
+    unknown = [name for name in payload if name not in _DECIDE_PREPARED_KEYS]
+    if unknown:
+        return None, None, None, None, None, f"envelope carries {len(unknown)} unknown key(s)"
+    missing = [name for name in ("material", "preparation", "meta") if name not in payload]
+    if missing:
+        return None, None, None, None, None, (
+            f"envelope requires {', '.join(missing)} (a prepared request carries "
+            "material, preparation and meta)"
+        )
+    material = payload["material"]
+    if not isinstance(material, dict):
+        return None, None, None, None, None, "envelope.material must be a JSON object"
+    preparation = payload["preparation"]
+    if not isinstance(preparation, dict):
+        return None, None, None, None, None, "envelope.preparation must be a JSON object"
+    meta, err = _decide_meta_from_payload(payload["meta"])
+    if err:
+        return None, None, None, None, None, err
+    context = payload.get("context")
+    if context is not None and not isinstance(context, dict):
+        return None, None, None, None, None, "envelope.context must be a JSON object"
+    parent_ref = payload.get("parent_decision_ref")
+    if parent_ref is not None:
+        if not isinstance(parent_ref, str) or not parent_ref.strip():
+            return None, None, None, None, None, (
+                "envelope.parent_decision_ref must be a non-empty string"
+            )
+        if any(char in parent_ref for char in "\r\n\x00"):
+            return None, None, None, None, None, (
+                "envelope.parent_decision_ref carries a control character"
+            )
+        parent_ref = parent_ref.strip()
+    return dict(material), dict(preparation), meta, context, parent_ref, None
+
+
+def _decide_meta_from_book_local(
+    local: object,
+) -> tuple[object | None, str | None]:
+    """Map the book's local ``meta`` (actor_role) onto the lifecycle meta.
+
+    The book's meta is optional in the file format, but a real request needs the
+    logical id/key/role: without them the CLI cannot mint a versioned record and
+    must refuse instead of inventing an identity for the PM.
+    """
+    if not isinstance(local, dict):
+        return None, "book meta must be a JSON object to submit a real request"
+    role = local.get("actor_role") or "unknown"
+    if role == "worker":
+        return None, (
+            "book meta actor_role 'worker' cannot prove the worker's own card "
+            "type; a Worker submits the host envelope with its real "
+            "coding/research/review role"
+        )
+    raw = {
+        "record_version": decision_lifecycle.RECORD_VERSION,
+        "logical_id": local.get("logical_id"),
+        "key": local.get("key"),
+        "task_key": local.get("task_key"),
+        "initiator_role": role,
+        "retry_of": None,
+    }
+    missing = [name for name in ("logical_id", "key") if not raw[name]]
+    if missing:
+        return None, (
+            f"book meta is missing {', '.join(missing)}; a prepared request needs "
+            "the real local identity (logical_id/key/actor_role)"
+        )
+    return _decide_meta_from_payload(raw)
+
+
+def _decide_request_failure(
+    dp: str,
+    logical_id: str | None,
+    reason: str,
+    *,
+    escalated_reason: str | None = None,
+    issues: tuple[tuple[str, str], ...] = (),
+    detail: str = "",
+    record_start: str = "not-recorded",
+) -> dict:
+    """A blocked request result: zero model calls, zero business decisions."""
+    return {
+        "available": False,
+        "transport": "none",
+        "model": None,
+        "confidence_source": decision.CONFIDENCE_SOURCE_UNKNOWN,
+        "attempts": 0,
+        "latency_ms": 0,
+        "answers": None,
+        "reason": reason,
+        "decision_id": None,
+        "mode": None,
+        "acted": False,
+        "escalated_reason": escalated_reason or reason,
+        "state_digest": None,
+        "logical_id": logical_id,
+        "dp": dp,
+        "replayed": False,
+        "record_start": record_start,
+        "business_decisions": 0,
+        "transport_attempts": 0,
+        "issues": [{"field": path, "issue": text} for path, text in issues],
+        "detail": detail,
+    }
+
+
+def _decide_policy_grants(project_dir: pathlib.Path, token: str) -> bool:
+    """Read-only: does the side-car policy grant this action scope?
+
+    This is request *eligibility* only. It never mints a grant, enables the old
+    config or performs a release: the gate effect consumer still re-evaluates
+    ``decision_policy.evaluate_gate`` with enablement, hard checks and the
+    read-only authority source. A missing/invalid policy grants nothing.
+    """
+    try:
+        load = decision_policy.load_policy(project_dir)
+    except Exception:  # noqa: BLE001 - an unreadable policy is not a grant
+        return False
+    if not load.usable or load.policy is None:
+        return False
+    for granted in load.policy.scope:
+        if granted == token:
+            return True
+        if granted.endswith(":*") and token.startswith(granted[:-1]):
+            return True
+    return False
+
+
+def _decide_entry_mode(
+    project_dir: pathlib.Path, point: decision_points.DecisionPoint
+) -> tuple[str, str | None, str | None]:
+    """Read the current authorization row for one prepared request.
+
+    This is a read of the live table (never a write): a disabled point or a P0
+    point keeps the request blocked before any contract evaluation or model
+    call. The returned mode is only the row's declared ``auto|suggest`` value;
+    it never claims that the request acted.
+    """
+    try:
+        points = decision_points.load_points_config(project_dir)
+        row = points.effective(point)
+    except Exception:  # noqa: BLE001 - a broken table must not authorise
+        return "suggest", "disabled", "disabled"
+    mode = row.mode if row.mode in ("auto", "suggest") else point.default_mode
+    if not row.enabled:
+        return mode, "disabled", "disabled"
+    if point.tier == "P0":
+        # The consolidated P0 gate entry is not the retired dp15 label. A real
+        # current PM request may still be judged when a usable side-car policy
+        # grants its action scope; the answer is only a judgment, never a
+        # release (evaluate_gate still owns enablement/authority/hard checks),
+        # and every other P0 point stays human-only.
+        if point.id == "dp-gate-approve" and _decide_policy_grants(
+            project_dir, "action:gate-approve"
+        ):
+            return mode, None, None
+        return mode, "disabled", "p0"
+    return mode, None, None
+
+
+def _decide_parent_ref_issue(
+    events: list[dict],
+    meta: object,
+    parent_ref: str | None,
+) -> str | None:
+    """Verify a host-supplied parent reference against the real ledger.
+
+    The stdin value is never trusted by itself: the parent must be a recorded
+    decision of the same key (and the same task when one is associated), and its
+    own request row must carry one real business decision. A fabricated,
+    cross-key, task-mismatched or non-request parent is refused before the model
+    call. Deeper matter/version binding is owned by the gate note (T19/T26).
+    """
+    if parent_ref is None:
+        return None
+    if not isinstance(parent_ref, str) or ":" not in parent_ref or len(parent_ref) > 256:
+        return "parent_decision_ref must be a recorded '<dp>:<logical_id>' decision id"
+    rows = [row for row in events if row.get("decision_id") == parent_ref]
+    if not rows:
+        return "parent_decision_ref must name a decision already recorded in this ledger"
+    key = getattr(meta, "key", None)
+    keys = {row.get("key") for row in rows if isinstance(row.get("key"), str)}
+    if key is not None and keys and key not in keys:
+        return "parent_decision_ref must belong to the same key as this request"
+    task_key = getattr(meta, "task_key", None)
+    if task_key is not None:
+        tasks = {row.get("task_key") for row in rows if isinstance(row.get("task_key"), str)}
+        if tasks and task_key not in tasks:
+            return "parent_decision_ref must belong to the same task as this request"
+    requests = [
+        row
+        for row in rows
+        if row.get("kind") == "request"
+        and row.get("business_decisions") == 1
+        and isinstance(row.get("choice"), str)
+        and row.get("choice")
+    ]
+    if not requests:
+        return "parent_decision_ref must name a recorded business request, not only a start row"
+    parent = requests[-1]
+    parent_dp = parent.get("dp")
+    try:
+        decision_points.require_active_dp(str(parent_dp))
+    except decision.DecisionInputError:
+        return "parent_decision_ref names a decision point that is not an active entry"
+    try:
+        legal = tuple(decision_points.resolve_entry_choices(str(parent_dp), None))
+    except Exception:  # noqa: BLE001 - dynamic candidates need the parent material
+        legal = ()
+    if legal and parent.get("choice") not in legal:
+        return "parent_decision_ref does not carry a legal business branch"
+    return None
+
+
 def _decide_lifecycle_store(
     control_root: pathlib.Path,
     cfg: decision.DecisionConfig | None,
@@ -1047,7 +1554,7 @@ def _decide_lifecycle_facts(
             continue
         if event.get("kind") == "record-start":
             start = event
-        elif event.get("kind") == "lifecycle" and isinstance(
+        elif event.get("kind") in ("lifecycle", "request") and isinstance(
             event.get("decision_id"), str
         ):
             linked.append(event)
@@ -1089,8 +1596,24 @@ def _decide_feedback_fields(results: list) -> dict:
     }
 
 
-def _decide_replayed_payload(dp: str, logical_id: str, linked: list) -> dict:
+def _decide_replayed_payload(
+    dp: str, logical_id: str, linked: list, *, mode: str | None = None
+) -> dict:
     """The honest response for an already-started logical id (no model call)."""
+    last = linked[-1] if linked else {}
+    choice = last.get("choice")
+    basis_id = last.get("basis_id")
+    answers = None
+    if linked and isinstance(choice, str) and choice:
+        try:
+            question_id = str(decision_points.get_decision_point(dp).questions[0]["id"])
+        except (decision.DecisionInputError, IndexError, KeyError):
+            question_id = None
+        if question_id is not None:
+            answers = {
+                question_id: {"type": "choice", "choice": choice, "confidence": None},
+                "basis_id": {"type": "choice", "choice": basis_id, "confidence": None},
+            }
     result = {
         "available": bool(linked),
         "transport": "none",
@@ -1098,10 +1621,10 @@ def _decide_replayed_payload(dp: str, logical_id: str, linked: list) -> dict:
         "confidence_source": decision.CONFIDENCE_SOURCE_UNKNOWN,
         "attempts": 0,
         "latency_ms": 0,
-        "answers": None,
+        "answers": answers,
         "reason": None if linked else "duplicate-logical-id",
-        "decision_id": linked[-1].get("decision_id") if linked else None,
-        "mode": None,
+        "decision_id": last.get("decision_id") if linked else None,
+        "mode": mode if linked else None,
         "acted": False,
         "escalated_reason": None if linked else "duplicate-logical-id",
         "state_digest": None,
@@ -1109,18 +1632,302 @@ def _decide_replayed_payload(dp: str, logical_id: str, linked: list) -> dict:
         "dp": dp,
         "replayed": True,
         "record_start": "duplicate",
+        "choice": last.get("choice"),
+        "basis_id": basis_id,
+        "basis_text": last.get("basis_text"),
+        "basis_source": last.get("basis_source"),
+        "business_decisions": int(last.get("business_decisions") or 0),
     }
     result.update(_decide_feedback_fields([]))
     return result
 
 
-def _decide_run_versioned(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
-    """`mw decide run <dp> --stdin`: one exact versioned decision.
+def _decide_run_prepared(
+    args: argparse.Namespace,
+    project_dir: pathlib.Path,
+    *,
+    dp: str,
+    material: dict,
+    preparation: dict,
+    context: dict | None,
+    meta: object,
+    parent_ref: str | None,
+    book_meta: dict | None = None,
+    book_state: dict | None = None,
+    book_cfg: decision.DecisionConfig | None = None,
+    book_credential_snapshot: object = None,
+) -> int:
+    """One prepared (T11/T23) request: active id -> contract -> replay -> send.
 
-    The creation fact (``record-start``) is written *before* the transport call;
-    the returned ``decision_id`` is associated with the same ``logical_id`` by
-    the feedback row. A repeated ``logical_id`` is never sent again, and meta is
-    never part of the model state (the envelope keeps it local).
+    The order is the contract: a retired/unknown id is refused before the
+    lifecycle ledger, the replay lookup, the credential snapshot or a model
+    call; material/preparation/context are validated next; an existing
+    ``logical_id`` answers from its recorded fact without a second send; and a
+    host-supplied parent reference is verified against the real ledger before it
+    is written. Nothing here executes, releases or signs the decision.
+    """
+    as_json = bool(getattr(args, "json", False))
+    logical_id = getattr(meta, "logical_id", None)
+
+    def refuse(reason: str, *, issues=(), detail: str = "", escalated: str | None = None) -> int:
+        _decide_print(
+            _decide_request_failure(
+                dp,
+                logical_id,
+                reason,
+                escalated_reason=escalated,
+                issues=tuple(issues),
+                detail=detail,
+            ),
+            as_json,
+        )
+        return 2
+
+    # 1. Active identity first. A retired id is history, never an alias.
+    try:
+        point = decision_points.require_active_dp(dp)
+    except decision.DecisionInputError as exc:
+        return refuse("entry-unavailable", detail=str(exc))
+    # 2. Real process identity before authorization, contract, replay, ledger
+    #    write, credential read or send. The meta declaration is only compared
+    #    with this independently identified role; it is never a permission source.
+    verified_role, actor_reason, actor_detail = _decide_actor_binding(project_dir, meta)
+    if verified_role is None:
+        return refuse(
+            actor_reason or "actor-unbound",
+            detail=actor_detail or "the caller has no provable role for this request",
+        )
+    # 3. Current authorization row (read only): disabled/P0 makes no request.
+    mode, blocked_reason, blocked_escalated = _decide_entry_mode(project_dir, point)
+    if blocked_reason is not None:
+        _decide_print(
+            _decide_request_failure(
+                dp,
+                logical_id,
+                blocked_reason,
+                escalated_reason=blocked_escalated,
+                detail="the decision point is not callable in the current authorization row",
+            ),
+            as_json,
+        )
+        return 0
+    # 4. Complete contract (material, preparation, role, context) before any
+    #    ledger write or model call. The registry is the single authority.
+    try:
+        issues = tuple(
+            decision_points.prepared_request_issues(
+                dp,
+                material,
+                preparation,
+                actor_role=_decide_protocol_actor_role(verified_role),
+            )
+        )
+    except decision.DecisionInputError as exc:
+        return refuse("entry-unavailable", detail=str(exc))
+    if context is not None:
+        context_problems = tuple(decision_context.validate_context(context, dp))
+        if context_problems:
+            return refuse(
+                "input-incomplete",
+                issues=tuple(("context", problem) for problem in context_problems),
+                detail="the engineered context does not satisfy the entry's slots; no request sent",
+            )
+    if issues:
+        return refuse(
+            "input-incomplete",
+            issues=issues,
+            detail=f"{len(issues)} blocking material/preparation issue(s); no request sent",
+        )
+
+    if book_meta is not None:
+        cfg = book_cfg
+        credential_snapshot = book_credential_snapshot
+    else:
+        cfg = _decide_config_snapshot(project_dir)
+        credential_snapshot = decision.credential_snapshot(cfg)
+    control_root = _decide_control_root(project_dir)
+    try:
+        store = _decide_lifecycle_store(control_root, cfg, credential_snapshot)
+        read = decision_lifecycle.read_lifecycle(store)
+    except (decision_lifecycle.LifecycleInputError, OSError) as exc:
+        return refuse("entry-unavailable", detail=f"lifecycle ledger is not readable: {exc}")
+    events = list(read.events)
+    start = next(
+        (event for event in events if event.get("logical_id") == logical_id and event.get("kind") == "record-start"),
+        None,
+    )
+    linked = [
+        event
+        for event in events
+        if event.get("logical_id") == logical_id
+        and event.get("kind") in ("lifecycle", "request")
+        and isinstance(event.get("decision_id"), str)
+    ]
+    # 5. The parent reference is a host claim, never stdin authority.
+    parent_issue = _decide_parent_ref_issue(events, meta, parent_ref)
+    if parent_issue is not None:
+        return refuse("input-incomplete", issues=(("parent_decision_ref", parent_issue),), detail=parent_issue)
+
+    if start is not None:
+        # Same logical id: answer from the recorded fact, never a new send.
+        _decide_print(
+            _decide_replayed_payload(dp, str(logical_id), linked, mode=mode), as_json
+        )
+        return 0
+
+    decision_id = f"{point.id}:{logical_id}"
+    try:
+        start_result = decision_lifecycle.record_start(store, meta, decision_id=decision_id)
+    except decision_lifecycle.LifecycleInputError as exc:
+        return refuse("record-start-failed", detail=f"the creation fact was refused: {exc}")
+    if start_result.duplicate:
+        try:
+            linked = _decide_lifecycle_facts(store, str(logical_id))["linked"]
+        except OSError:
+            linked = []
+        _decide_print(
+            _decide_replayed_payload(dp, str(logical_id), linked, mode=mode), as_json
+        )
+        return 0
+    if not start_result.recorded:
+        result = _decide_request_failure(
+            dp,
+            str(logical_id),
+            "record-start-failed",
+            escalated_reason="record-start-failed",
+            detail="the creation fact could not be recorded; no request sent",
+            record_start=start_result.status,
+        )
+        result.update(
+            {
+                "recorded": False,
+                "error_class": start_result.error_class,
+                "error_recorded": start_result.error_recorded,
+            }
+        )
+        _decide_print(result, as_json)
+        return 2
+
+    client = decision.DecisionClient(
+        cfg, project_root=project_dir, credential_snapshot=credential_snapshot
+    )
+    try:
+        request_result = client.request_prepared(
+            dp,
+            material,
+            preparation,
+            actor_role=_decide_protocol_actor_role(verified_role),
+            logical_id=str(logical_id),
+        )
+    except decision.DecisionInputError as exc:
+        return refuse(
+            "entry-unavailable",
+            detail=str(exc),
+            escalated="entry-unavailable",
+        )
+    except Exception as exc:  # noqa: BLE001 - the CLI boundary reports, never tracebacks
+        return refuse(
+            "upstream-error",
+            detail=f"prepared request failed ({type(exc).__name__}); no decision result",
+            escalated="upstream-error",
+        )
+    if not isinstance(request_result, dict):
+        return refuse("bad-response", detail="the transport returned no prepared result")
+
+    feedback: list = []
+    if request_result.get("business_decisions") == 1 and request_result.get("prepared_at"):
+        try:
+            feedback.append(
+                decision_lifecycle.record_request(
+                    store,
+                    meta,
+                    decision_id=decision_id,
+                    result=request_result,
+                    material=material,
+                    preparation=preparation,
+                    parent_ref=parent_ref,
+                    task_before=getattr(meta, "task_before", None),
+                )
+            )
+        except decision_lifecycle.LifecycleInputError as exc:
+            # The request really happened; the fact could not be stored. Report
+            # the failure instead of pretending the request row exists.
+            feedback_error = {
+                "feedback_status": "failed",
+                "feedback_error_class": "input",
+                "feedback_error_recorded": None,
+                "feedback_stages": [],
+                "feedback_error": str(exc),
+            }
+        else:
+            feedback_error = None
+    else:
+        feedback_error = None
+
+    available = bool(request_result.get("available"))
+    result = {
+        "available": available,
+        "transport": request_result.get("transport") or "none",
+        "model": request_result.get("model"),
+        "confidence_source": request_result.get("confidence_source")
+        or decision.CONFIDENCE_SOURCE_UNKNOWN,
+        "attempts": int(request_result.get("attempts") or 0),
+        "latency_ms": int(request_result.get("latency_ms") or 0),
+        "answers": dict(request_result.get("answers"))
+        if available and isinstance(request_result.get("answers"), Mapping)
+        else None,
+        "reason": None if available else request_result.get("reason"),
+        "decision_id": decision_id,
+        "mode": mode,
+        "acted": False,
+        "escalated_reason": None if available else request_result.get("reason"),
+        "state_digest": None,
+        "logical_id": logical_id,
+        "dp": dp,
+        "replayed": False,
+        "record_start": start_result.status,
+        "choice": request_result.get("choice"),
+        "basis_id": request_result.get("basis_id"),
+        "basis_text": request_result.get("basis_text"),
+        "basis_source": request_result.get("basis_source"),
+        "business_decisions": int(request_result.get("business_decisions") or 0),
+        "transport_attempts": int(request_result.get("transport_attempts") or 0),
+        "issues": request_result.get("issues") or [],
+        "detail": request_result.get("detail"),
+        "prepared_at": request_result.get("prepared_at"),
+    }
+    if book_meta is not None:
+        result["book"] = {
+            "path": book_meta.get("path"),
+            "file_sha256": book_meta.get("file_sha256"),
+            "evidence": dict(book_meta.get("evidence") or {}),
+        }
+    if feedback_error is not None:
+        result.update(feedback_error)
+    else:
+        result.update(_decide_feedback_fields(feedback))
+    _decide_print(result, as_json)
+    if book_meta is not None and book_state is not None:
+        _book_receipt(
+            project_dir,
+            book_meta,
+            book_state,
+            preparation=preparation,
+            redactor=_book_secret_redactor(cfg, credential_snapshot),
+            available=available,
+            reason=None if available else request_result.get("reason"),
+            decision_id=decision_id,
+            transport=result["transport"],
+        )
+    return 0
+
+
+def _decide_run_versioned(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw decide run <dp> --stdin`: one exact prepared (T11/T23) decision.
+
+    The envelope is the production one: ``{material, preparation, meta,
+    context?, parent_decision_ref?}``. The active id and the complete contract
+    are checked before the replay lookup and before any send.
     """
     as_json = bool(getattr(args, "json", False))
     positional = getattr(args, "dp_id", None)
@@ -1141,157 +1948,39 @@ def _decide_run_versioned(args: argparse.Namespace, project_dir: pathlib.Path) -
             file=sys.stderr,
         )
         return 2
+    # Active identity before the envelope shape: an old id must be refused as
+    # retired even when the caller sends the pre-consolidation {material, meta}
+    # envelope (otherwise a shape error would hide the real refusal).
+    try:
+        decision_points.require_active_dp(dp)
+    except decision.DecisionInputError as exc:
+        _decide_print(
+            _decide_request_failure(dp, None, "entry-unavailable", detail=str(exc)),
+            as_json,
+        )
+        return 2
     payload, err = _decide_read_envelope_json(args)
     if err:
         print(f"[mw decide run] {err}", file=sys.stderr)
         return 2
     assert payload is not None
-    material, meta, err = _decide_envelope(payload)
+    material, preparation, meta, context, parent_ref, err = _decide_prepared_envelope(payload)
     if err:
-        print(f"[mw decide run] {err}", file=sys.stderr)
-        return 2
-    assert material is not None and meta is not None
-
-    cfg = _decide_config_snapshot(project_dir)
-    credential_snapshot = decision.credential_snapshot(cfg)
-    control_root = _decide_control_root(project_dir)
-    try:
-        store = _decide_lifecycle_store(control_root, cfg, credential_snapshot)
-        existing = _decide_lifecycle_facts(store, meta.logical_id)
-    except (decision_lifecycle.LifecycleInputError, OSError) as exc:
-        print(
-            f"[mw decide run] lifecycle ledger is not readable: {exc}",
-            file=sys.stderr,
-        )
-        return 2
-    if existing["start"] is not None:
-        # Same logical id: either the decision was already processed (return the
-        # association, never a new answer) or it was started but has no result
-        # (a new judgment needs a new logical id + retry_of, never a silent
-        # resend).
         _decide_print(
-            _decide_replayed_payload(dp, meta.logical_id, existing["linked"]),
-            as_json,
-        )
-        return 0
-
-    # The decision id is ``<dp>:<logical_id>`` (the same form ``decide_for``
-    # builds from the trigger). Resolve the registry id *before* the creation
-    # fact so an unknown dp cannot leave a start row behind, and pass the real
-    # id into the fact: a disabled/failed decision is then already associated.
-    try:
-        point = decision_points.get_decision_point(dp)
-    except decision.DecisionInputError as exc:
-        print(f"[mw decide run] {exc}", file=sys.stderr)
-        return 2
-    decision_id = f"{point.id}:{meta.logical_id}"
-
-    try:
-        start = decision_lifecycle.record_start(store, meta, decision_id=decision_id)
-    except decision_lifecycle.LifecycleInputError as exc:
-        print(
-            f"[mw decide run] the creation fact was refused: {exc}",
-            file=sys.stderr,
+            _decide_request_failure(dp, None, "input-incomplete", detail=err), as_json
         )
         return 2
-    if start.duplicate:
-        # A concurrent command won the logical id. Re-read its facts; never send
-        # a second model call for the same logical id.
-        try:
-            facts = _decide_lifecycle_facts(store, meta.logical_id)
-            linked = facts["linked"]
-        except OSError:
-            linked = []
-        _decide_print(_decide_replayed_payload(dp, meta.logical_id, linked), as_json)
-        return 0
-    if not start.recorded:
-        result = {
-            "available": False,
-            "transport": "none",
-            "model": None,
-            "confidence_source": decision.CONFIDENCE_SOURCE_UNKNOWN,
-            "attempts": 0,
-            "latency_ms": 0,
-            "answers": None,
-            "reason": "record-start-failed",
-            "decision_id": None,
-            "mode": None,
-            "acted": False,
-            "escalated_reason": "record-start-failed",
-            "state_digest": None,
-            "logical_id": meta.logical_id,
-            "dp": dp,
-            "replayed": False,
-            "record_start": start.status,
-            "recorded": False,
-            "error_class": start.error_class,
-            "error_recorded": start.error_recorded,
-        }
-        result.update(_decide_feedback_fields([]))
-        _decide_print(result, as_json)
-        return 2
-
-    client = decision.DecisionClient(
-        cfg, project_root=project_dir, credential_snapshot=credential_snapshot
+    assert material is not None and preparation is not None and meta is not None
+    return _decide_run_prepared(
+        args,
+        project_dir,
+        dp=dp,
+        material=material,
+        preparation=preparation,
+        context=context,
+        meta=meta,
+        parent_ref=parent_ref,
     )
-    trigger = decision_points.Trigger.from_mapping(
-        material,
-        trigger_id=meta.logical_id,
-        key=meta.key,
-        task_key=meta.task_key,
-    )
-    try:
-        outcome = decision_points.decide_for(
-            dp, trigger, project_dir, client=client, intent="answer"
-        )
-    except decision.DecisionInputError as exc:
-        print(f"[mw decide run] {exc}", file=sys.stderr)
-        return 2
-    result = _decide_run_payload(outcome)
-    result["logical_id"] = meta.logical_id
-    result["dp"] = dp
-    result["replayed"] = False
-    result["record_start"] = start.status
-    result["detail"] = outcome.detail
-    feedback: list = []
-    if outcome.decision_id != decision_id:
-        # ``decide_for`` reported a different id than the one the creation fact
-        # carries. Never rewrite the fact (it is immutable) and never guess: one
-        # explicit association row carries the real id so the reader can join
-        # both by a recorded value.
-        print(
-            "[mw decide run] the decision id differs from the creation fact "
-            f"({outcome.decision_id!r} != {decision_id!r}); writing an explicit "
-            "association bridge",
-            file=sys.stderr,
-        )
-        if isinstance(outcome.decision_id, str) and outcome.decision_id:
-            feedback.append(
-                decision_lifecycle.record_executed(
-                    store,
-                    meta,
-                    decision_id=outcome.decision_id,
-                    dp=point.id,
-                    action="record",
-                    result="association-bridge",
-                    event_id=_decide_event_id(meta.logical_id, "bridge"),
-                )
-            )
-    if outcome.status in ("acted", "suggested") and outcome.answer:
-        feedback.append(
-            decision_lifecycle.record_executed(
-                store,
-                meta,
-                decision_id=outcome.decision_id,
-                dp=dp,
-                action="record",
-                result="answer-returned",
-                event_id=_decide_event_id(meta.logical_id, "record"),
-            )
-        )
-    result.update(_decide_feedback_fields(feedback))
-    _decide_print(result, as_json)
-    return 0
 
 
 def _decide_print(payload: dict, as_json: bool) -> None:
@@ -1310,10 +1999,12 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
     row all happen in one place (design D-035/D-036). `enabled=false` therefore
     returns before any encode/spawn/archive on the CLI path too (AC-001).
 
-    A legacy request carrying its own `questions` keeps the byte-identical
-    pre-T-02b path (design D-027): it names no registry dp (the default label is
-    `dp1`, which is not a registered id), so there is no authorization decision
-    to make and the registry stays the single id authority.
+    A legacy request carrying its own `questions` is a human-only isolated
+    query, not a pre-T-02b direct send: it names no registry dp (the default
+    label is `dp1`, which is not a registered id), so it freezes the exact
+    questions/state and submits them to the registered operator host. Only that
+    host, after human confirmation, reaches the original backend; the ordinary
+    run process never builds a backend for this branch.
     """
     payload: dict | None = None
     err: str | None = None
@@ -1333,6 +2024,8 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
     book_source = getattr(args, "book", None)
     book_meta = None
     book_state_obj: dict | None = None
+    book_local_meta: dict | None = None
+    book_preparation: dict | None = None
     if book_source:
         if getattr(args, "request_file", None):
             print(
@@ -1340,7 +2033,13 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
                 file=sys.stderr,
             )
             return 2
-        book_state_obj, book_meta, err = _book_gate(
+        (
+            book_state_obj,
+            book_meta,
+            book_preparation,
+            book_local_meta,
+            err,
+        ) = _book_gate(
             book_source,
             project_dir,
             flag="mw decide run",
@@ -1349,6 +2048,8 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         )
         if err:
             return 2
+        assert book_meta is not None and book_state_obj is not None
+        assert book_preparation is not None
         book_dp = str(book_meta.get("decision_point") or "")
         labelled = getattr(args, "dp", None)
         if labelled and labelled != book_dp:
@@ -1358,63 +2059,194 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
                 file=sys.stderr,
             )
             return 2
-        args = argparse.Namespace(**{**vars(args), "dp": book_dp})
-        payload = {"state": book_state_obj}
-    else:
-        payload, err = _decide_read_request(args)
-        if err:
-            print(f"[mw decide run] {err}", file=sys.stderr)
+        meta, meta_err = _decide_meta_from_book_local(book_local_meta)
+        if meta_err:
+            print(f"[mw decide run] {meta_err}", file=sys.stderr)
             return 2
-    assert payload is not None  # both branches either set it or returned 2
+        assert meta is not None
+        context = book_state_obj.get(decision_context.CONTEXT_KEY)
+        material = {
+            key: value
+            for key, value in book_state_obj.items()
+            if key != decision_context.CONTEXT_KEY
+        }
+        return _decide_run_prepared(
+            args,
+            project_dir,
+            dp=book_dp,
+            material=material,
+            preparation=book_preparation,
+            context=context if isinstance(context, dict) else None,
+            meta=meta,
+            parent_ref=None,
+            book_meta=book_meta,
+            book_state=book_state_obj,
+            book_cfg=cfg,
+            book_credential_snapshot=credential_snapshot,
+        )
+    payload, err = _decide_read_request(args)
+    if err:
+        print(f"[mw decide run] {err}", file=sys.stderr)
+        return 2
+    assert payload is not None
     questions, dp, err = _decide_resolve_dp_questions(args, payload)
     if err:
         print(f"[mw decide run] {err}", file=sys.stderr)
         return 2
+    if payload.get("questions"):
+        # Legacy free-form query face (design F-11): it is not a decision point
+        # submission. It may not name an active entry (that would let caller
+        # questions replace the registered contract) and it may not name a
+        # retired id (old ids are read-only history, never an alias).
+        if decision_points.is_retired_dp(dp):
+            _decide_print(
+                _decide_request_failure(
+                    dp,
+                    None,
+                    "entry-unavailable",
+                    detail=(
+                        f"retired decision point id {dp!r}: not callable; old ids "
+                        "are read-only history, not aliases"
+                    ),
+                ),
+                getattr(args, "json", False),
+            )
+            return 2
+        try:
+            decision_points.require_active_dp(dp)
+        except decision.DecisionInputError:
+            pass  # a non-DP label (the legacy default `dp1`)
+        else:
+            _decide_print(
+                _decide_request_failure(
+                    dp,
+                    None,
+                    "input-incomplete",
+                    detail=(
+                        f"{dp} is an active entry: caller-supplied questions cannot "
+                        "replace its registered contract; use a prepared book/stdin request"
+                    ),
+                ),
+                getattr(args, "json", False),
+            )
+            return 2
+        # Legacy free-form queries are human-only isolated queries too: the
+        # ordinary run process never builds a backend for them. The exact same
+        # frozen draft and operator host as `decide ask` is used, so an agent,
+        # worker, RPC caller, arbitrary label or the old bare `dp1` cannot turn
+        # caller questions into a model request. Only the returned pending id is
+        # shown here; `mw decide ask --result <id>` reads the confirmed answer.
+        state = payload["state"]
+        if not isinstance(state, str) or not state.strip():
+            print(
+                "[mw decide run] legacy questions require a non-empty string state",
+                file=sys.stderr,
+            )
+            return 2
+        if cfg is None or cfg.config_error:
+            print(
+                "[mw decide run] the decision config is not usable for an isolated "
+                "legacy query (fix .mw/decide.json); zero send",
+                file=sys.stderr,
+            )
+            return 2
+        if cfg.unconfigured or not cfg.enabled:
+            print(
+                "[mw decide run] the decision transport is not configured/enabled "
+                "for this project; zero send",
+                file=sys.stderr,
+            )
+            return 2
+        model = str(getattr(args, "model", None) or "").strip() or cfg.model
+        try:
+            reply, frozen, problem = _operator_ask_submit(
+                project_dir, cfg, questions, state, model
+            )
+        except Exception as exc:  # noqa: BLE001 - an unbound draft is refused
+            print(
+                f"[mw decide run] cannot freeze the legacy query: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+        if problem is not None:
+            print(
+                "[mw decide run] the legacy query is not displayable/sendable: "
+                f"{problem}",
+                file=sys.stderr,
+            )
+            return 2
+        assert reply is not None
+        if not reply.get("ok"):
+            reason = str(reply.get("reason") or "host-unavailable")
+            print(
+                "[mw decide run] the registered operator host is not available "
+                f"({reason}); nothing was sent and no direct fallback is used",
+                file=sys.stderr,
+            )
+            return 2
+        pending_id = reply.get("id")
+        if (
+            not isinstance(pending_id, str)
+            or _OPERATOR_ASK_RESULT_ID_RE.fullmatch(pending_id) is None
+        ):
+            print(
+                "[mw decide run] the host returned an invalid pending id; "
+                "refusing to report a submission",
+                file=sys.stderr,
+            )
+            return 2
+        payload = {
+            "ok": True,
+            "purpose": "ask",
+            "state": "pending",
+            "id": pending_id,
+            "sha256": reply.get("sha256"),
+            "project_id": _operator_ask_project_id(project_dir),
+            "frozen_bytes": len(frozen),
+            "next": f"mw decide ask --project <dir> --result {pending_id}",
+        }
+        _decide_print(payload, getattr(args, "json", False))
+        return 0
+    # Structured path: the registry dp is the authority. Validate the active
+    # entry's complete material contract before the model call; an old id or an
+    # incomplete state is a refusal, never a partially sent request.
+    state = payload.get("state")
+    try:
+        point = decision_points.require_active_dp(dp)
+    except decision.DecisionInputError as exc:
+        _decide_print(
+            _decide_request_failure(dp, None, "entry-unavailable", detail=str(exc)),
+            getattr(args, "json", False),
+        )
+        return 2
+    if not isinstance(state, dict):
+        print("[mw decide run] request state must be a JSON object", file=sys.stderr)
+        return 2
+    material_issues = decision_points.entry_material_issues(dp, state)
+    if material_issues:
+        _decide_print(
+            _decide_request_failure(
+                dp,
+                None,
+                "input-incomplete",
+                issues=material_issues,
+                detail=f"{len(material_issues)} blocking material issue(s); no request sent",
+            ),
+            getattr(args, "json", False),
+        )
+        return 2
     client = decision.DecisionClient(
         cfg, project_root=project_dir, credential_snapshot=credential_snapshot
     )
-    if payload.get("questions"):
-        # Legacy path (frozen bytes): payload state + caller questions, no
-        # registry dp, no authorization row.
-        try:
-            response = client.decide(payload["state"], questions, dp=dp)
-        except decision.DecisionInputError as exc:
-            print(f"[mw decide run] {exc}", file=sys.stderr)
-            return 2
-        if getattr(args, "json", False):
-            print(json.dumps(response, ensure_ascii=False))
-        else:
-            print(json.dumps(response, ensure_ascii=False, indent=2))
-        return 0
-    # Structured path: the registry dp is the authority; the trigger is the
-    # request's state object (L0/L1 only, `key` becomes the decision id suffix).
-    state = payload.get("state")
-    trigger = decision_points.Trigger.from_mapping(state if isinstance(state, dict) else {})
+    trigger = decision_points.Trigger.from_mapping(state)
     try:
         outcome = decision_points.decide_for(
-            dp, trigger, project_dir, client=client, intent="answer"
+            point.id, trigger, project_dir, client=client, intent="answer"
         )
     except decision.DecisionInputError as exc:
         print(f"[mw decide run] {exc}", file=sys.stderr)
         return 2
     result = _decide_run_payload(outcome)
-    if book_meta:
-        response = outcome.response or {}
-        available = bool(response.get("available"))
-        result["book"] = {
-            "path": book_meta.get("path"),
-            "file_sha256": book_meta.get("file_sha256"),
-            "evidence": dict(book_meta.get("evidence") or {}),
-        }
-        _book_receipt(
-            project_dir,
-            book_meta,
-            book_state_obj,
-            available=available,
-            reason=None if available else (outcome.transport_reason or outcome.escalated_reason),
-            decision_id=outcome.decision_id,
-            transport=response.get("transport"),
-        )
     if getattr(args, "json", False):
         print(json.dumps(result, ensure_ascii=False))
     else:
@@ -1594,10 +2426,11 @@ def _decide_set(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
 #
 # `decide ask` is the opposite of `decide run`: a human types the state and the
 # questions on the command line, so there is no dp id, no registry lookup and no
-# authorization verdict -- the human *is* the authority. That is why it goes
-# through `DecisionClient.decide(state, questions)` (the legacy, ungated path)
-# and only formats the answer; transport, retries, reason normalisation and the
-# evidence row stay the client's job (the dp label is `dp-human-ask`).
+# authorization verdict -- the human *is* the authority. Like the `decide run`
+# legacy free-form query, it never sends from the ordinary CLI process: the
+# complete draft is frozen and submitted to the registered operator host, and
+# only a confirmed host callback reaches `DecisionClient.decide(state,
+# questions)` (the dp label there is `dp-human-ask`).
 
 _ASK_QID_RE = re.compile(r"[A-Za-z0-9_.-]+")
 _ASK_CHOICE_KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
@@ -1612,7 +2445,8 @@ _ASK_USAGE = (
     "[--noul QID=TEXT ...] [--choice QID=KEY[:TEXT][,KEY[:TEXT]...] ...] "
     "[--score QID=LOW,MID,HIGH ...] [--noul-criteria QID=true:TEXT;false:TEXT ...] "
     "[--model MODEL] [--json] [--project DIR]\n"
-    "at least one --noul/--choice/--score is required"
+    "   or: mw decide ask --result <pending-id> [--json] [--project DIR]\n"
+    "at least one --noul/--choice/--score is required to submit a draft"
 )
 
 
@@ -1888,6 +2722,407 @@ def _ask_print(text: str) -> None:
     _rag_safe_print(text)
 
 
+# ── Isolated human ask: shared frozen draft, host guard and host sender ─────
+#
+# `mw decide ask` no longer sends from the ordinary CLI process. It freezes the
+# complete draft (schema/purpose/project/transport/model/destination/questions
+# /state) to exact UTF-8 bytes and submits those bytes to the registered
+# operator host. The host displays the same bytes to the operator, and only a
+# confirmed WebAuthn assertion reaches `operator_ask_frozen`; the ordinary CLI
+# can never derive a human from `--role`/token/TTY. `operator_ask_validate` is
+# the read-only guard the host calls before display and again before send.
+
+_OPERATOR_ASK_SCHEMA = 1
+_OPERATOR_ASK_KEYS = frozenset(
+    {
+        "schema",
+        "purpose",
+        "project_id",
+        "transport",
+        "model",
+        "destination",
+        "questions",
+        "state",
+    }
+)
+_OPERATOR_ASK_RESULT_ID_RE = re.compile(r"[0-9a-f]{32}\Z")
+_OPERATOR_ASK_QUESTION_TYPES = frozenset({"noul", "choice", "score"})
+
+
+class _OperatorAskError(ValueError):
+    """A frozen ask draft violates the shared schema (fail closed)."""
+
+
+def _operator_ask_project_id(root: pathlib.Path | str) -> str:
+    return decision_wire.project_id_for(pathlib.Path(root).resolve())
+
+
+def _operator_ask_destination(cfg: decision.DecisionConfig) -> str:
+    """The one live decisions endpoint this draft would reach."""
+    extras = getattr(cfg, "extras", {}) or {}
+    base = (
+        (extras.get("base_url") if isinstance(extras, Mapping) else None)
+        or os.environ.get("TIMI_BASE_URL")
+        or decision_backends.TIMI_BASE_URL
+    )
+    return str(base).rstrip("/") + decision_backends.DECISIONS_PATH
+
+
+def _operator_ask_config(root: pathlib.Path | str):
+    """One config + credential snapshot for this ask unit (zero writes)."""
+    cfg = _decide_config_snapshot(pathlib.Path(root).resolve())
+    if cfg is None:
+        raise _OperatorAskError("the decision config could not be read")
+    if cfg.config_error:
+        raise _OperatorAskError(f".mw/decide.json: {cfg.config_error}")
+    if cfg.unconfigured or not cfg.enabled:
+        raise _OperatorAskError(
+            "the decision transport is not configured/enabled for this project"
+        )
+    return cfg, decision.credential_snapshot(cfg)
+
+
+def _operator_ask_unique_object(raw: bytes) -> dict:
+    """Parse one object, refusing duplicate keys and non-finite numbers."""
+    if not isinstance(raw, (bytes, bytearray)) or not 0 < len(raw) <= operator_authority.MAX_PAYLOAD:
+        raise _OperatorAskError("frozen draft has an invalid size")
+
+    def unique(pairs):
+        value = dict(pairs)
+        if len(value) != len(pairs):
+            raise _OperatorAskError("frozen draft carries a duplicate key")
+        return value
+
+    try:
+        text = bytes(raw).decode("utf-8", errors="strict")
+        value = json.loads(
+            text,
+            object_pairs_hook=unique,
+            parse_constant=lambda _: (_ for _ in ()).throw(
+                _OperatorAskError("frozen draft carries a non-finite number")
+            ),
+        )
+        json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except _OperatorAskError:
+        raise
+    except (ValueError, UnicodeError, RecursionError, OverflowError):
+        raise _OperatorAskError("frozen draft is not valid UTF-8 JSON") from None
+    if not isinstance(value, dict):
+        raise _OperatorAskError("frozen draft must be a JSON object")
+    return value
+
+
+def _operator_ask_question_issues(qid: object, spec: object) -> list[str]:
+    """The original CLI parameter constraints, re-applied to the frozen spec."""
+    issues: list[str] = []
+    if not isinstance(qid, str) or _ASK_QID_RE.fullmatch(qid) is None:
+        return ["a question id must match [A-Za-z0-9_.-]+"]
+    if not isinstance(spec, Mapping):
+        return [f"question {qid} must be an object"]
+    kind = spec.get("type")
+    if kind not in _OPERATOR_ASK_QUESTION_TYPES:
+        return [f"question {qid} has an unsupported type"]
+    instructions = spec.get("instructions")
+    if instructions is not None and (
+        not isinstance(instructions, str) or not instructions.strip()
+    ):
+        issues.append(f"question {qid} instructions must be non-empty text")
+    if kind == "noul":
+        allowed = {"type", "instructions", "criteria"}
+        criteria = spec.get("criteria")
+        if criteria is not None:
+            if not isinstance(criteria, Mapping) or set(criteria) != {"true", "false"}:
+                issues.append(f"question {qid} noul criteria must be exactly {{true, false}}")
+            else:
+                for value in criteria.values():
+                    if not isinstance(value, str) or not value.strip():
+                        issues.append(f"question {qid} noul criteria needs text")
+    elif kind == "choice":
+        # Two legal shapes reach this guard: the ask CLI's criteria-first shape
+        # and the pre-existing legacy free-form shape (choices/dynamic_choices).
+        # The latter is preserved verbatim; the host still shows it to the human.
+        allowed = {"type", "instructions", "criteria", "choices", "labels", "dynamic_choices"}
+        criteria = spec.get("criteria")
+        choices = spec.get("choices")
+        dynamic = spec.get("dynamic_choices")
+        if dynamic is not None:
+            if not isinstance(dynamic, str) or not dynamic.strip():
+                issues.append(f"question {qid} dynamic_choices must be a non-empty state key")
+            if choices is not None or "labels" in spec:
+                issues.append(
+                    f"question {qid} cannot declare dynamic_choices together with choices/labels"
+                )
+        elif choices is not None:
+            if not isinstance(choices, list) or not choices:
+                issues.append(f"question {qid} choice choices must be a non-empty list")
+            elif criteria is not None and list(choices) != list(criteria):
+                issues.append(f"question {qid} choices disagree with criteria order")
+        elif criteria is None:
+            issues.append(f"question {qid} choice needs criteria, choices or dynamic_choices")
+        if criteria is not None:
+            if not isinstance(criteria, Mapping) or not criteria:
+                issues.append(f"question {qid} choice criteria must be a non-empty object")
+            else:
+                keys = list(criteria)
+                for key in keys:
+                    if not isinstance(key, str) or _ASK_CHOICE_KEY_RE.fullmatch(key) is None:
+                        issues.append(f"question {qid} choice key must match [A-Za-z0-9_-]+")
+                    value = criteria[key]
+                    if value is not None and (not isinstance(value, str) or not value.strip()):
+                        issues.append(f"question {qid} choice label must be text or null")
+        labels = spec.get("labels")
+        if labels is not None:
+            if not isinstance(labels, Mapping):
+                issues.append(f"question {qid} choice labels must be an object")
+            elif criteria is not None and dict(labels) != dict(criteria):
+                issues.append(f"question {qid} labels disagree with criteria")
+            elif choices is not None and set(labels) != set(choices):
+                issues.append(f"question {qid} labels disagree with choices")
+    else:  # score
+        allowed = {"type", "instructions", "criteria", "min", "max"}
+        levels = spec.get("criteria")
+        if levels is None:
+            low, high = spec.get("min"), spec.get("max")
+            if (
+                isinstance(low, bool)
+                or isinstance(high, bool)
+                or not isinstance(low, int)
+                or not isinstance(high, int)
+                or low > high
+            ):
+                issues.append(f"question {qid} score needs integer min <= max")
+        elif (
+            not isinstance(levels, list)
+            or not _ASK_SCORE_MIN_LEVELS <= len(levels) <= _ASK_SCORE_MAX_LEVELS
+        ):
+            issues.append(
+                f"question {qid} score needs {_ASK_SCORE_MIN_LEVELS}.."
+                f"{_ASK_SCORE_MAX_LEVELS} ordered levels"
+            )
+        else:
+            if any(not isinstance(level, str) or not level.strip() for level in levels):
+                issues.append(f"question {qid} score levels must be non-empty text")
+            if spec.get("min") != 0 or spec.get("max") != len(levels) - 1:
+                issues.append(f"question {qid} score min/max disagree with its levels")
+    unknown = set(spec) - allowed
+    if unknown:
+        issues.append(f"question {qid} carries unknown field(s)")
+    return issues
+
+
+def _operator_ask_validation(root: pathlib.Path | str, raw: bytes) -> str | None:
+    """Read-only validation shared by the host guard and the sender."""
+    draft = _operator_ask_unique_object(raw)
+    if set(draft) != _OPERATOR_ASK_KEYS:
+        raise _OperatorAskError("frozen draft must carry exactly the v1 key set")
+    if type(draft.get("schema")) is not int or draft["schema"] != _OPERATOR_ASK_SCHEMA:
+        raise _OperatorAskError("frozen draft schema is not 1")
+    if draft.get("purpose") != "ask":
+        raise _OperatorAskError("frozen draft purpose is not ask")
+    try:
+        project_id = _operator_ask_project_id(root)
+    except Exception:  # noqa: BLE001 - an unbound project cannot be validated
+        return "the project root has no wire project id"
+    if draft.get("project_id") != project_id:
+        return "frozen draft is bound to a different project"
+    cfg, credential_snapshot = _operator_ask_config(root)
+    transport = draft.get("transport")
+    model = draft.get("model")
+    destination = draft.get("destination")
+    if not isinstance(transport, str) or not transport.strip():
+        return "frozen draft transport is missing"
+    if transport != cfg.transport:
+        return "frozen draft transport drifted from the current config"
+    if not isinstance(model, str) or not model.strip() or len(model) > 200:
+        return "frozen draft model is missing or malformed"
+    if not isinstance(destination, str) or not destination.strip():
+        return "frozen draft destination is missing"
+    if destination != _operator_ask_destination(cfg):
+        return "frozen draft destination drifted from the current config"
+    questions = draft.get("questions")
+    if not isinstance(questions, Mapping) or not questions:
+        return "frozen draft needs at least one question"
+    if len(questions) > cfg.max_questions:
+        return f"frozen draft has more than max_questions={cfg.max_questions}"
+    issues: list[str] = []
+    for qid, spec in questions.items():
+        issues.extend(_operator_ask_question_issues(qid, spec))
+    state = draft.get("state")
+    if not isinstance(state, str) or not state.strip():
+        issues.append("frozen draft state must be a non-empty string")
+    if issues:
+        return "; ".join(issues)
+    assert isinstance(state, str)
+    state_bytes = state.encode("utf-8")
+    if cfg.max_state_bytes > 0 and len(state_bytes) > cfg.max_state_bytes:
+        return f"state is {len(state_bytes)} bytes > max_state_bytes={cfg.max_state_bytes}"
+    state_tokens = decision._estimate_tokens(state)
+    question_tokens = [
+        decision._estimate_tokens(json.dumps(spec, ensure_ascii=False, default=str))
+        for spec in questions.values()
+    ]
+    longest = max(question_tokens)
+    if state_tokens + longest > cfg.max_state_plus_question_tokens:
+        return "state + longest question exceeds max_state_plus_question_tokens"
+    if state_tokens + sum(question_tokens) > cfg.max_total_tokens:
+        return "the whole request exceeds max_total_tokens"
+    redactor = decision_points.command_known_secret_redactor(
+        cfg, snapshot=credential_snapshot
+    )
+    if redactor is None:
+        return "the known-secret set could not be proven for this project"
+    for text in _operator_ask_texts(draft):
+        if decision.secret_hit(text, redactor):
+            return "the frozen draft carries credential-looking text"
+    return None
+
+
+def _operator_ask_texts(value: object):
+    """Every string leaf of the draft (state/questions/labels included)."""
+    if isinstance(value, str):
+        if value:
+            yield value
+    elif isinstance(value, Mapping):
+        for key, child in value.items():
+            if isinstance(key, str) and key:
+                yield key
+            yield from _operator_ask_texts(child)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            yield from _operator_ask_texts(child)
+
+
+def operator_ask_validate(root: pathlib.Path | str, frozen: bytes) -> bool:
+    """Read-only host guard for one frozen ask draft.
+
+    The host calls this before display and again before a confirmed send. It
+    re-applies the original CLI constraints (size, question/menu shape, state,
+    byte/token budget, known-secret set) and the current transport/destination
+    binding. It never writes, never calls a model and never returns a decision.
+    """
+    try:
+        return _operator_ask_validation(root, frozen) is None
+    except Exception:  # noqa: BLE001 - an unprovable draft is never displayed
+        return False
+
+
+def operator_ask_frozen(root: pathlib.Path | str, frozen: bytes) -> dict:
+    """The host's isolated ask sender: exact frozen bytes -> one real query.
+
+    It first proves it is running inside the registered operator host's guarded
+    callback (``operator_host.authorized_callback`` re-checks the SCM service
+    identity/SID/PID and the exact frozen bytes). A forged ContextVar, a
+    self-built ``OperatorHost`` or an ordinary CLI call cannot pass that check,
+    so it can never reach a credential or a provider. The returned mapping is
+    only the original Ask answer shape; it is not an execution or completion.
+    """
+    resolved = pathlib.Path(root).resolve()
+    raw = bytes(frozen) if isinstance(frozen, (bytes, bytearray)) else b""
+    if not operator_host.authorized_callback(resolved, "ask", raw):
+        raise _OperatorAskError(
+            "the ask sender is not the authorized operator-host callback"
+        )
+    try:
+        problem = _operator_ask_validation(resolved, raw)
+    except _OperatorAskError:
+        raise
+    except Exception:  # noqa: BLE001 - an unprovable draft never sends
+        problem = "the frozen draft is not provable"
+    if problem is not None:
+        raise _OperatorAskError(problem)
+    draft = _operator_ask_unique_object(raw)
+    cfg, credential_snapshot = _operator_ask_config(resolved)
+    cfg.model = str(draft["model"])
+    client = _AskDecisionClient(
+        cfg, project_root=resolved, credential_snapshot=credential_snapshot
+    )
+    try:
+        response = client.decide(
+            draft["state"], draft["questions"], dp=_ASK_DP
+        )
+    except decision.DecisionInputError as exc:
+        raise _OperatorAskError(str(exc)) from None
+    answers = response.get("answers")
+    if not response.get("available") or not isinstance(answers, Mapping):
+        raise _OperatorAskError(
+            str(response.get("reason") or decision.REASON_UPSTREAM_ERROR)
+        )
+    return {
+        "model": response.get("model"),
+        "usage": None,
+        "latency_ms": int(response.get("latency_ms") or 0),
+        "answers": dict(answers),
+    }
+
+
+def _operator_ask_frozen_draft(
+    project_dir: pathlib.Path,
+    cfg: decision.DecisionConfig,
+    questions: Mapping,
+    state: str,
+    model: str,
+) -> bytes:
+    """Freeze the whole confirmed request to exact, stable UTF-8 bytes."""
+    draft = {
+        "schema": _OPERATOR_ASK_SCHEMA,
+        "purpose": "ask",
+        "project_id": _operator_ask_project_id(project_dir),
+        "transport": cfg.transport,
+        "model": model,
+        "destination": _operator_ask_destination(cfg),
+        "questions": questions,
+        "state": state,
+    }
+    return json.dumps(
+        draft,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _operator_ask_submit(
+    project_dir: pathlib.Path,
+    cfg: decision.DecisionConfig,
+    questions: Mapping,
+    state: str,
+    model: str,
+) -> tuple[dict | None, bytes, str | None]:
+    """Freeze, validate and hand one query to the registered operator host.
+
+    No provider is built here: an unavailable host is returned as a concrete
+    refusal and never falls back to a direct model call. ``reply`` is None only
+    when the draft itself is not displayable/sendable.
+    """
+    frozen = _operator_ask_frozen_draft(project_dir, cfg, questions, state, model)
+    try:
+        problem = _operator_ask_validation(project_dir, frozen)
+    except _OperatorAskError as exc:
+        problem = str(exc)
+    if problem is not None:
+        return None, frozen, problem
+    reply = operator_authority.submit_ask(
+        _operator_ask_project_id(project_dir), frozen
+    )
+    return reply, frozen, None
+
+
+def _operator_ask_result_questions(answers: Mapping) -> dict:
+    """Display-only question types inferred from the answer shape (no business use)."""
+    questions: dict = {}
+    for qid, answer in answers.items():
+        spec: dict = {}
+        if isinstance(answer, Mapping):
+            if isinstance(answer.get("probabilities"), Mapping):
+                spec["type"] = "choice"
+            elif isinstance(answer.get("legend"), Mapping):
+                spec["type"] = "score"
+            else:
+                spec["type"] = "noul"
+        questions[qid] = spec
+    return questions
+
+
 def _book_eprint(text: str) -> None:
     """stderr 输出，legacy code page 下不炸（与 `_rag_safe_print` 同理）。"""
     encoding = getattr(sys.stderr, "encoding", None) or "utf-8"
@@ -1961,7 +3196,7 @@ def _book_gate(
     dp: str | None = None,
     cfg: decision.DecisionConfig | None = None,
     credential_snapshot: object = None,
-) -> tuple[dict | None, dict | None, str | None]:
+) -> tuple[dict | None, dict | None, dict | None, dict | None, str | None]:
     """先验后发：装载 + `check_book` + 组发送用的 state。
 
     返回 ``(state, meta, error)``；``error`` 非空时 ``state`` 为 ``None``，调用方
@@ -1972,10 +3207,10 @@ def _book_gate(
     凭证与客户端当次 Authorization 是同一个冻结值。
     """
     try:
-        book = decision_book.load_book(source)
+        book = decision_book.load_book(source, redactor=_book_secret_redactor(cfg, credential_snapshot))
     except decision_book.BookError as exc:
         _book_print_issues([exc.issue], flag=flag, source=source)
-        return None, None, exc.issue.format()
+        return None, None, None, None, exc.issue.format()
     issues = decision_book.check_book(
         book,
         project_dir=project_dir,
@@ -1992,11 +3227,17 @@ def _book_gate(
         )
     if issues:
         _book_print_issues(issues, flag=flag, source=source)
-        return None, None, f"book {source} rejected ({len(issues)} issue(s))"
+        return None, None, None, None, f"book {source} rejected ({len(issues)} issue(s))"
     meta = decision_book.book_meta(
         book, source, root=decision_book.resolve_repo_root(project_dir)
     )
-    return decision_book.book_state(book), meta, None
+    return (
+        decision_book.book_state(book),
+        meta,
+        decision_book.book_preparation(book),
+        decision_book.book_meta_dict(book),
+        None,
+    )
 
 
 def _book_receipt(
@@ -2004,6 +3245,8 @@ def _book_receipt(
     meta: Mapping | None,
     state: object,
     *,
+    preparation: Mapping | None = None,
+    redactor: object = None,
     available: bool,
     reason: str | None = None,
     decision_id: str | None = None,
@@ -2020,6 +3263,8 @@ def _book_receipt(
             project_dir,
             meta=meta,
             state=state,
+            preparation=preparation,
+            redactor=redactor,
             available=available,
             reason=reason,
             decision_id=decision_id,
@@ -2110,20 +3355,26 @@ def _decide_book(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
 
 
 def _decide_ask(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
-    """`mw decide ask`: one human-authored request to timi/jev-latest.
+    """`mw decide ask`: one isolated human-authored request (submit or observe).
 
-    Failure is exit 2 with `[mw decide ask] <reason>: <detail>` on stderr and no
-    answer on stdout: the human face never prints a made-up answer and never
-    retries another model (FIX-M).
+    The ordinary CLI never sends to the model. It freezes the complete request
+    (the same questions/state the operator will see) to exact UTF-8 bytes and
+    submits them to the registered operator host, which returns a pending id.
+    The operator confirms in that protected host; `mw decide ask --result <id>`
+    then reads the original Ask shape. Failure is exit 2 with a concrete reason
+    on stderr and no made-up answer; an unavailable host never falls back to the
+    old direct send, and no `--role`/token/TTY value is treated as a human.
     """
+    result_id = getattr(args, "result", None)
+    if result_id is not None:
+        return _decide_ask_result(args, project_dir, result_id)
     questions, err = _ask_questions(args)
     if err:
         print(f"[mw decide ask] {err}", file=sys.stderr)
         return 2
-    # T05g: the same single snapshot feeds the book gate and the client below.
+    # T05g/T05j: one config and one credential snapshot for the book gate and
+    # the frozen draft (no second read, no rotation window, zero writes).
     cfg = _decide_config_snapshot(project_dir)
-    # T05j: and the same single credential snapshot feeds the gate, the capture
-    # redactor of this decision and the client's Authorization value.
     credential_snapshot = decision.credential_snapshot(cfg)
     book_source = getattr(args, "book", None)
     book_meta = None
@@ -2134,7 +3385,7 @@ def _decide_ask(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
                 file=sys.stderr,
             )
             return 2
-        state, book_meta, err = _book_gate(
+        state, book_meta, _book_preparation, _book_local_meta, err = _book_gate(
             book_source,
             project_dir,
             flag="mw decide ask",
@@ -2148,60 +3399,165 @@ def _decide_ask(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         if err:
             print(f"[mw decide ask] {err}", file=sys.stderr)
             return 2
-    if cfg is None:
-        # A config read that raised: the gate above already ran on the
-        # env/Bearer/``sk-`` layers; the fallback stays disabled, so zero send.
-        cfg = decision.DecisionConfig(project_root=project_dir)
-    if cfg.unconfigured:
-        # Typing the command is the human's opt-in; `.mw/decide.json` with
-        # enabled=false (or a broken file) is the operator's written decision
-        # and still wins.
-        cfg.enabled = True
-    model = str(getattr(args, "model", None) or "").strip()
-    if model:
-        cfg.model = model
-    client = _AskDecisionClient(
-        cfg, project_root=project_dir, credential_snapshot=credential_snapshot
-    )
-    try:
-        response = client.decide(state, questions, dp=_ASK_DP)
-    except decision.DecisionInputError as exc:
-        print(f"[mw decide ask] {exc}", file=sys.stderr)
+    if cfg is None or cfg.config_error:
+        print(
+            "[mw decide ask] the decision config is not usable for an isolated "
+            "ask (fix .mw/decide.json); zero send",
+            file=sys.stderr,
+        )
         return 2
-    answers = response.get("answers")
-    if not response.get("available") or not isinstance(answers, dict):
-        reason = response.get("reason") or decision.REASON_UPSTREAM_ERROR
-        detail = client.ask_detail or "no detail reported"
-        print(f"[mw decide ask] {reason}: {detail}", file=sys.stderr)
-        _book_receipt(
-            project_dir,
-            book_meta,
-            state,
-            available=False,
-            reason=reason,
-            transport=response.get("transport"),
+    if cfg.unconfigured or not cfg.enabled:
+        print(
+            "[mw decide ask] the decision transport is not configured/enabled "
+            "for this project; zero send",
+            file=sys.stderr,
+        )
+        return 2
+    model = str(getattr(args, "model", None) or "").strip() or cfg.model
+    try:
+        reply, frozen, problem = _operator_ask_submit(
+            project_dir, cfg, questions, state, model
+        )
+    except Exception as exc:  # noqa: BLE001 - an unbound draft is refused
+        print(f"[mw decide ask] cannot freeze the draft: {exc}", file=sys.stderr)
+        return 2
+    if problem is not None:
+        print(
+            f"[mw decide ask] the draft is not displayable/sendable: {problem}",
+            file=sys.stderr,
+        )
+        return 2
+    assert reply is not None
+    project_id = _operator_ask_project_id(project_dir)
+    if not reply.get("ok"):
+        reason = str(reply.get("reason") or "host-unavailable")
+        print(
+            "[mw decide ask] the registered operator host is not available "
+            f"({reason}); nothing was sent and no direct fallback is used",
+            file=sys.stderr,
+        )
+        return 2
+    pending_id = reply.get("id")
+    if not isinstance(pending_id, str) or _OPERATOR_ASK_RESULT_ID_RE.fullmatch(pending_id) is None:
+        print(
+            "[mw decide ask] the host returned an invalid pending id; refusing "
+            "to report a submission",
+            file=sys.stderr,
         )
         return 2
     _book_receipt(
         project_dir,
         book_meta,
         state,
-        available=True,
-        transport=response.get("transport"),
+        available=False,
+        reason="awaiting-operator-confirmation",
+        transport=cfg.transport,
+        redactor=_book_secret_redactor(cfg, credential_snapshot),
     )
     payload = {
-        "model": response.get("model"),
-        "usage": None,
-        "latency_ms": int(response.get("latency_ms") or 0),
-        "answers": answers,
+        "ok": True,
+        "purpose": "ask",
+        "state": "pending",
+        "id": pending_id,
+        "sha256": reply.get("sha256"),
+        "project_id": project_id,
+        "frozen_bytes": len(frozen),
+        "next": f"mw decide ask --project <dir> --result {pending_id}",
     }
     if getattr(args, "json", False):
         print(json.dumps(payload, ensure_ascii=False))
         return 0
-    _ask_print(_ask_header(payload))
-    for row in _ask_rows(answers, questions):
-        _ask_print(row)
+    _ask_print(
+        "operator confirmation pending "
+        f"(id {pending_id}, {len(frozen)} frozen bytes, sha256 {reply.get('sha256')})"
+    )
+    _ask_print(
+        "confirm the exact frozen request in the registered operator host, then run: "
+    )
+    _ask_print(f"  {payload['next']}")
     return 0
+
+
+def _decide_ask_result(
+    args: argparse.Namespace, project_dir: pathlib.Path, result_id: object
+) -> int:
+    """`mw decide ask --result <id>`: read the original Ask shape (no send)."""
+    for name in ("state", "state_file", "book", "noul", "choice", "score"):
+        value = getattr(args, name, None)
+        if value:
+            print(
+                f"[mw decide ask] --result is exclusive with --{name.replace('_', '-')}",
+                file=sys.stderr,
+            )
+            return 2
+    if not isinstance(result_id, str) or _OPERATOR_ASK_RESULT_ID_RE.fullmatch(result_id) is None:
+        print(
+            "[mw decide ask] --result expects the 32-hex pending id returned by "
+            "the operator host",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        project_id = _operator_ask_project_id(project_dir)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[mw decide ask] cannot bind the project: {exc}", file=sys.stderr)
+        return 2
+    reply = operator_authority.ask_result(project_id, result_id)
+    if not reply.get("ok"):
+        reason = str(reply.get("reason") or "host-unavailable")
+        print(
+            f"[mw decide ask] the registered operator host is not available ({reason}); "
+            "no answer is reported",
+            file=sys.stderr,
+        )
+        return 2
+    state = reply.get("state")
+    result = reply.get("result")
+    if state == "pending":
+        payload = {"ok": True, "state": state, "id": result_id, "answers": None}
+        if getattr(args, "json", False):
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            _ask_print(f"pending operator confirmation (id {result_id}); nothing has been sent")
+        return 0
+    if state == "applied":
+        if not isinstance(result, Mapping):
+            print(
+                "[mw decide ask] the host reports applied without a result; "
+                "refusing to invent one",
+                file=sys.stderr,
+            )
+            return 2
+        answers = result.get("answers")
+        if not isinstance(answers, Mapping):
+            print(
+                "[mw decide ask] the host result carries no answers object; "
+                "refusing to invent one",
+                file=sys.stderr,
+            )
+            return 2
+        payload = {
+            "model": result.get("model"),
+            "usage": result.get("usage"),
+            "latency_ms": int(result.get("latency_ms") or 0),
+            "answers": dict(answers),
+        }
+        if getattr(args, "json", False):
+            print(json.dumps(payload, ensure_ascii=False))
+            return 0
+        _ask_print(_ask_header(payload))
+        for row in _ask_rows(
+            payload["answers"], _operator_ask_result_questions(payload["answers"])
+        ):
+            _ask_print(row)
+        return 0
+    # failed/expired/reserved/unknown: an observation state, never an answer.
+    print(
+        f"[mw decide ask] the isolated ask is {state}; no answer is reported "
+        "(nothing is executed or completed)",
+        file=sys.stderr,
+    )
+    return 2
 
 
 # ── Subcommand: decide dp (mw-decision-substitution T-02, design §2.5)
@@ -3159,7 +4515,7 @@ _DP_VERIFY_STATE_VALUES: dict[str, object] = {
     "task_requirements": "probe requirements (the task's own requirements, verbatim)",
     "task_deliverables": "probe deliverables (the task's own deliverables, verbatim)",
     "pm_decision_background": "probe: why the PM needs this checkpoint now",
-    # dp25-signoff-conclusion: the four-part sign-off material, not archive counts.
+    # dp-sign-key: the four-part sign-off material, not archive counts.
     "delivery_goal": "probe delivery goal",
     "actual_completion": "probe actual completion",
     "verification_evidence.verified": [],
@@ -3469,6 +4825,22 @@ def _dp_apply_parse(text: str) -> tuple[dict, list[str]]:
     inline comment would pass `apply` but fail the gate — rejected here instead.
     """
     errors: list[str] = []
+    # Typed products are refused explicitly, not silently re-read as an
+    # authority change. A dp-sign-key file (product_type: key-signoff) is a
+    # different consumer contract; its finalize/continue/user-confirm words are
+    # never an enable/disable instruction, even when it also carries a
+    # conclusion line from the legacy vocabulary.
+    typed = re.search(r"(?m)^product_type:\s*(.*?)\s*$", text)
+    if typed is not None:
+        product = typed.group(1)
+        errors.append(
+            f"this file is the typed product {product!r} (key sign-off), not an "
+            "authority-change sign-off; `mw decide dp apply` refuses it"
+            if product == decision_signoff_result.PRODUCT_TYPE
+            else "this file carries a typed product line; `mw decide dp apply` "
+            "only consumes an authority-change markdown sign-off"
+        )
+        return {"conclusion": None, "promote": [], "demote": [], "p0-open": []}, errors
     raw: dict[str, str] = {}
     for lineno, line in enumerate(text.splitlines(), start=1):
         stripped = line.rstrip()
@@ -3491,6 +4863,11 @@ def _dp_apply_parse(text: str) -> tuple[dict, list[str]]:
     conclusion = raw.get("conclusion")
     if conclusion is None:
         errors.append("missing 'conclusion:' (continue|narrow|revoke)")
+    elif conclusion == "finalize":
+        errors.append(
+            "'finalize' is the dp-sign-key sign-off word, not an authority change; "
+            "`mw decide dp apply` accepts only continue|narrow|revoke"
+        )
     elif conclusion not in _DP_SIGN_CONCLUSIONS:
         errors.append(f"invalid conclusion {conclusion!r} (continue|narrow|revoke)")
     lists: dict[str, list[str]] = {}
@@ -4436,6 +5813,34 @@ def _decide_lifecycle(args: argparse.Namespace, project_dir: pathlib.Path) -> in
         return 2
     decision_id = payload["decision_id"]
     dp = payload["dp"]
+    # Active identity first: feedback for a retired id would append new history
+    # to an old decision point, which AC-002 keeps read-only.
+    if not isinstance(dp, str):
+        _decide_print(
+            {
+                "status": "refused",
+                "recorded": False,
+                "error_class": "input",
+                "error_recorded": None,
+                "error": "dp must be a string decision point id",
+            },
+            as_json,
+        )
+        return 2
+    try:
+        decision_points.require_active_dp(dp)
+    except decision.DecisionInputError as exc:
+        _decide_print(
+            {
+                "status": "refused",
+                "recorded": False,
+                "error_class": "input",
+                "error_recorded": None,
+                "error": str(exc),
+            },
+            as_json,
+        )
+        return 2
     if payload.get("task_after") is not None and (stage not in ("executed", "settled") or meta.task_key is None):
         _decide_print({"status": "refused", "recorded": False, "error_class": "input", "error": "task_after requires an associated task and executed/settled stage"}, as_json)
         return 2
@@ -4537,13 +5942,74 @@ def _decide_lifecycle(args: argparse.Namespace, project_dir: pathlib.Path) -> in
     return 0 if result.recorded else 1
 
 
+def _decide_sign_validate(
+    args: argparse.Namespace, key_dir_path: pathlib.Path, key: str
+) -> int:
+    """Read-only typed validator face (`--validate <file>`) for T25.
+
+    The file is ``{material, current_evidence, expected_logical_id?,
+    expected_snapshot?}``. It runs ``validate_key_signoff`` (the T22 read-only
+    validator): no model, no credential, no write, no stage close and no second
+    approval. The typed result is printed as JSON; exit 0 only when the result
+    is a current, active ``finalize`` whose matter/evidence/record all match
+    (``signs_key`` is true).
+    """
+    path = pathlib.Path(str(args.validate))
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"[mw decide sign] cannot read the validator input: {exc}", file=sys.stderr)
+        return 2
+    allowed = {
+        "material",
+        "current_evidence",
+        "expected_logical_id",
+        "expected_snapshot",
+    }
+    if not isinstance(raw, Mapping) or set(raw) - allowed:
+        print(
+            "[mw decide sign] validator input must be an object with material, "
+            "current_evidence and optional expected ids only",
+            file=sys.stderr,
+        )
+        return 2
+    if "material" not in raw or "current_evidence" not in raw:
+        print(
+            "[mw decide sign] validator input needs material and current_evidence",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        validation = decision_signoff_result.validate_key_signoff(
+            key_dir_path,
+            key,
+            raw["material"],
+            raw["current_evidence"],
+            expected_logical_id=raw.get("expected_logical_id"),
+            expected_snapshot=raw.get("expected_snapshot"),
+        )
+    except Exception as exc:  # noqa: BLE001 - an unreadable key dir is a refusal
+        print(f"[mw decide sign] the validator refused: {exc}", file=sys.stderr)
+        return 2
+    payload = validation.as_dict()
+    print(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=None if getattr(args, "json", False) else 2,
+            sort_keys=True,
+        )
+    )
+    return 0 if validation.signs_key else 2
+
+
 def _decide_sign_finalize(
     args: argparse.Namespace,
     project_dir: pathlib.Path,
     key_dir_path: pathlib.Path,
     key: str,
 ) -> int:
-    """`mw decide sign <key> --stdin`: PM material -> one dp25 finalize judgment.
+    """`mw decide sign <key> --stdin`: PM material -> one dp-sign-key finalize judgment.
 
     Pre-call gates preserved: config/typed material/global transport/budget
     (inside ``decide_for``), archive chain, and the sign-off write face. The
@@ -4572,6 +6038,66 @@ def _decide_sign_finalize(
             as_json,
         )
         return 0
+    retry_id = getattr(args, "retry_write", None)
+    payload = None
+    preparation = None
+    if getattr(args, "stdin", False):
+        payload, err = _decide_read_envelope_json(args)
+        if err:
+            return _decide_sign_refusal(as_json, [err], logical_id=retry_id)
+        assert payload is not None
+        material, preparation, admission_meta, context, parent_ref, err = (
+            _decide_prepared_envelope(payload)
+        )
+        if err:
+            return _decide_sign_refusal(as_json, [err], logical_id=retry_id)
+        assert admission_meta is not None
+        if admission_meta.key != key or (
+            retry_id and admission_meta.logical_id != retry_id
+        ):
+            return _decide_sign_refusal(
+                as_json, ["envelope identity does not match the command"],
+                logical_id=retry_id,
+            )
+    else:
+        admission_meta = decision_lifecycle.DecisionMeta(
+            key=key, logical_id=retry_id, initiator_role="pm",
+        )
+    verified_role, actor_reason, actor_detail = _decide_actor_binding(
+        project_dir, admission_meta
+    )
+    if verified_role != "pm":
+        return _decide_sign_refusal(
+            as_json,
+            [actor_reason or "role-forbidden", actor_detail or "sign requires the live PM"],
+            logical_id=retry_id or getattr(admission_meta, "logical_id", None),
+        )
+    if payload is not None:
+        issues = decision_points.prepared_request_issues(
+            decision_signoff_result.DP_ID, material, preparation, actor_role="pm"
+        )
+        if context is not None:
+            issues = tuple(issues) + tuple(
+                ("context", problem)
+                for problem in decision_context.validate_context(
+                    context, decision_signoff_result.DP_ID
+                )
+            )
+        if issues:
+            return _decide_sign_refusal(
+                as_json, [f"{field}: {problem}" for field, problem in issues],
+                logical_id=admission_meta.logical_id,
+            )
+    point = decision_points.require_active_dp(decision_signoff_result.DP_ID)
+    mode, blocked_reason, _blocked_escalated = _decide_entry_mode(control_dir, point)
+    if blocked_reason is not None:
+        return _decide_sign_refusal(
+            as_json, [f"dp-sign-key is unavailable ({blocked_reason})"],
+            logical_id=admission_meta.logical_id,
+        )
+    points_view = decision_points.load_points_config(control_dir)
+    policy = decision_points.resolve_policy(point.id, points_view.row(point.id), cfg)
+    cfg = decision_points._apply_per_dp_budget(cfg, policy)
     credential_snapshot = decision.credential_snapshot(cfg)
     redactor = decision.known_secret_redactor(cfg, snapshot=credential_snapshot)
     facts = decide_signoff.collect(key_dir_path, key)
@@ -4585,6 +6111,13 @@ def _decide_sign_finalize(
         decision_signoff_result.assert_safe_target(key_dir_path, target)
     except decision_signoff_result.SignoffResultError as exc:
         problems.append(f"sign-off path is unsafe: {exc}")
+    # Freeze the real contract/goal identity before any request or model call.
+    # The response is bound to this capture, never to a later resample.
+    requested_basis = decision_signoff_result.capture_native_basis(key_dir_path)
+    problems.extend(
+        f"native basis is not usable: {problem}"
+        for problem in decision_signoff_result.basis_usable_now(requested_basis)
+    )
     if problems:
         return _decide_sign_refusal(as_json, problems, logical_id=None)
 
@@ -4602,8 +6135,9 @@ def _decide_sign_finalize(
             as_json, ["the versioned sign path requires --stdin"], logical_id=None
         )
 
-    meta = None
-    material: dict | None = None
+    meta = admission_meta
+    if payload is None:
+        material = None
     record = None
     record_status = "existing"
     if retry_id:
@@ -4621,25 +6155,6 @@ def _decide_sign_finalize(
                 ["no persisted result for this logical_id; issue a new judgment"],
                 logical_id=retry_id,
             )
-        if getattr(args, "stdin", False):
-            payload, err = _decide_read_envelope_json(args)
-            if err:
-                return _decide_sign_refusal(
-                    as_json, [err], logical_id=retry_id
-                )
-            assert payload is not None
-            material, meta, err = _decide_envelope(payload)
-            if err:
-                return _decide_sign_refusal(
-                    as_json, [err], logical_id=retry_id
-                )
-            assert material is not None and meta is not None
-            if meta.logical_id != retry_id:
-                return _decide_sign_refusal(
-                    as_json,
-                    ["--retry-write does not match the envelope logical_id"],
-                    logical_id=retry_id,
-                )
         if record.key != key:
             return _decide_sign_refusal(
                 as_json,
@@ -4650,6 +6165,18 @@ def _decide_sign_finalize(
             return _decide_sign_refusal(
                 as_json,
                 ["archive evidence changed since the recorded conclusion; issue a new judgment"],
+                logical_id=record.logical_id,
+            )
+        stale_basis = decision_signoff_result.native_basis_problems(
+            record.native_basis, requested_basis
+        )
+        if stale_basis:
+            return _decide_sign_refusal(
+                as_json,
+                [
+                    "native contract/goal basis changed since the recorded conclusion: "
+                    + "; ".join(stale_basis)
+                ],
                 logical_id=record.logical_id,
             )
         if material is not None:
@@ -4677,20 +6204,7 @@ def _decide_sign_finalize(
                 logical_id=record.logical_id,
             )
     else:
-        payload, err = _decide_read_envelope_json(args)
-        if err:
-            return _decide_sign_refusal(as_json, [err], logical_id=None)
-        assert payload is not None
-        material, meta, err = _decide_envelope(payload)
-        if err:
-            return _decide_sign_refusal(as_json, [err], logical_id=None)
-        assert material is not None and meta is not None
-        if meta.key != key:
-            return _decide_sign_refusal(
-                as_json,
-                ["envelope.meta.key does not match the command key"],
-                logical_id=meta.logical_id,
-            )
+        assert material is not None and preparation is not None and meta is not None
         try:
             record = decision_signoff_result.read_result(key_dir_path, meta.logical_id)
         except decision_signoff_result.SignoffResultError as exc:
@@ -4711,6 +6225,18 @@ def _decide_sign_finalize(
                 return _decide_sign_refusal(
                     as_json,
                     ["archive evidence changed since the recorded conclusion; issue a new judgment"],
+                    logical_id=meta.logical_id,
+                )
+            stale_basis = decision_signoff_result.native_basis_problems(
+                record.native_basis, requested_basis
+            )
+            if stale_basis:
+                return _decide_sign_refusal(
+                    as_json,
+                    [
+                        "native contract/goal basis changed since the recorded conclusion: "
+                        + "; ".join(stale_basis)
+                    ],
                     logical_id=meta.logical_id,
                 )
             return _decide_sign_finish(
@@ -4747,7 +6273,7 @@ def _decide_sign_finalize(
             )
         if point.id != decision_signoff_result.DP_ID:
             return _decide_sign_refusal(
-                as_json, ["the dp25 point is not registered"], logical_id=meta.logical_id
+                as_json, ["the dp-sign-key point is not registered"], logical_id=meta.logical_id
             )
         try:
             start = decision_lifecycle.record_start(
@@ -4774,46 +6300,56 @@ def _decide_sign_finalize(
                 ["the creation fact could not be recorded; zero model call"],
                 logical_id=meta.logical_id,
             )
-        client = decision.DecisionClient(
-            cfg, project_root=control_dir, credential_snapshot=credential_snapshot
-        )
         trigger = decision_points.Trigger.from_mapping(
-            material,
-            trigger_id=meta.logical_id,
-            key=meta.key,
-            task_key=meta.task_key,
+            material, trigger_id=meta.logical_id, key=meta.key, task_key=meta.task_key
+        )
+        capture = decision_points._DecisionCapture(observation=None, intent="answer")
+        scope, _channel = decision_points._capture_scope(
+            capture, project=control_dir, cfg=cfg, client=None,
+            dp_point=point, decision_id=f"{point.id}:{meta.logical_id}",
+            trigger=trigger, snapshot=credential_snapshot,
+        )
+        client = decision.DecisionClient(
+            cfg, project_root=control_dir, credential_snapshot=credential_snapshot,
+            wire_scope=scope,
         )
         try:
-            outcome = decision_points.decide_for(
-                point.id, trigger, control_dir, client=client, intent="answer"
+            response = client.request_prepared(
+                point.id, material, preparation,
+                actor_role="pm", logical_id=meta.logical_id,
             )
         except decision.DecisionInputError as exc:
             return _decide_sign_refusal(
                 as_json, [str(exc)], logical_id=meta.logical_id
             )
-        if outcome.status not in ("acted", "suggested") or not outcome.answer:
-            reason = outcome.escalated_reason or outcome.status
-            detail = (outcome.detail or "").strip()
-            problems = [f"dp25 did not produce a conclusion ({reason})"]
+        decision_points._maybe_archive(
+            True, dp_point=point, trigger=trigger, project_dir=control_dir,
+            state={"material": decision_points.model_state_for(point.id, material),
+                   "preparation": preparation},
+            mode=mode, response=response, authority="advisory",
+            escalated_reason=None if response.get("available") else "unavailable",
+            acted=False, actual_action=None, note="intent=answer", policy=policy,
+        )
+        if not response.get("available") or response.get("business_decisions") != 1:
+            reason = response.get("reason") or "bad-response"
+            detail = (response.get("detail") or "").strip()
+            problems = [f"dp-sign-key did not produce a conclusion ({reason})"]
             if detail:
                 problems.append(detail.splitlines()[0][:240])
             return _decide_sign_refusal(
                 as_json, problems, logical_id=meta.logical_id
             )
-        item = dict(outcome.answer).get("q-conclusion")
-        conclusion = item.get("value") if isinstance(item, dict) else item
+        conclusion = response.get("choice")
         if conclusion not in decision_signoff_result.CONCLUSIONS:
             return _decide_sign_refusal(
                 as_json,
-                ["dp25 answer is not in the finalize|continue|user-confirm set"],
+                ["dp-sign-key answer is not in the finalize|continue|user-confirm set"],
                 logical_id=meta.logical_id,
             )
-        response = dict(outcome.response or {})
         transport = response.get("transport") or "none"
         model = response.get("model")
         confidence_source = (
-            outcome.confidence_source
-            or response.get("confidence_source")
+            response.get("confidence_source")
             or decision.CONFIDENCE_SOURCE_UNKNOWN
         )
         if transport == "none" or not model:
@@ -4822,11 +6358,36 @@ def _decide_sign_finalize(
                 ["the conclusion has no verifiable transport/model provenance"],
                 logical_id=meta.logical_id,
             )
+        confidence = decision_points._aggregate_confidence(response.get("answers"))
+        threshold = decision_points._confidence_threshold(cfg, None, policy)
+        if confidence_source == decision.CONFIDENCE_SOURCE_API and (
+            confidence is None or confidence < threshold
+        ):
+            return _decide_sign_refusal(
+                as_json, ["dp-sign-key answer is below the configured confidence threshold"],
+                logical_id=meta.logical_id,
+            )
+        # The answer is only applicable to the basis captured before the call.
+        # Never bind a stale answer to a contract/goal edited during the call.
+        after_response_basis = decision_signoff_result.capture_native_basis(key_dir_path)
+        changed_basis = decision_signoff_result.native_basis_problems(
+            requested_basis, after_response_basis
+        )
+        if changed_basis:
+            return _decide_sign_refusal(
+                as_json,
+                [
+                    "native contract/goal basis changed during the model request: "
+                    + "; ".join(changed_basis)
+                    + "; the answer was not bound or signed"
+                ],
+                logical_id=meta.logical_id,
+            )
         record = decision_signoff_result.build_result(
             key_dir_path,
             key=key,
             logical_id=meta.logical_id,
-            decision_id=outcome.decision_id,
+            decision_id=f"{point.id}:{meta.logical_id}",
             conclusion=str(conclusion),
             material=material,
             facts=facts,
@@ -4837,6 +6398,16 @@ def _decide_sign_finalize(
             initiator_role=meta.initiator_role,
             retry_of=meta.retry_of,
             snapshot_material=material,
+            native_basis=requested_basis,
+            prepared_proof={
+                "preparation": preparation,
+                "response": response,
+                "key": meta.key,
+                "logical_id": meta.logical_id,
+                "decision_id": f"{point.id}:{meta.logical_id}",
+                "actor_role": verified_role,
+                "material_sha256": decision_signoff_result.digest_material(material)[0],
+            },
         )
         record_status = "written"
         try:
@@ -4916,11 +6487,92 @@ def _decide_sign_finish(
     model_called: bool,
     record_status: str,
 ) -> int:
-    """Apply one recorded dp25 conclusion (file for finalize, handoff otherwise)."""
+    """Apply one recorded dp-sign-key conclusion (file for finalize, handoff otherwise)."""
     as_json = bool(getattr(args, "json", False))
+    proof = record.prepared_proof
+    if not isinstance(proof, Mapping):
+        return _decide_sign_refusal(
+            as_json, ["the result has no prepared producer proof; issue a new judgment"],
+            logical_id=record.logical_id,
+        )
+    response = proof.get("response")
+    preparation = proof.get("preparation")
+    if not isinstance(response, Mapping) or not isinstance(preparation, Mapping):
+        return _decide_sign_refusal(
+            as_json, ["the prepared producer proof is incomplete"],
+            logical_id=record.logical_id,
+        )
+    issues = decision_points.prepared_request_issues(
+        record.dp, record.material, preparation, actor_role=proof.get("actor_role"),
+        choice=response.get("choice"), basis_id=response.get("basis_id"),
+    )
+    if issues:
+        return _decide_sign_refusal(
+            as_json, ["the persisted preparation does not satisfy the current contract"],
+            logical_id=record.logical_id,
+        )
+    selected_basis = next(
+        (item for item in preparation.get("basis_catalog", [])
+         if isinstance(item, Mapping) and item.get("id") == response.get("basis_id")),
+        None,
+    )
+    answers = response.get("answers")
+    question_id = decision_points.get_decision_point(record.dp).questions[0]["id"]
+    business_answer = answers.get(question_id) if isinstance(answers, Mapping) else None
+    basis_answer = answers.get("basis_id") if isinstance(answers, Mapping) else None
+    if (
+        issues
+        or proof.get("key") != record.key
+        or proof.get("logical_id") != record.logical_id
+        or proof.get("decision_id") != record.decision_id
+        or record.decision_id != f"{record.dp}:{record.logical_id}"
+        or proof.get("material_sha256") != record.material_sha256
+        or record.initiator_role != "pm"
+        or response.get("available") is not True
+        or response.get("business_decisions") != 1
+        or response.get("choice") != record.conclusion
+        or response.get("prepared_at") != preparation.get("prepared_at")
+        or response.get("basis_source") != decision_points.BASIS_SOURCE
+        or not isinstance(selected_basis, Mapping)
+        or response.get("basis_text") != selected_basis.get("text")
+        or not isinstance(business_answer, Mapping)
+        or business_answer.get("value") != record.conclusion
+        or not isinstance(basis_answer, Mapping)
+        or basis_answer.get("value") != response.get("basis_id")
+        or response.get("transport") != record.transport
+        or response.get("model") != record.model
+    ):
+        return _decide_sign_refusal(
+            as_json, ["the prepared producer proof does not match the recorded judgment"],
+            logical_id=record.logical_id,
+        )
     payload = _decide_sign_payload_base(record, facts, key)
+    payload.update({
+        "available": True,
+        "answers": dict(answers),
+        "choice": response.get("choice"),
+        "basis_id": response.get("basis_id"),
+        "basis_text": response.get("basis_text"),
+        "basis_source": response.get("basis_source"),
+        "prepared_at": response.get("prepared_at"),
+        "preparation": dict(preparation),
+        "business_decisions": 1,
+    })
     payload["record_status"] = record_status
     payload["model_called"] = model_called
+    current_basis = decision_signoff_result.capture_native_basis(key_dir_path)
+    stale_basis = decision_signoff_result.native_basis_problems(
+        record.native_basis, current_basis
+    )
+    if stale_basis:
+        payload["signoff_status"] = "failed"
+        payload["feedback_status"] = "not-recorded"
+        payload["problems"] = [
+            "native contract/goal basis changed since the recorded conclusion: "
+            + "; ".join(stale_basis)
+        ]
+        _decide_print(payload, as_json)
+        return 2
     feedback: list = []
 
     def _feedback(stage: str, thunk) -> None:
@@ -5040,7 +6692,7 @@ def _decide_sign_finish(
 
 
 def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
-    """`mw decide sign`: sign the PM's dp25 material, or persist the mode.
+    """`mw decide sign`: sign the PM's dp-sign-key material, or persist the mode.
 
     One path only (approved design §4.4):
 
@@ -5048,7 +6700,7 @@ def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
        exit 0 (``--dry-run`` prints only). They never sign.
     2. ``signoff=disable`` -> nothing is written, exit 0 (the ``done`` gate also
        stops requiring the file, D-071).
-    3. ``<key> --stdin`` (and ``--retry-write``) sign the PM's four-part dp25
+    3. ``<key> --stdin`` (and ``--retry-write``) sign the PM's four-part dp-sign-key
        material: ``delivery_goal`` / ``actual_completion`` /
        ``verification_evidence.verified`` + ``.unverified`` /
        ``unfinished_impact``. ``finalize`` writes the valid sign-off file.
@@ -5061,8 +6713,18 @@ def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
     if err:
         print(f"[mw decide sign] {err}", file=sys.stderr)
         return 2
+    if getattr(args, "validate", None) is not None:
+        # Read-only typed validator: never a second approval, never a write.
+        return _decide_sign_validate(args, key_dir_path, key)
     if getattr(args, "stdin", False) or getattr(args, "retry_write", None):
-        # Card T05: the PM-material dp25 path (the only signing path).
+        if getattr(args, "dry_run", False):
+            return _decide_sign_preview(
+                decide_signoff.collect(key_dir_path, key),
+                key,
+                bool(getattr(args, "allow_empty", False)),
+                bool(getattr(args, "json", False)),
+            )
+        # Card T05: the PM-material dp-sign-key path (the only signing path).
         return _decide_sign_finalize(args, project_dir, key_dir_path, key)
     # `.mw/decide.json` and `.mw/decide-points.json` live at the control root,
     # i.e. two levels above the key dir — `--project` may be either one.
@@ -5097,9 +6759,9 @@ def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         return 0
 
     # Explicit refusal instead of a silent legacy run: the count-based
-    # continue|narrow|revoke face was replaced by the PM's dp25 material.
+    # continue|narrow|revoke face was replaced by the PM's dp-sign-key material.
     problems = [
-        "this command no longer signs the legacy archive counts: dp25 now signs "
+        "this command no longer signs the legacy archive counts: dp-sign-key now signs "
         "the PM's four-part material (delivery_goal, actual_completion, "
         "verification_evidence.verified, verification_evidence.unverified, "
         "unfinished_impact)",
@@ -9219,6 +10881,14 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
         return _ap_gates(args, project_dir)
     if args.autopilot_action == "answer":
         return _ap_answer(args, project_dir)
+    if args.autopilot_action == "gate":
+        return _ap_gate(args, project_dir)
+    if args.autopilot_action == "stage-close-material":
+        return _ap_stage_close_material(args, project_dir)
+    if args.autopilot_action == "family":
+        return _ap_family(args, project_dir)
+    if args.autopilot_action == "halted-recovery":
+        return _ap_halted_recovery_entry(args, project_dir)
     if args.autopilot_action == "contract-guard":
         return _ap_contract_guard(args, project_dir)
     if args.autopilot_action == "contract-freeze":
@@ -9499,6 +11169,272 @@ def _ap_answer(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         f"[mw autopilot answer] {result.gate_id} → {result.status} "
         f"(answered_by={answered_by})"
     )
+    return 0
+
+
+def _ap_pm_book_meta(book: object, owner_key: str) -> decision_lifecycle.DecisionMeta:
+    """Read the PM identity of a prepared gate book (never inferred from argv)."""
+    if not isinstance(book, Mapping):
+        raise _ap_conductor.gate_effects.GateBlocked("prepared book must be an object")
+    body = book.get("book") if isinstance(book.get("book"), Mapping) else book
+    meta, err = _decide_meta_from_book_local(body.get("meta"))
+    if err:
+        raise _ap_conductor.gate_effects.GateBlocked(err)
+    if meta.initiator_role != "pm" or meta.key != owner_key:
+        raise _ap_conductor.gate_effects.GateBlocked(
+            "prepared book identity is not the current claimed PM key")
+    return meta
+
+
+def _ap_prepared_for_trigger(project_dir: pathlib.Path, trigger_gate_id: str,
+                             owner_key: str, book: object) -> _ap_conductor.gates.Gate:
+    """The prepared gate for this trigger (existing one on a replay).
+
+    A trigger that already produced an executed prepared gate must replay that
+    gate instead of being refused as "already produced", so a repeated `run`
+    never creates a second decision.
+    """
+    for gate in _ap_conductor.gates.enumerate(_ap_conductor.gates_dir(project_dir)):
+        if gate.historical or f"trigger:{trigger_gate_id}" not in gate.context_refs:
+            continue
+        if gate.effect not in ("applied", "in-progress", "unknown"):
+            continue
+        return gate
+    return _ap_conductor.prepare_pm_gate(
+        project_dir, trigger_gate_id, owner_key=owner_key, book=book)
+
+
+def _ap_pm_gate_request(project_dir: pathlib.Path, prepared: _ap_conductor.gates.Gate,
+                        owner_key: str, book: object, *, client: object | None = None) -> dict:
+    """Prepare -> one real prepared request -> the formal TS answer writer.
+
+    The model answer, its basis and the authorization never come from CLI JSON:
+    the book supplies only the PM material/preparation/meta, the transport
+    produces the one business decision, and `gate-writer.ts` deposits it. A
+    recorded start without a recorded request is an unknown outcome and is not
+    re-sent; a recorded request is reused without a second model call.
+    """
+    return _ap_conductor.request_prepared_gate(
+        project_dir, prepared, owner_key=owner_key, book=book, client=client)
+
+
+def _ap_gate_run(args: argparse.Namespace, project_dir: pathlib.Path, *,
+                 client: object | None = None) -> int:
+    """`mw autopilot gate run`: the normal PM request/answer/consume chain.
+
+    prepare -> same-call prepared request -> the one TS writer -> current-source
+    recheck -> real object consumer. Model output is the only answer source; a
+    replay never sends a second request and an unknown interrupted state stops.
+    """
+    try:
+        book = json.loads(pathlib.Path(args.book).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"[mw autopilot gate] Error: unreadable prepared book ({exc})", file=sys.stderr)
+        return 1
+    try:
+        prepared = _ap_prepared_for_trigger(project_dir, args.trigger, args.key, book)
+        request = _ap_pm_gate_request(
+            project_dir, prepared, args.key, book, client=client)
+        result = _ap_conductor.consume_pm_gate(
+            project_dir, prepared.id, owner_key=args.key, book=book)
+    except _ap_conductor.gate_effects.GateBlocked as exc:
+        print(f"[mw autopilot gate] Error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps({
+        "status": result.state,
+        "gate_id": prepared.id,
+        "request": request,
+        "reason": result.reason,
+        "decision_ref": result.parent_ref,
+        "receipt": result.receipt,
+        "duplicate": result.duplicate,
+    }, ensure_ascii=False, sort_keys=True))
+    return {"applied": 0, "blocked": 2, "failed": 4}.get(result.state, 3)
+
+
+def _ap_gate(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw autopilot gate prepare|consume`: the PM's H01-H05 entry.
+
+    Both actions require the calling process (or a direct child) to be the
+    current claimed PM window; `prepare` binds one unresolved conductor trigger
+    to the PM's prepared book, `consume` applies the answered prepared gate
+    through the real project-object adapter and the deployed authority source.
+    """
+    book: object | None = None
+    if getattr(args, "book", None):
+        try:
+            book = json.loads(pathlib.Path(args.book).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"[mw autopilot gate] Error: unreadable prepared book ({exc})", file=sys.stderr)
+            return 1
+    try:
+        if args.gate_action == "run":
+            return _ap_gate_run(args, project_dir)
+        if args.gate_action == "prepare":
+            prepared = _ap_conductor.prepare_pm_gate(
+                project_dir, args.trigger, owner_key=args.key, book=book)
+            sidecar = _ap_conductor._prepared_gate_sidecar(project_dir, prepared.id)
+            print(json.dumps({
+                "status": "prepared",
+                "gate_id": prepared.id,
+                "gate_file": str(prepared.path),
+                "sidecar": str(sidecar),
+                "matter_ref": prepared.matter_ref,
+                "substantive_version": prepared.substantive_version,
+                "transport": prepared.transport,
+            }, ensure_ascii=False, sort_keys=True))
+            return 0
+        result = _ap_conductor.consume_pm_gate(
+            project_dir, args.gate_id, owner_key=args.key, book=book)
+    except _ap_conductor.gate_effects.GateBlocked as exc:
+        print(f"[mw autopilot gate] Error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps({
+        "state": result.state,
+        "reason": result.reason,
+        "decision_ref": result.parent_ref,
+        "receipt": result.receipt,
+        "duplicate": result.duplicate,
+    }, ensure_ascii=False, sort_keys=True))
+    return {"applied": 0, "blocked": 2, "failed": 4}.get(result.state, 3)
+
+
+def _ap_family_run(args: argparse.Namespace, project_dir: pathlib.Path, *,
+                   client: object | None = None) -> int:
+    """`mw autopilot family run`: one normal PM family request/answer/consume."""
+    try:
+        book = json.loads(pathlib.Path(args.book).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"[mw autopilot family] Error: unreadable prepared book ({exc})", file=sys.stderr)
+        return 1
+    try:
+        prepared = _ap_conductor.prepare_pm_family_gate(
+            project_dir, args.family, owner_key=args.key, book=book)
+        request = _ap_pm_gate_request(
+            project_dir, prepared, args.key, book, client=client)
+        result = _ap_conductor.consume_pm_family_gate(
+            project_dir, prepared.id, owner_key=args.key, book=book)
+    except _ap_conductor.gate_effects.GateBlocked as exc:
+        print(f"[mw autopilot family] Error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps({
+        "status": result.state,
+        "family": args.family,
+        "gate_id": prepared.id,
+        "request": request,
+        "reason": result.reason,
+        "decision_ref": result.parent_ref,
+        "receipt": result.receipt,
+        "duplicate": result.duplicate,
+    }, ensure_ascii=False, sort_keys=True))
+    return {"applied": 0, "blocked": 2, "failed": 4}.get(result.state, 3)
+
+
+def _ap_family(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw autopilot family prepare|consume|run`: H06/H07/H08 normal entry."""
+    book: object | None = None
+    if getattr(args, "book", None):
+        try:
+            book = json.loads(pathlib.Path(args.book).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"[mw autopilot family] Error: unreadable prepared book ({exc})",
+                  file=sys.stderr)
+            return 1
+    try:
+        if args.family_action == "run":
+            return _ap_family_run(args, project_dir)
+        if args.family_action == "prepare":
+            prepared = _ap_conductor.prepare_pm_family_gate(
+                project_dir, args.family, owner_key=args.key, book=book)
+            print(json.dumps({
+                "status": "prepared", "family": args.family,
+                "gate_id": prepared.id, "gate_file": str(prepared.path),
+                "matter_ref": prepared.matter_ref,
+                "substantive_version": prepared.substantive_version,
+                "transport": prepared.transport,
+            }, ensure_ascii=False, sort_keys=True))
+            return 0
+        result = _ap_conductor.consume_pm_family_gate(
+            project_dir, args.gate_id, owner_key=args.key, book=book)
+    except _ap_conductor.gate_effects.GateBlocked as exc:
+        print(f"[mw autopilot family] Error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps({
+        "status": result.state, "family": args.family,
+        "reason": result.reason, "decision_ref": result.parent_ref,
+        "receipt": result.receipt, "duplicate": result.duplicate,
+    }, ensure_ascii=False, sort_keys=True))
+    return {"applied": 0, "blocked": 2, "failed": 4}.get(result.state, 3)
+
+
+def _ap_halted_recovery(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw autopilot halted-recovery run`: prepare the real stalled gate and run H11."""
+    try:
+        payload = json.loads(pathlib.Path(args.input).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"[mw autopilot halted-recovery] Error: unreadable input ({exc})",
+              file=sys.stderr)
+        return 1
+    if not isinstance(payload, dict):
+        print("[mw autopilot halted-recovery] Error: input must be an object", file=sys.stderr)
+        return 2
+    try:
+        submission = _ap_conductor.prepare_pm_halted_recovery(
+            project_dir, args.key,
+            note=payload.get("pm_note"), preparation=payload.get("preparation"))
+        result = _ap_recovery.run_pm_halted_recovery(project_dir, args.key, submission)
+    except _ap_conductor.gate_effects.GateBlocked as exc:
+        print(f"[mw autopilot halted-recovery] Error: {exc}", file=sys.stderr)
+        return 2
+    except (_ap_recovery.RecoveryBlocked, _ap_conductor.operator_authority.AuthorityError) as exc:
+        print(f"[mw autopilot halted-recovery] Error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps({"submission": {"stage": submission["stage"], "stage_version":
+                                     submission["stage_version"],
+                                     "gate_id": submission["gate_id"]},
+                      "result": result}, ensure_ascii=False, sort_keys=True, default=str))
+    return 0 if result.get("ok") is True else 2
+
+
+def _ap_halted_recovery_view(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    view = _ap_recovery.read_halted_recovery_view(project_dir, args.key)
+    print(json.dumps(view, ensure_ascii=False, sort_keys=True, default=str))
+    return 0 if view.get("ok") is True else 2
+
+
+def _ap_halted_recovery_consume(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    st = _ap_conductor.ConductorState(
+        _ap_timeline.Timeline(_ap_timeline.timeline_path(project_dir)),
+        _ap_conductor.goal_mtime_ns(project_dir))
+    result = _ap_conductor.consume_halted_recovery(project_dir, args.key, st)
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True, default=str))
+    return 0 if result.get("state") in ("recorded", "duplicate") else 2
+
+
+def _ap_halted_recovery_entry(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    if args.recovery_action == "run":
+        return _ap_halted_recovery(args, project_dir)
+    if args.recovery_action == "view":
+        return _ap_halted_recovery_view(args, project_dir)
+    return _ap_halted_recovery_consume(args, project_dir)
+
+
+def _ap_stage_close_material(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw autopilot stage-close-material`: the only producer of the CURRENT
+    stage-close submission. An invalid/stale submission writes nothing."""
+    try:
+        submission = json.loads(pathlib.Path(args.input).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"[mw autopilot stage-close-material] Error: unreadable input ({exc})", file=sys.stderr)
+        return 1
+    try:
+        path = _ap_conductor.submit_stage_close_material(
+            project_dir, args.stage, owner_key=args.key, submission=submission)
+    except _ap_conductor.gate_effects.GateBlocked as exc:
+        print(f"[mw autopilot stage-close-material] Error: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps({"status": "submitted", "path": str(path), "stage": args.stage},
+                     ensure_ascii=False, sort_keys=True))
     return 0
 
 
@@ -12395,6 +14331,74 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--confirm-destructive", action="store_true", dest="confirm_destructive",
         help="Second confirmation required to actually write a reject (AC-009)",
     )
+    gate_p = autopilot_sub.add_parser(
+        "gate",
+        help="PM H01-H05 decision gate entry (prepare a trigger, consume its answer)",
+    )
+    gate_sub = gate_p.add_subparsers(dest="gate_action", required=True)
+    gate_prepare_p = gate_sub.add_parser(
+        "prepare", help="Bind one unresolved conductor trigger to the PM's prepared book")
+    gate_prepare_p.add_argument("--project", required=True, help="Project directory")
+    gate_prepare_p.add_argument("--key", required=True, help="The current claimed PM key")
+    gate_prepare_p.add_argument("--trigger", required=True, help="Unresolved conductor gate id")
+    gate_prepare_p.add_argument("--book", required=True, help="Prepared dp-gate-approve book JSON")
+    gate_consume_p = gate_sub.add_parser(
+        "consume", help="Apply one answered prepared gate through its real object adapter")
+    gate_consume_p.add_argument("--project", required=True, help="Project directory")
+    gate_consume_p.add_argument("--key", required=True, help="The current claimed PM key")
+    gate_consume_p.add_argument("--gate-id", required=True, help="Answered prepared gate id")
+    gate_consume_p.add_argument("--book", default=None,
+                                help="Optional prepared book; must match the persisted submission")
+    gate_run_p = gate_sub.add_parser(
+        "run", help="Prepare, request one model answer and consume the bounded result")
+    gate_run_p.add_argument("--project", required=True, help="Project directory")
+    gate_run_p.add_argument("--key", required=True, help="The current claimed PM key")
+    gate_run_p.add_argument("--trigger", required=True, help="Unresolved conductor gate id")
+    gate_run_p.add_argument("--book", required=True, help="Prepared dp-gate-approve book JSON")
+    family_p = autopilot_sub.add_parser(
+        "family",
+        help="PM H06/H07/H08 family entry (prepare/consume/run from a prepared book)")
+    family_sub = family_p.add_subparsers(dest="family_action", required=True)
+    for _name in ("prepare", "consume", "run"):
+        _p = family_sub.add_parser(
+            _name,
+            help="Prepare the real family gate, consume it, or run both once")
+        _p.add_argument("--project", required=True, help="Project directory")
+        _p.add_argument("--key", required=True, help="The current claimed PM key")
+        _p.add_argument(
+            "--family", required=True,
+            choices=("goal-adoption", "contract-refreeze", "cross-key-repair"),
+            help="Family business entry")
+        if _name == "consume":
+            _p.add_argument("--gate-id", required=True, help="Answered family gate id")
+            _p.add_argument("--book", default=None,
+                            help="Optional prepared book; must match the persisted submission")
+        else:
+            _p.add_argument("--book", required=True, help="Prepared family book JSON")
+    halted_p = autopilot_sub.add_parser(
+        "halted-recovery",
+        help="PM H11 halted-stage recovery (run a bounded recovery, read its view, consume one action)")
+    halted_sub = halted_p.add_subparsers(dest="recovery_action", required=True)
+    halted_run_p = halted_sub.add_parser(
+        "run", help="Prepare the real stalled gate and run one bounded H11 recovery")
+    halted_run_p.add_argument("--project", required=True, help="Project directory")
+    halted_run_p.add_argument("--key", required=True, help="The current claimed PM key")
+    halted_run_p.add_argument("--input", required=True, help="PM note/preparation JSON file")
+    halted_view_p = halted_sub.add_parser(
+        "view", help="Read the bounded recovery view without changing any object")
+    halted_view_p.add_argument("--project", required=True, help="Project directory")
+    halted_view_p.add_argument("--key", required=True, help="The current claimed PM key")
+    halted_consume_p = halted_sub.add_parser(
+        "consume", help="Record at most one bounded observation action for the current view")
+    halted_consume_p.add_argument("--project", required=True, help="Project directory")
+    halted_consume_p.add_argument("--key", required=True, help="The current claimed PM key")
+    stage_material_p = autopilot_sub.add_parser(
+        "stage-close-material",
+        help="Submit the PM's CURRENT stage-close material (invalid/stale writes nothing)")
+    stage_material_p.add_argument("--project", required=True, help="Project directory")
+    stage_material_p.add_argument("--stage", type=int, required=True, help="Stage number")
+    stage_material_p.add_argument("--key", required=True, help="The current claimed PM key")
+    stage_material_p.add_argument("--input", required=True, help="Submission JSON file")
     contract_guard_p = autopilot_sub.add_parser(
         "contract-guard",
         help="Read-only G3 check: frozen AC/VC text vs answered approval records",
@@ -12769,22 +14773,30 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     decide_ask_p = decide_sub.add_parser(
         "ask",
-        help="Ask timi/jev-latest directly (human face: --state + --noul/--choice/--score)",
+        help="Submit one isolated human ask to the operator host, or read its result",
         description=(
-            "Ask the decisions endpoint (timi/jev-latest) one human-authored request. "
-            "state is either inline text, @<file> or --state-file; the questions are "
-            "built from --noul/--choice/--score. Exit 2 on bad arguments or an "
-            "unavailable service (reason + detail on stderr, never a made-up answer)."
+            "Freeze one human-authored request (state + --noul/--choice/--score) to "
+            "exact UTF-8 bytes and submit it to the registered operator host. The "
+            "ordinary CLI never calls the model: the operator confirms the exact "
+            "frozen bytes in that protected host, then --result <id> reads the "
+            "original Ask shape (model/usage/latency_ms/answers). A missing host is "
+            "reported with a concrete reason; there is no direct-send fallback and "
+            "no --role/token/TTY value is treated as a human. This path never "
+            "produces a decision_id, a sign-off, an authority or a business action."
         ),
         epilog=(
             "examples:\n"
             "  mw decide ask --state '提现失败3天' --noul urgent=是否紧急 \\\n"
             "      --choice dept=billing:支付,technical:技术 --score effort=小,中,大\n"
             "  mw decide ask --state-file ticket.txt --choice dept=billing,technical --json\n"
+            "  mw decide ask --project . --result <32-hex-id> --json   # original Ask shape\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     decide_ask_p.add_argument("--project", default=".", help="Project directory (default: %(default)s)")
+    decide_ask_p.add_argument("--result", default=None, metavar="PENDING-ID",
+                              help="Read the result of one submitted ask (32-hex id); "
+                                   "never sends to the model")
     decide_ask_p.add_argument("--state", default=None, metavar="TEXT|@FILE",
                               help="State to evaluate; '@<path>' reads that UTF-8 file "
                                    "(mutually exclusive with --state-file)")
@@ -12868,22 +14880,25 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "sign",
         help="Sign off this key: print the decision summary, then write evidence/review/sign-final.md",
         description=(
-            "Two faces. Legacy (no --stdin): summarise the key's decision-archive "
-            "rows and ask dp25 for continue|narrow|revoke. Versioned "
-            "(`<key> --stdin`): read the PM's dp25 {material, meta} envelope "
-            "(delivery_goal / actual_completion / verification_evidence / "
-            "unfinished_impact), snapshot it with the archive hash, and ask dp25 "
-            "for finalize|continue|user-confirm. finalize writes the valid "
-            "<key>/evidence/review/sign-final.md atomically (fsync + replace, "
-            "logical_id + snapshot, no second approval); continue/user-confirm "
-            "hand off to PM with zero sign-off writes. The decision model is the "
-            "only authority; signoff=disable never signs; --dry-run is a zero-write "
-            "pre-judge; --retry-write only retries the file write of a persisted "
-            "logical_id (zero new model calls)."
+            "Three faces. Validator (`--validate <file>`): read-only typed "
+            "validate_key_signoff over {material, current_evidence, "
+            "expected_logical_id?, expected_snapshot?}; exit 0 only for a current "
+            "active finalize whose matter/evidence/record match. Versioned "
+            "(`<key> --stdin`): read the PM's dp-sign-key {material, meta} "
+            "envelope (delivery_goal / actual_completion / verification_evidence "
+            "/ unfinished_impact), snapshot it with the archive hash, and ask "
+            "dp-sign-key for finalize|continue|user-confirm. finalize writes the "
+            "valid <key>/evidence/review/sign-final.md atomically (fsync + "
+            "replace, logical_id + snapshot, no second approval); "
+            "continue/user-confirm hand off to PM with zero sign-off writes. The "
+            "decision model is the only authority; signoff=disable never signs; "
+            "--dry-run is a zero-write pre-judge; --retry-write only retries the "
+            "file write of a persisted logical_id (zero new model calls)."
         ),
         epilog=(
             "examples:\n"
             "  mw decide sign <key> --project . --stdin --json < envelope.json\n"
+            "  mw decide sign <key> --project . --validate validator-input.json --json\n"
             "  mw decide sign <key> --project . --retry-write <logical-id> --json\n"
             "  mw decide sign --project .agenticdoc/<key>            # legacy archive face\n"
             "  mw decide sign --project .agenticdoc/<key> --dry-run --json  # verdicts only, no write\n"
@@ -12919,11 +14934,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                                     "versioned {logical_id, decision_id, conclusion, signoff_status, "
                                     "feedback_status, signoff_path, snapshot_sha256, handoff}")
     decide_sign_p.add_argument(
+        "--validate",
+        default=None,
+        metavar="FILE",
+        help="Read-only typed validator: FILE is {material, current_evidence, "
+        "expected_logical_id?, expected_snapshot?}; prints the typed JSON result, "
+        "writes nothing and never calls the model",
+    )
+    decide_sign_p.add_argument(
         "--stdin",
         action="store_true",
-        help="Read the PM's dp25 {material, meta} envelope from stdin: finalize writes "
-        "the valid sign-off file directly (no second approval), continue/user-confirm "
-        "hand off to PM with zero sign-off writes",
+        help="Read the PM's dp-sign-key {material, meta} envelope from stdin: finalize "
+        "writes the valid sign-off file directly (no second approval), "
+        "continue/user-confirm hand off to PM with zero sign-off writes",
     )
     decide_sign_p.add_argument(
         "--retry-write",

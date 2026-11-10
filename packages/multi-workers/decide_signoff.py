@@ -56,9 +56,13 @@ import decision_signoff_result
 __all__ = [
     "AGENT_SESSION_ENV_VARS",
     "CONCLUSIONS",
+    "LEGACY_DP_IDS",
+    "LEGACY_SIGNOFF_DP_ID",
+    "SIGNOFF_CONCLUSIONS",
     "SIGNOFF_DP_ID",
     "SIGNOFF_RELATIVE_PATH",
     "SIGNED_VIA_VALUES",
+    "SIGNING_CONCLUSIONS",
     "TRUE_ENGINE",
     "SignoffError",
     "SignoffFacts",
@@ -79,8 +83,14 @@ __all__ = [
 #: ``<key>/evidence/review/sign-final.md`` (the only sign-off location the done
 #: gate and ``mw decide dp apply`` agree on).
 SIGNOFF_RELATIVE_PATH = pathlib.Path("evidence") / "review" / "sign-final.md"
-#: The conclusion vocabulary (shared with ``mw decide dp apply`` / spec §7.2).
+#: The conclusion vocabulary of the *legacy count gate* (``verdict``). It is
+#: not the key-signoff vocabulary any more: the active dp-sign-key menu is
+#: ``SIGNOFF_CONCLUSIONS`` and only ``SIGNING_CONCLUSIONS`` writes a file.
 CONCLUSIONS = ("continue", "narrow", "revoke")
+#: The active dp-sign-key menu (single source: the typed result module).
+SIGNOFF_CONCLUSIONS = decision_signoff_result.CONCLUSIONS
+#: The only word that satisfies a required key sign-off.
+SIGNING_CONCLUSIONS = decision_signoff_result.SIGNING_CONCLUSIONS
 #: The only engine triple that counts as "a real jev decision" (FIX-P card).
 TRUE_ENGINE = ("timi-decisions", "jev-latest", "api")
 #: Field names of :data:`TRUE_ENGINE`, in triple order.
@@ -91,11 +101,12 @@ _TRUE_ENGINE_KEY = "/".join(TRUE_ENGINE)
 AGENT_SESSION_ENV_VARS = ("PI_CODING_AGENT", "AI_AGENT", "PI_WORKER_TASK")
 
 #: The registered decision point that produces the sign-off conclusion
-#: (spec §15 AC-027 / design D-067). P2 (so it is on out of the box, W11),
-#: ``default_mode="auto"``, executor ``wired`` but *echo only* (it returns
-#: ``signoff:<conclusion>`` and writes nothing): the *write* stays here, the
-#: point only answers.
-SIGNOFF_DP_ID = "dp25-signoff-conclusion"
+#: (spec §15 AC-027 / design D-067). The eight-name consolidation moved it to
+#: ``dp-sign-key``; the old ``dp25`` number is retired history.
+SIGNOFF_DP_ID = decision_signoff_result.DP_ID
+#: Retired sign-off ids: their rows/files stay readable, never validate.
+LEGACY_SIGNOFF_DP_ID = decision_signoff_result.LEGACY_DP_IDS[0]
+LEGACY_DP_IDS = decision_signoff_result.LEGACY_DP_IDS
 #: The ``signed_via`` vocabulary this module may write: the decision model is
 #: the only authority, so there is exactly one face. Historical ``auto-llm`` /
 #: ``cli`` / ``tui`` files stay readable (``decision_history.py`` keeps its own
@@ -121,9 +132,9 @@ _GENESIS_PREV = "0" * 16
 
 _MACHINE_LINE_RE = re.compile(
     r"^(conclusion|counted_rows|rows_sha256|engine|allow_empty|key|claim|ts|reason"
-    r"|promote|demote|p0-open|signed_via|decide_fallback|record_version|dp|logical_id"
-    r"|decision_id|material_sha256|evidence_sha256|snapshot_sha256|initiator_role"
-    r"|retry_of|transport|model|confidence_source):\s*(.*?)\s*$",
+    r"|promote|demote|p0-open|signed_via|decide_fallback|product_type|record_version"
+    r"|dp|basis_version|basis_sha256|logical_id|decision_id|material_sha256|evidence_sha256|snapshot_sha256"
+    r"|initiator_role|retry_of|transport|model|confidence_source):\s*(.*?)\s*$",
     re.MULTILINE,
 )
 
@@ -306,7 +317,7 @@ def collect(project_dir: pathlib.Path | str, key: str) -> SignoffFacts:
         # covers the decisions being signed off, and counting the advice that
         # produced it would let a `continue` justify itself (N>=1 + true engine)
         # and would make every re-sign move `rows_sha256` for no evidence gain.
-        and row.get("dp") != SIGNOFF_DP_ID
+        and row.get("dp") not in (SIGNOFF_DP_ID, *LEGACY_DP_IDS)
     ]
     counted.sort(
         key=lambda row: row.get("seq") if isinstance(row.get("seq"), int) else 0
@@ -343,14 +354,12 @@ def collect(project_dir: pathlib.Path | str, key: str) -> SignoffFacts:
 def signoff_state(
     facts: SignoffFacts, key: str | None = None
 ) -> dict[str, Any]:
-    """Deterministic ``dp25-signoff-conclusion`` state from :func:`collect` facts.
+    """Legacy archive-count state for ``dp-sign-key`` (helper, not the new path).
 
-    Only archive-derived facts go in (D-067): no diff, no code, no document is
-    read here, so the model judges the same numbers :func:`verdict` checks. The
-    required paths are exactly ``REQUIRED_STATE_FIELDS[SIGNOFF_DP_ID]``; the
-    optional ones are the escalation vocabulary (``escalated_reasons``), the
-    count behind it (``rows_escalated``) and the off-triple engines seen in the
-    rows (``engine_violations``).
+    Only archive-derived facts go in (D-067). The active key-signoff path
+    (``mw decide sign --stdin``) builds the four business parts and calls
+    ``decision_points.decide_for`` directly; this count-shaped helper is kept
+    for historical callers and must not be read as the new material contract.
     """
     engine_violations = sorted(
         {_engine_key(row) for row in facts.rows if _engine_key(row) != _TRUE_ENGINE_KEY}
@@ -387,18 +396,14 @@ def auto_conclusion(
     *,
     facts: SignoffFacts | None = None,
 ) -> tuple[str | None, str]:
-    """Ask ``dp25-signoff-conclusion`` for ``continue|narrow|revoke``.
+    """Ask ``dp-sign-key`` for the legacy count conclusion (helper).
 
-    Returns ``(conclusion, detail)``; ``(None, reason)`` means "fall back to the
-    LLM path and record ``decide_fallback: <reason>``" (D-069): no
-    ``.mw/decide.json`` / not enabled, ``dp25`` not registered or disabled in
-    ``.mw/decide-points.json``, transport unavailable, low confidence, or an
-    answer outside the conclusion vocabulary. Zero HTTP on every refusal that
-    ``decide_for`` escalates before the transport call.
-
-    ``project_dir`` may be the project root, the ``.agenticdoc`` dir or the key
-    dir (``.mw/decide.json`` always lives at the control root, i.e. the parent of
-    ``.agenticdoc``).
+    This is the historical count-based face kept for old callers; it speaks the
+    legacy ``CONCLUSIONS`` vocabulary and is not the typed key-signoff writer.
+    The active path is ``mw decide sign --stdin`` (four business parts, only
+    ``finalize`` writes). Returns ``(conclusion, detail)``; ``(None, reason)``
+    means no usable answer (no config, disabled, unavailable, low confidence,
+    or an answer outside the legacy conclusion vocabulary).
     """
     root = _control_root(project_dir)
     observed = facts if facts is not None else collect(project_dir, key)
@@ -579,13 +584,35 @@ def render(
         # New (approved) snapshot association. The row hash above is part of the
         # snapshot, so an archive append after the model call also invalidates
         # this conclusion. No second approval is implied by any of these lines.
+        if conclusion not in SIGNING_CONCLUSIONS:
+            raise SignoffError(
+                "only finalize writes a key sign-off; continue/user-confirm do not"
+            )
+        if result.conclusion != conclusion:
+            raise SignoffError(
+                "the sign-off file conclusion does not match the recorded decision"
+            )
         if result.rows_sha256 and result.rows_sha256 != facts.sha256:
             raise SignoffError(
                 "sign-off snapshot does not match the archive it describes"
             )
+        if result.native_basis is None or not result.basis_sha256:
+            raise SignoffError(
+                "the key-signoff result has no native contract/goal basis"
+            )
+        if (
+            decision_signoff_result.canonical_sha256(dict(result.native_basis))
+            != result.basis_sha256
+        ):
+            raise SignoffError(
+                "the key-signoff native basis does not match its snapshot digest"
+            )
         lines += [
+            f"product_type: {result.product_type}",
             f"record_version: {result.record_version}",
             f"dp: {result.dp}",
+            f"basis_version: {result.basis_version}",
+            f"basis_sha256: {result.basis_sha256}",
             f"logical_id: {result.logical_id}",
             f"decision_id: {result.decision_id}",
             f"material_sha256: {result.material_sha256}",
@@ -711,4 +738,14 @@ def write_signoff(
     # The result module owns the safe atomic publish (parent-chain containment,
     # no symbolic link, temp write, fsync, replace). The file's success is the
     # sign-off success; any logging/feedback failure is reported separately.
+    machines = parse_signoff(text)
+    if "product_type" in machines:
+        if machines["product_type"] != decision_signoff_result.PRODUCT_TYPE:
+            raise SignoffError(
+                "refusing to write a sign-off with a non key-signoff product_type"
+            )
+        if machines.get("conclusion") not in SIGNING_CONCLUSIONS:
+            raise SignoffError(
+                "refusing to write a key sign-off that is not finalize"
+            )
     return decision_signoff_result.write_signoff_text(key_dir(project_dir, key), text)

@@ -112,18 +112,27 @@
       <div class="pg-actions">
         <button type="button" id="pg-questions-reset">恢复 case 原问题（0 请求）</button>
       </div>
-      <p class="muted">questions 只影响本次 observe_only 观察请求：不写生产 registry/授权，不执行业务动作，不改签收。dp3 的候选只在 state.handling_options 维护一次，criteria 是只读派生，预览以 server 实际返回为准。</p>
+      <p class="muted">questions 只影响本次 observe_only 观察请求：不写生产 registry/授权，不执行业务动作，不改签收。dp-auto 的候选只在 material.handling_options 维护一次，criteria 是只读派生，预览以 server 实际返回为准。</p>
     </section>
     <details id="pg-config-details">
       <summary>DP 技术配置（按需查看）</summary>
       <div id="pg-meta" class="detail-section" data-testid="pg-meta"></div>
     </details>
     <div id="pg-fields" class="table-wrap" data-testid="pg-fields"></div>
-    <label for="material-editor">业务材料 state（JSON，可编辑）</label>
+    <section id="pg-entry-form-section" class="entry-form-section" aria-labelledby="pg-entry-form-title">
+      <h3 id="pg-entry-form-title">入口表单（由服务端注册表描述生成）</h3>
+      <p id="pg-entry-form-status" class="notes" role="status">尚未选择决策点。</p>
+      <div id="pg-entry-form" data-testid="pg-entry-form"></div>
+      <div class="pg-actions">
+        <button type="button" id="pg-entry-apply">把表单值写入业务材料（0 请求）</button>
+      </div>
+      <p class="muted">字段与可选结论都来自本次服务端返回的入口描述；本表单只填充本页材料，不校验、不执行、不写生产记录，也不另设业务菜单。</p>
+    </section>
+    <label for="material-editor">业务材料 material（JSON，可编辑）</label>
     <textarea id="material-editor" spellcheck="false" rows="14" autocomplete="off"></textarea>
     <details id="book-advanced">
       <summary>高级：决策本与来源标注</summary>
-      <p>notes.evidence 仅标注本地材料来源，供校验、审计和人工核对；模型不会按路径读取文件。判断所需事实必须写入业务材料。API 发送 model、业务 state 和 questions，不发送整个决策本或来源标注。</p>
+      <p>notes.evidence 仅标注本地材料来源，供校验、审计和人工核对；模型不会按路径读取文件。判断所需事实必须写入业务材料。API 发送 model、业务 material 和 questions，不发送整个决策本或来源标注。</p>
       <label for="book-editor">完整决策本（JSON；高级编辑）</label>
       <textarea id="book-editor" spellcheck="false" rows="16" autocomplete="off"></textarea>
     </details>

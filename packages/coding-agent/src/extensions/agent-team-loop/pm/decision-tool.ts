@@ -1,73 +1,8 @@
-/**
- * pm/decision-tool.ts — the `ask_decision` tool: the ONLY LLM-facing channel
- * for asking an external decision point (mw-decision-substitution T-05, spec
- * DS-7/DS-10, design D-017, D4 research Q1..Q6).
- *
- * Contract
- * - Input: `dp` (enum of the registry ids this module holds as constants),
- *   `trigger` (audit label: `<task_key>` | `<task_key>#ckpt<N>` | `ts`; the
- *   decision id itself is resolved by Python, see below), optional `question`
- *   (one question id) and optional `note` (L0/L1 summary).
- * - Output text: ONE line of JSON
- *   `{available, decision_id, mode, acted, answers, confidence_source, latency_ms}`
- *   on success; on failure `{available:false, unavailable:<reason>,
- *   action:"blocked-ask-human"}` plus `escalated_reason` (the child's own
- *   7-value vocabulary) and/or `missing_fields` when they apply, followed by a
- *   fixed second line that forbids guessing. The model sees this text verbatim
- *   as the tool result, so both shapes are deterministic (no prose rewriting,
- *   design Q2 §2.4).
- * - `execute` runs `python -X utf8 mw.py decide run --project=<dir> --dp <id>
- *   --request-file <tmp> --json` with an ASYNC spawn and a hard 20 s wall
- *   (design D-017: a synchronous child inside a tool call would freeze the
- *   event loop, the heartbeat and trace writes). The request JSON travels in a
- *   temp file, never on argv (spec D-003).
- * - Failure shape: a SERVICE failure is DATA (`available:false` + directive) —
- *   it must not throw, or the model would lose the "do not guess" instruction.
- *   Only argument misuse (the TypeBox enum) is rejected by the loop's
- *   `validateToolArguments`, because `AgentToolResult`
- *   (`packages/agent/src/types.ts:355-368`) has no `isError` field; `execute`
- *   throwing is the only other way to surface a hard error.
- *
- * Authorization, `mode` and `acted` (D-036 / D-041)
- * - A structured request (`--dp <registry id>`, no `questions`) makes
- *   `mw decide run` call `decision_points.decide_for(..., intent="answer")`,
- *   which is the single authority: it reads `.mw/decide-points.json` itself
- *   (step 2), resolves the mode (step 3) and archives one row per decision
- *   (`packages/multi-workers/mw.py:_decide_run`). Its JSON therefore carries
- *   `decision_id` / `mode` / `acted` / `escalated_reason`
- *   (`_decide_run_payload`, T-02b).
- * - This module consumes those four keys verbatim. It never reads the
- *   authorization table, never derives `mode` from a tier default and never
- *   turns `mode` into `acted`: D-041 makes `acted` a consuming-side fact, and
- *   an `intent="answer"` decision is archived with `acted=false` (D-035) no
- *   matter what the mode is.
- * - `trigger` is an audit label for the trace line and the directives only. The
- *   authoritative `decision_id` is `<dp>:<trigger_id>` resolved by Python from
- *   the state's `key`/`task_key` (`decision_points.py:Trigger.resolved_id`), so
- *   a locally concatenated id would drift from the archive row.
- * - Nothing here writes config or the archive: Python stays the single writer
- *   (D-005).
- *
- * Structured state (spec §5.4 L0/L1, D6 Q5.1)
- * - {@link buildDecisionState} fills only what this call site knows
- *   (`v`/`dp`/`key`/`task_key`/`task_summary`). `decide_for` step 5 refuses a
- *   state that misses one of the registry's `REQUIRED_STATE_FIELDS`
- *   (`packages/multi-workers/decision_points.py:626`), so for the dps that map
- *   covers (dp1/dp2/dp3) the tool refuses **before** the spawn and reports the
- *   field names (names only: L0) instead of spending a round trip on a state
- *   Python can only answer with `input-incomplete`/`bad-response` (MAJOR-2).
- * - The field table itself is not copied: the check reuses
- *   `pm/triage-client.ts`'s structured-state validator and
- *   `REQUIRED_FIELDS_BY_DP` (single source). Only the id set of the dps the
- *   registry gates is held here, pinned to the Python source by the suite.
- *
- * Anti-retry (spec §5.3 / design Q3 §3.3)
- * - A per-dp block counter is scoped to one agent turn (`turn_start` resets it).
- *   Reaching {@link ASK_DECISION_MAX_BLOCKED_PER_TURN} marks the tool result
- *   `terminate: true` and appends a terminal directive, so the tool loop stops
- *   instead of the model re-asking forever. Every block/answer leaves one
- *   machine line in the worker's trace.log.
- */
+/** Registered PM/worker decision tools. One stdin envelope carries business
+ * material, the independently prepared basis catalog, optional context and local
+ * identity. Only the generated active entries and the registering window's role
+ * can reach the service. A valid reply records consumption. Explicit receipts
+ * describe subsequent actions. Signing uses its single dedicated writer. */
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -76,7 +11,19 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { type TLiteral, Type } from "typebox";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
-import { DECIDE_REGISTRY, type DecideRegistryField } from "../shared/decide-registry.generated.ts";
+import {
+	claimedPmKey,
+	type DecisionPreparation,
+	decisionActorAllowed,
+	decisionIdRefusal,
+	type PreparedBasis,
+	selectedDecisionBasis,
+	validateDecisionMaterial,
+} from "../shared/decide-policy.ts";
+import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.ts";
+export { validateDecisionMaterial };
+export type { MaterialIssue, MaterialValidation } from "../shared/decide-policy.ts";
+
 import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
 import { readTaskType } from "../shared/task-frontmatter.ts";
@@ -86,7 +33,12 @@ import {
 	isTaskStateSnapshot,
 	type TaskStateSnapshot,
 } from "./decision-task-state.ts";
-import { canonicalStateBytes, MAX_STRUCTURED_STATE_BYTES, validateStructuredState } from "./triage-client.ts";
+import {
+	canonicalStateBytes,
+	MAX_STRUCTURED_STATE_BYTES,
+	prepareDecisionEnvelope,
+	validateStructuredState,
+} from "./triage-client.ts";
 
 /** Registered tool name (referenced by `activeToolsForType` wiring in index.ts). */
 export const ASK_DECISION_TOOL = "ask_decision";
@@ -123,56 +75,10 @@ const NOTE_MAX_BYTES = 600;
 /** `key` / `task_key` field cap in the Python state schema. */
 const TASK_KEY_MAX_BYTES = 48;
 
-/**
- * The 25 decision-point ids, copied verbatim from
- * `packages/multi-workers/decision_points.py:DP_REGISTRY` (the authority). The
- * suite asserts both the id set and the tier map against that file, so a
- * drift shows up as a red test, not as a silently unregistered call.
- */
-export const ASK_DECISION_DP_IDS = [
-	"dp1-dispatch-type",
-	"dp2-checkpoint-split",
-	"dp3-worker-clarify",
-	"dp4-failure-handling",
-	"dp5-test-triage",
-	"dp6-qg-verdict",
-	"dp7-gate-failure",
-	"dp8-scope-change",
-	"dp9-model-select",
-	"dp10-dependency",
-	"dp11-credential",
-	"dp12-destructive",
-	"dp13-commit-release",
-	"dp14-rule-conflict",
-	"dp15-autopilot-gate",
-	"dp16-goal",
-	"dp17-spec-lock",
-	"dp18-claim",
-	"dp19-foreign-write",
-	"dp20-stage-close",
-	"dp21-refine",
-	"dp22-debug-plan",
-	"dp23-snapshot",
-	"dp24-pi-trust",
-	"dp25-signoff-conclusion",
-] as const;
-
-export type AskDecisionDpId = (typeof ASK_DECISION_DP_IDS)[number];
-
-/** Registry ids whose `decide_for` step 5 enforces `REQUIRED_STATE_FIELDS`
- * (`packages/multi-workers/decision_points.py:626`). Only these dps may be
- * refused client-side on a missing field: every other dp requires nothing
- * beyond the state builder's `v`/`dp`/`questions_version`, so pre-gating it
- * here would over-gate a call the authority accepts. The id set is pinned to
- * the Python source by `decision-tool.test.ts`; the **field** names themselves
- * come from `pm/triage-client.ts` and are never copied. */
-export const ASK_DECISION_ENFORCED_STATE_DP_IDS = [
-	"dp1-dispatch-type",
-	"dp2-checkpoint-split",
-	"dp3-worker-clarify",
-	// mw-decision-substitution W9: the sign-off conclusion dp (spec §15 AC-027).
-	"dp25-signoff-conclusion",
-] as const;
+/** IDs and per-entry eligibility follow the generated Python contracts. */
+export const ASK_DECISION_DP_IDS = Object.keys(DECIDE_REGISTRY);
+export type AskDecisionDpId = string;
+export const ASK_DECISION_ENFORCED_STATE_DP_IDS = ASK_DECISION_DP_IDS;
 
 /** Frozen transport reasons (`decision.py:REASON_CODES`). A reason outside this
  * set is normalised to `upstream-error` exactly like `decision.py` does. */
@@ -185,6 +91,11 @@ export const ASK_DECISION_PYTHON_REASONS: ReadonlySet<string> = new Set([
 	"bad-response",
 	"unsupported-question-type",
 	"budget-exhausted",
+	"input-incomplete",
+	"input-oversize",
+	"role-forbidden",
+	"retired",
+	"unknown-dp",
 ]);
 
 /** TS-local refusal reasons (never produced by the Python service; the T-04
@@ -208,19 +119,8 @@ export type DecisionToolRole = "pm" | "coding" | "research" | "review";
  * accepts it (`INITIATOR_ROLES`) and it never impersonates the PM. */
 export type DecisionInitiatorRole = DecisionToolRole | "unknown";
 
-/** Only the PM may prepare these decisions (design D003/§4.4): a worker that
- * reaches the entry with one of them is refused with ZERO spawn — a model must
- * never borrow the PM's checkpoint or sign-off conclusion. */
-export const ASK_DECISION_PM_ONLY_DP_IDS = ["dp2-checkpoint-split", "dp25-signoff-conclusion"] as const;
-
-/** The dps whose material is the approved business contract (T01): the caller
- * supplies every field verbatim on the local envelope. Every other dp keeps
- * the legacy L0/L1 state path byte-identical. */
-export const ASK_DECISION_MATERIAL_DP_IDS = [
-	"dp2-checkpoint-split",
-	"dp3-worker-clarify",
-	"dp25-signoff-conclusion",
-] as const;
+export const ASK_DECISION_PM_ONLY_DP_IDS = ASK_DECISION_DP_IDS.filter((dp) => DECIDE_REGISTRY[dp].roleScope === "pm");
+export const ASK_DECISION_MATERIAL_DP_IDS = ASK_DECISION_DP_IDS;
 
 /** dp3 native dynamic-choice protocol (`decision_points.dynamic_choices_value_error`). */
 export const DP3_ID = "dp3-worker-clarify";
@@ -278,9 +178,10 @@ export interface AskDecisionAvailable {
 	answers: AskDecisionAnswers;
 	confidence_source: string;
 	latency_ms: number;
-	/** Set on the four-dp material path: the exact candidate the selection names. */
+	/** Set on the prepared material path: the exact candidate the selection names. */
 	selection?: DecisionSelection;
-	/** Set on the four-dp material path: the automatic `consumed` write result. */
+	basis?: PreparedBasis;
+	/** Set on the prepared material path: the automatic `consumed` write result. */
 	feedback?: DecisionFeedbackResult;
 	/** Set on the dp25 path: the sign CLI's own receipt (one judgment, real
 	 * sign-off write or a concrete PM/user handoff). */
@@ -346,7 +247,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-/** True for the 25 ids the tool exposes (and therefore for every id Python can
+/** True for the active IDs the tool exposes (and therefore for every id Python can
  * resolve); the enum itself is pinned to `DP_REGISTRY` by the suite. */
 export function isRegisteredDp(dp: string): dp is AskDecisionDpId {
 	return (ASK_DECISION_DP_IDS as readonly string[]).includes(dp);
@@ -448,18 +349,6 @@ export function buildDecisionRequestJson(state: Record<string, unknown>): string
 
 // ── Business material: dp2 / dp3 / dp25 (design §2, T01 registry) ────────────
 
-/** One refused material field. `field` is a registry path (dotted for nested
- * facts); the rule is a name, never a value — no material leaks into an
- * error payload (AC-019). */
-export interface MaterialIssue {
-	field: string;
-	rule: string;
-}
-
-export type MaterialValidation =
-	| { ok: true; material: Record<string, unknown> }
-	| { ok: false; issues: MaterialIssue[] };
-
 /** The local envelope metadata (design §4.1). Never part of the material. */
 export interface DecisionToolMeta {
 	record_version: typeof DECISION_RECORD_VERSION;
@@ -477,6 +366,9 @@ export interface DecisionToolMeta {
 
 /** The stdin payload for `mw decide run <dp> --stdin` (design §4.1). */
 export interface DecisionToolEnvelope {
+	parent_decision_ref?: string;
+	preparation: DecisionPreparation;
+	context?: Record<string, unknown>;
 	material: Record<string, unknown>;
 	meta: DecisionToolMeta;
 }
@@ -496,7 +388,7 @@ export function isMaterialDp(dp: string): boolean {
  * the three workers' material dps plus dp1 (the PM dispatch producer, whose
  * material belongs to T03 but whose required fields are the same registry). */
 function isMaterialStateDp(dp: string): boolean {
-	return isMaterialDp(dp) || dp === "dp1-dispatch-type";
+	return isMaterialDp(dp);
 }
 
 /** Look one registry path (dotted) up in a material/state object. */
@@ -518,155 +410,6 @@ export function missingMaterialPaths(dp: string, material: unknown): string[] {
 		if (readMaterialPath(material, field.name) === undefined) missing.push(field.name);
 	}
 	return missing;
-}
-
-function pushFieldIssue(issues: MaterialIssue[], field: DecideRegistryField, value: unknown): void {
-	switch (field.type) {
-		case "string":
-			if (typeof value !== "string" || value.trim() === "") {
-				issues.push({ field: field.name, rule: "must be a non-empty string" });
-			}
-			return;
-		case "array":
-			if (!Array.isArray(value)) {
-				issues.push({ field: field.name, rule: "must be an array" });
-				return;
-			}
-			if (field.itemType === "string" && value.some((item) => typeof item !== "string" || item.trim() === "")) {
-				issues.push({ field: field.name, rule: "every item must be a non-empty string" });
-			}
-			return;
-		case "object":
-			if (!isRecord(value)) issues.push({ field: field.name, rule: "must be an object" });
-			return;
-		default:
-			if (value === undefined || value === null) {
-				issues.push({ field: field.name, rule: "must be present" });
-			}
-			return;
-	}
-}
-
-/** dp3 native dynamic candidates: 2..5 problem-specific options, contiguous
- * `c1..cN`, single-line labels <= 80 chars, non-empty descriptions, distinct
- * labels (mirror of `decision_points.dynamic_choices_value_error`). */
-function checkHandlingOptions(value: unknown, issues: MaterialIssue[]): void {
-	if (!Array.isArray(value)) return;
-	if (value.length < DP3_HANDLING_MIN_OPTIONS) {
-		issues.push({
-			field: "handling_options",
-			rule: `needs at least ${DP3_HANDLING_MIN_OPTIONS} distinguishable candidates`,
-		});
-	}
-	if (value.length > DP3_HANDLING_MAX_OPTIONS) {
-		issues.push({
-			field: "handling_options",
-			rule: `expected at most ${DP3_HANDLING_MAX_OPTIONS} candidates`,
-		});
-	}
-	const labels = new Set<string>();
-	value.forEach((raw, index) => {
-		const item = isRecord(raw) ? raw : undefined;
-		if (item === undefined) {
-			issues.push({ field: `handling_options[${index}]`, rule: "must be an {id,label,description} object" });
-			return;
-		}
-		for (const unknownKey of Object.keys(item)) {
-			if (unknownKey !== "id" && unknownKey !== "label" && unknownKey !== "description") {
-				issues.push({ field: `handling_options[${index}].${unknownKey}`, rule: "not a candidate field" });
-			}
-		}
-		const expectedId = `c${index + 1}`;
-		if (item.id !== expectedId) {
-			issues.push({
-				field: `handling_options[${index}].id`,
-				rule: `must be the contiguous candidate id ${expectedId}`,
-			});
-		}
-		const label = item.label;
-		if (typeof label !== "string" || label.trim() === "") {
-			issues.push({ field: `handling_options[${index}].label`, rule: "must be a non-empty string" });
-		} else {
-			if (/[\r\n]/.test(label)) {
-				issues.push({ field: `handling_options[${index}].label`, rule: "must be a single line" });
-			}
-			if (label.length > DP3_HANDLING_LABEL_MAX) {
-				issues.push({
-					field: `handling_options[${index}].label`,
-					rule: `must be at most ${DP3_HANDLING_LABEL_MAX} characters`,
-				});
-			}
-			if (labels.has(label)) {
-				issues.push({
-					field: `handling_options[${index}].label`,
-					rule: "must differ from every other candidate label",
-				});
-			}
-			labels.add(label);
-		}
-		const description = item.description;
-		if (typeof description !== "string" || description.trim() === "") {
-			issues.push({ field: `handling_options[${index}].description`, rule: "must be a non-empty string" });
-		}
-	});
-}
-
-/**
- * Validate one dp's business material against the generated registry.
- *
- * Every field, and the closed key set, comes from `DECIDE_REGISTRY`
- * (`modelStateFields` + `requiredStateFields`/`optionalStateFields`) — the one
- * authority T01 publishes — so a renamed field shows up here as a refusal, not
- * as a second contract drifting from Python. The material is returned VERBATIM
- * (no truncation, no default, no invention): necessary material that cannot be
- * sent is refused as `input-oversize` by the caller instead. Unknown facts stay
- * `unknown` in the text the agent wrote; this function never derives one.
- */
-export function validateDecisionMaterial(dp: string, material: unknown): MaterialValidation {
-	const entry = DECIDE_REGISTRY[dp];
-	const paths = entry?.modelStateFields;
-	if (entry === undefined || paths === undefined) {
-		return { ok: false, issues: [{ field: "dp", rule: "no material contract for this dp" }] };
-	}
-	if (!isRecord(material)) {
-		return { ok: false, issues: [{ field: "material", rule: "must be an object" }] };
-	}
-	const issues: MaterialIssue[] = [];
-	const allowedTop = new Set(paths.map((item) => item.split(".")[0] as string));
-	for (const key of Object.keys(material)) {
-		if (!allowedTop.has(key)) {
-			issues.push({ field: key, rule: "not in required_state_fields (closed key set)" });
-		}
-	}
-	// Nested containers may only carry declared children (background.*,
-	// verification_evidence.*).
-	const containers = new Map<string, Set<string>>();
-	for (const item of paths) {
-		const [head, child] = item.split(".");
-		if (head === undefined || child === undefined) continue;
-		const children = containers.get(head) ?? new Set<string>();
-		children.add(child);
-		containers.set(head, children);
-	}
-	for (const [container, children] of containers) {
-		const value = material[container];
-		if (!isRecord(value)) continue;
-		for (const key of Object.keys(value)) {
-			if (!children.has(key)) {
-				issues.push({ field: `${container}.${key}`, rule: "not in required_state_fields (closed key set)" });
-			}
-		}
-	}
-	for (const field of entry.requiredStateFields) {
-		pushFieldIssue(issues, field, readMaterialPath(material, field.name));
-	}
-	for (const field of entry.optionalStateFields) {
-		const value = readMaterialPath(material, field.name);
-		if (value !== undefined && value !== null) pushFieldIssue(issues, field, value);
-	}
-	if (paths.includes("handling_options")) checkHandlingOptions(material.handling_options, issues);
-	if (issues.length > 0) return { ok: false, issues };
-	return { ok: true, material };
 }
 
 /** Build the local envelope metadata for ONE new decision.
@@ -700,18 +443,29 @@ export function buildDecisionEnvelope(input: {
 	dp: string;
 	material: Record<string, unknown>;
 	meta: DecisionToolMeta;
+	/** Local reference supplied by the host consuming a prepared follow-up. */
+	parentDecisionRef?: string;
+	preparation?: DecisionPreparation;
+	context?: Record<string, unknown>;
 }): DecisionToolEnvelope {
-	const validated = validateDecisionMaterial(input.dp, input.material);
-	if (!validated.ok) {
-		throw new Error(`decision material for ${input.dp} is not sendable: ${validated.issues[0]?.field ?? "?"}`);
-	}
-	return { material: validated.material, meta: input.meta };
+	const prepared = prepareDecisionEnvelope(
+		input.dp,
+		input.material,
+		input.meta,
+		0,
+		input.preparation,
+		input.context,
+		input.parentDecisionRef,
+	);
+	if (!prepared.ok) throw new Error(`invalid decision envelope: ${prepared.reason} ${prepared.missing.join(", ")}`);
+	return prepared.envelope;
 }
 
-/** The worker's real initiating role, read from its own card's `type:`.
+/** The worker's real lifecycle role, read from its own card's `type:`.
  *
- * A card that cannot be read, or a type outside coding/research/review, is
- * `unknown` — the tool never upgrades a role to make a PM-only dp callable. */
+ * Framework types follow the approved Python `_FRAMEWORK_CARD_ROLES` mapping,
+ * not the model-role buckets or the four-choice dispatch menu. Unknown, retired
+ * and PM card types stay unknown; a caller option cannot upgrade the card. */
 export function initiatorRoleFromWorkerTask(taskPath: string | undefined): DecisionInitiatorRole {
 	if (taskPath === undefined || taskPath === "") return "unknown";
 	let text: string;
@@ -721,7 +475,24 @@ export function initiatorRoleFromWorkerTask(taskPath: string | undefined): Decis
 		return "unknown";
 	}
 	const type = readTaskType(text).type;
-	return type === "coding" || type === "research" || type === "review" ? type : "unknown";
+	switch (type) {
+		case "coding":
+		case "vision":
+		case "repair":
+		case "roadmap-writer":
+		case "phase-writer":
+			return "coding";
+		case "research":
+		case "verifier":
+		case "reviewer":
+		case "rag-research":
+		case "decide_prepare":
+			return "research";
+		case "review":
+			return "review";
+		default:
+			return "unknown";
+	}
 }
 
 /** Resolve dp3's native `handling` answer to the candidate the asker supplied. */
@@ -746,8 +517,9 @@ function buildSelection(
 	answers: AskDecisionAnswers,
 	material: Record<string, unknown>,
 ): DecisionSelection | undefined {
-	if (dp === DP3_ID) return resolveHandlingSelection(answers, material.handling_options);
-	const question = Object.keys(answers)[0];
+	if (DECIDE_REGISTRY[dp].kind === "dynamic-candidates")
+		return resolveHandlingSelection(answers, material.handling_options);
+	const question = DECIDE_REGISTRY[dp].businessQuestionId;
 	if (question === undefined) return undefined;
 	const value = answers[question]?.value;
 	if (typeof value !== "string" || value.trim() === "") return undefined;
@@ -756,20 +528,12 @@ function buildSelection(
 
 /** The fixed material-preparation prompts handed to the asking agent
  * (design §2 "固定提示"). They are part of the tool contract, not UI copy. */
-export const DECISION_MATERIAL_PROMPTS = {
-	dp3:
-		"dp3: 先写问题原文（question），再填 background{task_goal,current_state,decision_reason,constraints_impact}" +
-		"，最后针对这个问题给 2..5 个可区分的处理候选 handling_options[{id:c1..cN,label<=80,description}]；" +
-		"未知显式写未知，不检索旧答案替代生成，不预先替模型选。",
-	dp2:
-		"dp2（仅 PM）：按任务原文填 task_goal/task_requirements/task_deliverables 与 pm_decision_background" +
-		"（为什么现在需要判断继续/拆小/直执/上抛人，以及约束）；有 worker 时才填真实的 worker_execution" +
-		"（done/remaining/blocked/tried 与时间预算），没有就不填。",
-	dp25:
-		"dp25（仅 PM）：按四部分整理 delivery_goal（含用户验收条件）、actual_completion、" +
-		"verification_evidence{verified,unverified}、unfinished_impact；[] 表示真实无该项；" +
-		"产物与证据写具体出处，不用任务数或完成声明代证据。",
-} as const;
+export const DECISION_MATERIAL_PROMPTS = Object.fromEntries(
+	Object.entries(DECIDE_REGISTRY).map(([id, entry]) => [
+		id,
+		`${id} (${entry.roleScope}): ${[...entry.requiredStateFields, ...entry.optionalStateFields].map((field) => `${field.name} — ${field.description}`).join("; ")}`,
+	]),
+);
 
 // ── Feedback: `mw decide lifecycle --stdin` (T02 writer, AC-014) ─────────────
 
@@ -841,6 +605,7 @@ export const runLifecycleMw: LifecycleRunner = async (request) => {
 
 /** The dp25 sign-off conclusion point (the managed PM sign path). */
 export const DP25_ID = "dp25-signoff-conclusion";
+export const SIGN_KEY_ID = "dp-sign-key";
 
 /** The three conclusions T05 accepts (`decision_signoff_result.CONCLUSIONS`). */
 export const DECISION_SIGNOFF_CONCLUSIONS: readonly string[] = ["finalize", "continue", "user-confirm"];
@@ -1066,6 +831,9 @@ function writeRequestFile(input: string): { dir: string; file: string } {
  * a temp file and always cleans it up.
  */
 export const runDecideMw: DecideRunner = async (request, signal) => {
+	const refused = decisionIdRefusal(request.dp);
+	if (refused || !request.viaStdin)
+		return { status: 2, stdout: "", stderr: refused ?? "preparation required", timedOut: false };
 	const mwPy = findMwPy();
 	if (!mwPy) return { status: null, stdout: "", stderr: "", error: "mw.py not found", timedOut: false };
 	if (request.viaStdin === true) {
@@ -1168,8 +936,12 @@ export interface AskDecisionInput {
 	key?: string;
 	/** The REAL task this decision belongs to; `null` for a task-less PM decision. */
 	initiatorRole?: DecisionInitiatorRole;
-	/** Business material of the four material dps (dp2/dp3/dp25), verbatim. */
+	/** Business material of the selected active entry, verbatim. */
 	material?: Record<string, unknown>;
+	/** Local reference supplied by the host consuming a prepared follow-up. */
+	parentDecisionRef?: string;
+	preparation?: DecisionPreparation;
+	context?: Record<string, unknown>;
 	/** Points at the previous `logical_id` when this call retries another one. */
 	retryOf?: string | null;
 	taskBefore?: TaskStateSnapshot;
@@ -1221,23 +993,43 @@ export async function runAskDecision(input: AskDecisionInput): Promise<AskDecisi
 	const dp = input.dp;
 	// Zero-spawn refusal for an id the registry cannot resolve. The enum in the
 	// tool schema already rejects it; `runAskDecision` is also called directly.
-	if (!isRegisteredDp(dp)) return unavailable("disabled", dp, false);
+	const refusal = decisionIdRefusal(dp);
+	if (refusal) return unavailable(refusal, dp, false);
 	const role = input.initiatorRole ?? "unknown";
 	// The originator is structural (the registering window), so a worker cannot
 	// reach a PM decision point even by naming it (AC-006).
-	if (isPmOnlyDp(dp) && role !== "pm") return unavailable(ASK_DECISION_REASON_ROLE_FORBIDDEN, dp, false);
+	if (!decisionActorAllowed(dp, role) || (DECIDE_REGISTRY[dp].roleScope === "worker" && !input.taskKey?.trim()))
+		return unavailable(ASK_DECISION_REASON_ROLE_FORBIDDEN, dp, false);
 	if (
 		input.taskBefore !== undefined &&
 		(!(input.taskKey ?? "").trim() || !isTaskStateSnapshot(input.taskBefore) || !isMaterialDp(dp))
 	)
 		return unavailable(ASK_DECISION_REASON_INPUT_INCOMPLETE, dp, false, { missing_fields: ["meta.task_before"] });
-	// dp25 is the ONE judgment that really signs (T05 `decide sign --stdin`): the
+	// dp-sign-key is the ONE judgment that really signs (T05 `decide sign --stdin`): the
 	// sign CLI calls the model itself and writes `sign-final.md` (or hands a
 	// concrete next step back). Routing it through `decide run` would need a
 	// second approval/sign step, which the approved design refuses.
-	if (dp === DP25_ID) return runSignoffAskDecision(input, dp, role, started);
-	if (isMaterialDp(dp)) return runMaterialAskDecision(input, dp, role, started);
-	return runLegacyAskDecision(input, dp, started);
+	if (!isMaterialDp(dp)) return runLegacyAskDecision(input, dp, started);
+	const meta = buildDecisionToolMeta({
+		key: input.key ?? "",
+		taskKey: input.taskKey,
+		initiatorRole: role,
+		retryOf: input.retryOf,
+		taskBefore: input.taskBefore,
+	});
+	const prepared = prepareDecisionEnvelope(
+		dp,
+		input.material,
+		meta,
+		0,
+		input.preparation,
+		input.context,
+		input.parentDecisionRef,
+	);
+	if (!prepared.ok) return unavailable(prepared.reason, dp, false, { missing_fields: prepared.missing });
+	return dp === SIGN_KEY_ID
+		? runSignoffAskDecision(input, dp, prepared.envelope, started)
+		: runMaterialAskDecision(input, dp, prepared.envelope, started);
 }
 
 /** Diagnostic for a locally refused call (no child ran). */
@@ -1265,8 +1057,9 @@ async function callDecideChild(
 	}
 	if (raw.timedOut) return { ok: false, outcome: unavailable("timeout", dp, true) };
 	if (raw.error !== undefined) return { ok: false, outcome: unavailable("upstream-error", dp, true) };
-	if (raw.status !== 0) return { ok: false, outcome: unavailable("upstream-error", dp, true) };
 	const response = parseDecisionJson(raw.stdout);
+	if (raw.status !== 0 && response?.available !== false)
+		return { ok: false, outcome: unavailable("upstream-error", dp, true) };
 	if (response === undefined) return { ok: false, outcome: unavailable("bad-response", dp, true) };
 	if (response.available !== true) {
 		const rawReason = typeof response.reason === "string" ? response.reason : "";
@@ -1282,7 +1075,7 @@ async function callDecideChild(
 	return { ok: true, response };
 }
 
-/** The four-dp envelope path: verbatim material + local `{material, meta}`.
+/** Submit the prepared envelope and correlate its selected rationale.
  *
  * Order (design §2/§4.1): validate the material against the generated registry,
  * build the local envelope (fresh `logical_id` per real call), refuse an
@@ -1294,29 +1087,14 @@ async function callDecideChild(
 async function runMaterialAskDecision(
 	input: AskDecisionInput,
 	dp: string,
-	role: DecisionInitiatorRole,
+	envelope: DecisionToolEnvelope,
 	started: number,
 ): Promise<AskDecisionOutcome> {
-	const validated = validateDecisionMaterial(dp, input.material);
-	if (!validated.ok) {
-		return unavailable(ASK_DECISION_REASON_INPUT_INCOMPLETE, dp, false, {
-			missing_fields: validated.issues.map((issue) => issue.field),
-		});
-	}
-	const key = (input.key ?? "").trim();
-	if (key === "")
-		return unavailable(ASK_DECISION_REASON_INPUT_INCOMPLETE, dp, false, { missing_fields: ["meta.key"] });
-	const meta = buildDecisionToolMeta({
-		key,
-		taskKey: input.taskKey ?? null,
-		initiatorRole: role,
-		retryOf: input.retryOf ?? null,
-		taskBefore: input.taskBefore,
-	});
+	const { material, preparation, meta } = envelope;
 	const request: DecideRunRequest = {
 		projectDir: input.projectDir,
 		dp,
-		input: JSON.stringify({ material: validated.material, meta } satisfies DecisionToolEnvelope),
+		input: JSON.stringify(envelope),
 		timeoutMs: input.timeoutMs ?? ASK_DECISION_TIMEOUT_MS,
 		viaStdin: true,
 	};
@@ -1324,18 +1102,25 @@ async function runMaterialAskDecision(
 	if (!called.ok) return called.outcome;
 	const response = called.response;
 
+	if (
+		response.decision_id !== `${dp}:${meta.logical_id}` ||
+		(response.dp !== undefined && response.dp !== dp) ||
+		(response.logical_id !== undefined && response.logical_id !== meta.logical_id)
+	)
+		return unavailable("bad-response", dp, true);
 	const answers = asAnswers(response.answers);
 	if (answers === undefined) return unavailable("bad-response", dp, true);
 	// The four authority keys are the child's verdict, taken verbatim (D-036).
 	const decisionId = typeof response.decision_id === "string" ? response.decision_id : "";
 	const mode = response.mode;
 	const acted = response.acted;
-	if (decisionId === "" || (mode !== "auto" && mode !== "suggest") || typeof acted !== "boolean") {
+	if (decisionId === "" || (mode !== "auto" && mode !== "suggest") || acted !== false) {
 		return unavailable("bad-response", dp, true);
 	}
-	const selection = buildSelection(dp, answers, validated.material);
-	if (selection === undefined) {
-		// An answer set this contract does not own (old question ids) is never
+	const selection = buildSelection(dp, answers, material);
+	const basis = selectedDecisionBasis(dp, material, preparation, selection?.id, answers.basis_id?.value);
+	if (selection === undefined || basis === undefined) {
+		// A mismatched business answer or basis is never
 		// mapped onto a candidate: that would invent the receipt (AC-006).
 		return unavailable("bad-response", dp, true);
 	}
@@ -1352,6 +1137,7 @@ async function runMaterialAskDecision(
 				: "unknown",
 		latency_ms: latency,
 		selection,
+		basis,
 	};
 	// The asker really received the selection => `consumed` is a fact, not a
 	// completion. `executed`/`settled` stay with the explicit receipt op.
@@ -1370,11 +1156,11 @@ async function runMaterialAskDecision(
 	return { payload, text: jsonText(payload), spawned: true, meta };
 }
 
-/** The dp25 sign path: ONE judgment, the CLI signs or hands over.
+/** The dp-sign-key path: ONE judgment, the CLI signs or hands over.
  *
  * The child is `mw decide sign <key> --stdin --json` (never `decide run` + a
  * second `sign` call). It records the creation fact, asks
- * `dp25-signoff-conclusion` ONCE, persists the result record, and:
+ * `dp-sign-key` ONCE, persists the result record, and:
  * - `finalize` → writes/validates `evidence/review/sign-final.md` and records
  *   its own consumed + signoff lifecycle facts;
  * - `continue`/`user-confirm` → zero sign-off writes, one executed fact and a
@@ -1385,31 +1171,16 @@ async function runMaterialAskDecision(
 async function runSignoffAskDecision(
 	input: AskDecisionInput,
 	dp: string,
-	role: DecisionInitiatorRole,
+	envelope: DecisionToolEnvelope,
 	started: number,
 ): Promise<AskDecisionOutcome> {
-	const validated = validateDecisionMaterial(dp, input.material);
-	if (!validated.ok) {
-		return unavailable(ASK_DECISION_REASON_INPUT_INCOMPLETE, dp, false, {
-			missing_fields: validated.issues.map((issue) => issue.field),
-		});
-	}
-	const key = (input.key ?? "").trim();
-	if (key === "")
-		return unavailable(ASK_DECISION_REASON_INPUT_INCOMPLETE, dp, false, { missing_fields: ["meta.key"] });
-	const meta = buildDecisionToolMeta({
-		key,
-		taskKey: input.taskKey ?? null,
-		initiatorRole: role,
-		retryOf: input.retryOf ?? null,
-		taskBefore: input.taskBefore,
-	});
+	const { material, preparation, meta } = envelope;
 	let raw: RawDecideResult;
 	try {
 		raw = await (input.signRunner ?? runSignMw)({
 			projectDir: input.projectDir,
-			key,
-			input: JSON.stringify({ material: validated.material, meta } satisfies DecisionToolEnvelope),
+			key: meta.key,
+			input: JSON.stringify(envelope),
 			timeoutMs: input.timeoutMs ?? ASK_DECISION_TIMEOUT_MS,
 		});
 	} catch {
@@ -1452,7 +1223,17 @@ async function runSignoffAskDecision(
 		return unavailable("upstream-error", dp, true);
 	}
 	const decisionId = typeof receipt.decision_id === "string" ? receipt.decision_id : "";
-	if (decisionId === "") return unavailable("bad-response", dp, true);
+	const basis = selectedDecisionBasis(dp, material, preparation, conclusion, receipt.basis_id);
+	if (
+		!basis ||
+		receipt.dp !== dp ||
+		receipt.logical_id !== meta.logical_id ||
+		receipt.key !== meta.key ||
+		decisionId !== `${dp}:${meta.logical_id}` ||
+		receipt.second_approval !== 0 ||
+		(conclusion === "finalize" ? !["written", "existing"].includes(signoffStatus) : signoffStatus !== "not-required")
+	)
+		return unavailable("bad-response", dp, true);
 	const signoff: DecisionSignoffResult = {
 		status: signoffStatus,
 		second_approval: typeof receipt.second_approval === "number" ? receipt.second_approval : 0,
@@ -1478,14 +1259,15 @@ async function runSignoffAskDecision(
 			instruction: typeof handoff.instruction === "string" ? handoff.instruction : undefined,
 		};
 	}
-	const acted = signoffStatus === "written" || signoffStatus === "existing" || signoffStatus === "not-required";
+	const acted = signoffStatus === "written" || signoffStatus === "existing";
 	const payload: AskDecisionAvailable = {
 		available: true,
 		decision_id: decisionId,
 		// `decide sign` exposes no execution mode: reporting one would be a local
 		// verdict the authority never gave (mode is optional on purpose).
 		acted,
-		answers: { "q-conclusion": { value: conclusion } },
+		answers: { [DECIDE_REGISTRY[dp].businessQuestionId]: { value: conclusion }, basis_id: { value: basis.id } },
+		basis,
 		// The sign receipt does not echo confidence provenance; the persisted
 		// result record is the authority for it. `unknown` never gates anything.
 		confidence_source: "unknown",
@@ -1648,66 +1430,72 @@ const DP_ENUM_SCHEMA = Type.Union(
 	{ description: "Registered decision point id (unknown ids are rejected)" },
 );
 
-/** The business material of the four material dps (dp2/dp3/dp25).
- *
- * A documented, permissive object: the CLOSED key set and the per-field rules
- * are enforced by {@link validateDecisionMaterial} against the generated
- * registry (one authority), so an undeclared key is refused with its name
- * instead of a schema error the model cannot learn from. */
+/** The material alternatives and their closed nested field sets are generated from the active registry. */
+interface MaterialObjectSchema {
+	type: "object";
+	properties: Record<string, MaterialObjectSchema | Record<string, unknown>>;
+	required: string[];
+	additionalProperties: false;
+}
+
 const MATERIAL_SCHEMA = Type.Optional(
+	Type.Unsafe<Record<string, unknown>>({
+		anyOf: Object.entries(DECIDE_REGISTRY).map(([id, entry]) => {
+			const schema: MaterialObjectSchema = {
+				type: "object",
+				properties: {},
+				required: [],
+				additionalProperties: false,
+			};
+			for (const field of [...entry.requiredStateFields, ...entry.optionalStateFields]) {
+				const names = field.name.split(".");
+				let parent = schema;
+				for (const [index, name] of names.entries()) {
+					if (entry.requiredStateFields.includes(field) && !parent.required.includes(name))
+						parent.required.push(name);
+					if (index === names.length - 1) {
+						parent.properties[name] = {
+							type: field.type,
+							description: field.description,
+							...(field.itemType ? { items: { type: field.itemType } } : {}),
+							...(field.maxItems === undefined ? {} : { maxItems: field.maxItems }),
+						};
+					} else {
+						const nested = parent.properties[name] ?? {
+							type: "object",
+							properties: {},
+							required: [],
+							additionalProperties: false,
+						};
+						parent.properties[name] = nested;
+						parent = nested as MaterialObjectSchema;
+					}
+				}
+			}
+			return { ...schema, title: id };
+		}),
+		description:
+			"Business material for the selected entry. Identity, preparation and optional context travel separately.",
+	}),
+);
+const PREPARATION_SCHEMA = Type.Optional(
 	Type.Object(
 		{
-			task_goal: Type.Optional(Type.String({ description: "dp2: task goal 原文" })),
-			task_requirements: Type.Optional(Type.String({ description: "dp2: task requirements 原文" })),
-			task_deliverables: Type.Optional(Type.String({ description: "dp2: task deliverables 原文" })),
-			pm_decision_background: Type.Optional(
-				Type.String({ description: "dp2: why a checkpoint decision is needed now, plus constraints" }),
-			),
-			worker_execution: Type.Optional(
-				Type.String({ description: "dp2: REAL worker execution (done/remaining/blocked/tried); omit when none" }),
-			),
-			question: Type.Optional(Type.String({ description: "dp3: the clarifying question verbatim" })),
-			background: Type.Optional(
+			prepared_at: Type.String(),
+			basis_catalog: Type.Array(
 				Type.Object(
 					{
-						task_goal: Type.Optional(Type.String()),
-						current_state: Type.Optional(Type.String()),
-						decision_reason: Type.Optional(Type.String()),
-						constraints_impact: Type.Optional(Type.String()),
+						id: Type.String(),
+						text: Type.String(),
+						material_refs: Type.Array(Type.String()),
+						applies_to: Type.Array(Type.String()),
 					},
-					{ description: "dp3: the four background facts (unknown stays unknown)" },
+					{ additionalProperties: false },
 				),
-			),
-			handling_options: Type.Optional(
-				Type.Array(
-					Type.Object({
-						id: Type.String({ description: "c1..cN, contiguous" }),
-						label: Type.String({ description: "single line, <= 80 chars" }),
-						description: Type.String({ description: "non-empty, problem-specific; never truncated" }),
-					}),
-					{ description: "dp3: 2..5 distinguishable handling candidates" },
-				),
-			),
-			delivery_goal: Type.Optional(Type.String({ description: "dp25: delivery goal incl. acceptance conditions" })),
-			actual_completion: Type.Optional(Type.String({ description: "dp25: what was actually completed" })),
-			verification_evidence: Type.Optional(
-				Type.Object(
-					{
-						verified: Type.Optional(Type.Array(Type.String())),
-						unverified: Type.Optional(Type.Array(Type.String())),
-					},
-					{ description: "dp25: verified vs unverified evidence; [] is a real 'none'" },
-				),
-			),
-			unfinished_impact: Type.Optional(
-				Type.Array(Type.String(), { description: "dp25: unfinished items + impact; [] is a real 'none'" }),
+				{ minItems: 1 },
 			),
 		},
-		{
-			description:
-				"Business material of dp2/dp3/dp25, verbatim (see the fixed preparation prompts). " +
-				"Identity/association (key, task, role, logical_id) is never part of it.",
-		},
+		{ additionalProperties: false },
 	),
 );
 
@@ -1737,11 +1525,14 @@ export const ASK_DECISION_PARAMETERS = Type.Object(
 			}),
 		),
 		material: MATERIAL_SCHEMA,
+		preparation: PREPARATION_SCHEMA,
+		context: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 		key: Type.Optional(
 			Type.String({
 				minLength: 1,
 				maxLength: 64,
-				description: "Owning AgenticTask key (PM mode: required; workers get it from their card)",
+				description:
+					"A key claimed by this PM window. Omit for its sole active key. Worker identity comes from its task card.",
 			}),
 		),
 		task_before: Type.Optional(AGENT_TASK_STATE_SCHEMA),
@@ -1816,15 +1607,22 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 		(resolvedTaskPath !== undefined ? path.join(path.dirname(resolvedTaskPath), "trace.log") : undefined);
 	// The worker's owning key/task come from its own card path; the PM has no
 	// task path, so it must pass its `key` (and a task only when it names one).
-	const ownerKey =
-		options.key ?? (resolvedTaskPath !== undefined ? ownerKeyFromTaskPath(resolvedTaskPath) : undefined);
+	const ownerKey = resolvedTaskPath !== undefined ? ownerKeyFromTaskPath(resolvedTaskPath) : options.key;
 	const workerTaskKey =
-		options.taskKey !== undefined
-			? options.taskKey
-			: resolvedTaskPath !== undefined
-				? (workerTaskKeyFromTaskPath(resolvedTaskPath) ?? null)
-				: null;
-	const initiatorRole = options.initiatorRole ?? initiatorRoleFromWorkerTask(resolvedTaskPath);
+		resolvedTaskPath !== undefined
+			? (workerTaskKeyFromTaskPath(resolvedTaskPath) ?? null)
+			: (options.taskKey ?? null);
+	const initiatorRole = resolvedTaskPath
+		? initiatorRoleFromWorkerTask(resolvedTaskPath)
+		: (options.initiatorRole ?? "unknown");
+
+	function boundKey(requested: string | undefined): string | undefined {
+		if (ownerKey !== undefined)
+			return requested === undefined || requested.trim() === ownerKey ? ownerKey : undefined;
+		if (initiatorRole !== "pm") return undefined;
+		return claimedPmKey(projectDir, requested);
+	}
+
 	const counter = createDecisionBlockCounter();
 	/** The decisions this window asked (receipt lookup + the join meta). */
 	const asked = new Map<string, { meta: DecisionToolMeta; dp: string }>();
@@ -1838,7 +1636,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 		description:
 			"Ask the external decision service for a human-style ruling on a gated decision point. " +
 			"Returns ONE line of JSON: {available, decision_id, mode, acted, answers, confidence_source, latency_ms}" +
-			", plus {selection, feedback} on the four-dp material path. " +
+			", plus {selection, feedback} on the prepared material path. " +
 			"available=false means UNAVAILABLE: the gated action stays blocked — do NOT guess, do NOT work around it, " +
 			'report "blocked on decision <dp>" and stop. The failure line also carries escalated_reason, and for ' +
 			"input-incomplete, missing_fields.",
@@ -1855,28 +1653,35 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			"note is an L0/L1 summary (<=600 bytes): no credentials, no user quotes, no absolute paths, no code.",
 			"mode=suggest only archives an advisory row; acted is the service's verdict and never your own " +
 				"inference from the mode.",
-			// ── the fixed material prompts (design §2), one per material dp ────
-			DECISION_MATERIAL_PROMPTS.dp3,
-			DECISION_MATERIAL_PROMPTS.dp2,
-			DECISION_MATERIAL_PROMPTS.dp25,
+			...Object.values(DECISION_MATERIAL_PROMPTS),
+			"Prepare material and a separately timestamped basis_catalog. Each item cites existing material_refs and names its applicable choices. No preparation means this request is blocked; never invent evidence. An L0 note cannot substitute for pm_note.",
 			"task_before is an optional local Agent report of this task BEFORE the decision, never model material. Use source=agent-report, an ISO timestamp with timezone, and null for unrecorded progress; do not substitute current state for past state or invent observations.",
-			"dp2/dp25 are PM decisions: a worker window is refused (role-forbidden) and must report the block " +
+			"Generated roleScope governs the entry. Only the current worker can ask dp-w-check-task; a worker is refused on PM entries and must report the block " +
 				"instead of asking.",
 			"After the selection: act only inside your existing authority, then call decision_receipt with the " +
 				"action you really performed (executed) and, when this round is handled, settled. Never receipt what " +
-				"did not happen; dp25 never signs here (the sign-off writer is the CLI).",
-			"dp2 handling: a narrow that changes the confirmed delivery goal still goes to the user; direct-exec " +
+				"did not happen; dp-sign-key uses the sign CLI (the sign-off writer is the CLI).",
+			"dp-pm-steer handling: a narrow that changes the confirmed delivery goal still goes to the user; direct-exec " +
 				"first coordinates the live worker's write surface; escalate asks the user a CONCRETE risk/authority " +
 				"question. The model's choice alone never rewrites, terminates or splits a task.",
-			"dp25 branches: finalize is decided AND signed by the same `mw decide sign` call - the tool writes the sign-off file itself, so never ask the PM for a second approval or a second model call; continue and user-confirm write no sign-off and end with the concrete gaps to advance or the concrete items to confirm.",
+			"dp-sign-key branches: finalize is decided AND signed by the same `mw decide sign` call - the tool writes the sign-off file itself, so never ask the PM for a second approval or a second model call; continue and user-confirm write no sign-off and end with the concrete gaps to advance or the concrete items to confirm.",
 		],
 		parameters: ASK_DECISION_PARAMETERS,
 		// Sequential: an ask changes gate state, so it must not race the tools
 		// it authorizes (design Q1 §1.1).
 		executionMode: "sequential",
 		execute: async (_toolCallId, params, signal) => {
-			const requestedKey = params.key ?? options.key ?? ownerKey;
-			if (params.key !== undefined && ownerKey !== undefined && params.key.trim() !== ownerKey) {
+			if (Object.hasOwn(params, "parentDecisionRef") || Object.hasOwn(params, "parent_decision_ref")) {
+				const refused = refusalOutcome("input-incomplete", params.dp, ["parent_decision_ref"]);
+				return { content: [{ type: "text", text: refused.text }], details: refused.payload };
+			}
+			const invalidDp = decisionIdRefusal(params.dp);
+			if (invalidDp) {
+				const refused = refusalOutcome(invalidDp, params.dp);
+				return { content: [{ type: "text", text: refused.text }], details: refused.payload };
+			}
+			const requestedKey = boundKey(params.key);
+			if (requestedKey === undefined) {
 				// A window never decides under another key: the association must stay
 				// exact instead of being rewritten by a model parameter (AC-010).
 				const refused = refusalOutcome("input-incomplete", params.dp, ["meta.key"]);
@@ -1900,6 +1705,8 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				question: params.question,
 				note: params.note,
 				material: params.material,
+				preparation: params.preparation,
+				context: params.context,
 				key: requestedKey,
 				taskKey: requestedTask,
 				taskBefore: params.task_before,
@@ -1988,8 +1795,9 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			const refusal = (
 				reason: string,
 				dp: string | null,
+				missing?: string[],
 			): { content: Array<{ type: "text"; text: string }>; details: DecisionReceiptDetails } => {
-				const refused = refusalOutcome(reason, dp ?? "unknown");
+				const refused = refusalOutcome(reason, dp ?? "unknown", missing);
 				return {
 					content: [{ type: "text", text: refused.text }],
 					details: {
@@ -2003,6 +1811,8 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			};
 			const known = asked.get(params.decision_id);
 			if (known === undefined) return refusal(ASK_DECISION_REASON_UNKNOWN_DECISION, null);
+			if (boundKey(known.meta.key) !== known.meta.key)
+				return refusal(ASK_DECISION_REASON_INPUT_INCOMPLETE, known.dp, ["meta.key"]);
 			if (
 				params.task_after !== undefined &&
 				(known.meta.task_key === null || !isTaskStateSnapshot(params.task_after))

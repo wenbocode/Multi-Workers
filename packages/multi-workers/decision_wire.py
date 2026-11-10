@@ -45,9 +45,11 @@ Contract for the wiring cards (T03/T05/T06/T07)
   not become a silent null).
   ``append_event`` serialises, fits the 64 KiB line budget, then appends under a
   short lock budget with tail-newline repair, a short-write loop and fsync.
-  It never raises: the first failure of a logical unit (a ``call_id``, or the
-  scope itself for call-less events) opens a breaker, so the remaining events
-  of that unit fail immediately instead of spending the lock budget again.
+  It never raises (the one exception is a caller's own lock-scoped ``guard``
+  refusal, which writes nothing): the first failure of a logical unit (a
+  ``call_id``, or the scope itself for call-less events) opens a breaker, so the
+  remaining events of that unit fail immediately instead of spending the lock
+  budget again.
   Failures aggregate into one warning per logical call and are reported through
   ``WriteResult`` / ``scope.capture_status``; the caller's business result is
   never changed.
@@ -78,7 +80,32 @@ Additive T02 extension (decision lifecycle, design D004 §4.1/§4.2):
 * ``append_event(..., dedupe_event_id=True)`` - idempotent append: the event id
   is looked up *inside the append lock* and a hit writes nothing
   (``status="duplicate"``). Deduplication is by ``event_id`` only, never by
-  ``(decision_id, kind word)``: two real actions stay two rows.
+  ``(decision_id, kind word)``: two real actions stay two rows. An optional
+  ``guard`` runs inside the same lock, so a ledger-derived precondition (for
+  example a non-decreasing observation order) cannot be passed by two writers
+  at once; its own refusal propagates and nothing is appended. The dedupe scan
+  runs *before* the guard: a replay appends nothing, so a precondition about new
+  rows must not refuse the retry the ``event_id`` contract exists for, while
+  every event that is really about to be written is still guarded.
+
+Additive T10 extension (request / PM note / task terminal, design §4.6 AC-050):
+
+* ``request`` - the one real prepared request: transport facts (``available``,
+  ``attempts``/``transport_attempts``, ``replayed``) and the single business
+  decision (``choice`` + selected ``basis_id``/``basis_text``/``basis_source`` +
+  ``basis_catalog_sha256`` of the schema-3 ``preparation`` layer) live in the
+  same row but never stand in for each other. A transport success with
+  ``business_decisions=0`` is an honest request fact, not an approval.
+* ``note`` - the PM's pre-submission note (``pm_note`` + ``prepared_at`` +
+  ``note_source``). Its own kind, so the note and the model's selected basis
+  keep independent sources (AC-007: "PM note与模型理由分别保存").
+* ``terminal`` - this task's real terminal observation (``terminal`` closed
+  vocabulary + real ``reason`` + the ``task_after`` snapshot). It is not
+  ``settled``, not an executed action and not "done" for the key.
+
+These three kinds are additive: the lifecycle feedback words stay the four
+pinned ones, and the history reader accepts them as schema-v1 kinds instead of
+counting an unknown kind.
 """
 from __future__ import annotations
 
@@ -252,6 +279,43 @@ _KIND_FIELDS: dict[str, tuple[str, ...]] = {
     ),
     "record-start": ("logical_id", "record_version", "initiator_role", "retry_of", "task_before"),
     "book-snapshot": ("book_ref", "book", "file_sha256", "book_sha256", "book_version"),
+    # -- T10: request / PM note / task terminal facts (separate from the four
+    # -- pinned lifecycle feedback words; each has its own source and none of
+    # -- them can stand in for "executed" or "done").
+    "request": (
+        "logical_id",
+        "dp",
+        "available",
+        "replayed",
+        "choice",
+        "basis_id",
+        "basis_text",
+        "basis_source",
+        "prepared_at",
+        "basis_catalog_sha256",
+        "business_decisions",
+        "transport_attempts",
+        "attempts",
+        "reason",
+        "parent_ref",
+        "task_before",
+    ),
+    "note": (
+        "logical_id",
+        "pm_note",
+        "prepared_at",
+        "note_source",
+        "parent_ref",
+        "task_before",
+    ),
+    "terminal": (
+        "logical_id",
+        "terminal",
+        "reason",
+        "evidence",
+        "parent_ref",
+        "task_after",
+    ),
 }
 EVENT_KINDS = frozenset(_KIND_FIELDS)
 
@@ -496,8 +560,22 @@ def canonical_path(path: pathlib.Path | str) -> pathlib.Path:
     return pathlib.Path(os.path.realpath(os.path.abspath(str(path))))
 
 
+#: Windows resolves ``.AgenticDoc`` and ``.agenticdoc`` to the same directory.
+#: The guard therefore compares components with the platform's own identity rule
+#: instead of a byte equality that a case variant slips through. 8.3 short names
+#: are *not* resolved here (no live-path probe); that case stays out of scope.
+_CASE_INSENSITIVE_PATHS = os.name == "nt"
+
+
+def _same_path_component(part: str, name: str) -> bool:
+    """True when ``part`` names the same component as ``name`` on this platform."""
+    if part == name:
+        return True
+    return _CASE_INSENSITIVE_PATHS and os.path.normcase(part) == os.path.normcase(name)
+
+
 def _is_inside_agenticdoc(path: pathlib.Path) -> bool:
-    return any(part == ".agenticdoc" for part in path.parts)
+    return any(_same_path_component(part, ".agenticdoc") for part in path.parts)
 
 
 
@@ -902,7 +980,16 @@ _FREE_TEXT_FIELDS: dict[str, tuple[str, ...]] = {
     "lifecycle-error": ("detail",),
     "record-start": ("task_before",),
     "book-snapshot": (),
+    "request": ("basis_text", "reason"),
+    "note": ("pm_note",),
+    "terminal": ("reason", "evidence"),
 }
+
+#: A PM note and a selected basis item are the two halves of one round's
+#: provenance (design D012A). Both are stored whole or refused - a clipped note
+#: or a truncated reason would look like a complete one ("不截断理由").
+NOTE_TEXT_BYTES = 16 * 1024
+BASIS_TEXT_BYTES = 4 * 1024
 
 _FREE_TEXT_LIMITS: dict[str, int] = {
     "url_path": URL_PATH_LIMIT,
@@ -914,6 +1001,8 @@ _FREE_TEXT_LIMITS: dict[str, int] = {
     "escalated_reason": REASON_LIMIT,
     "transport": MODEL_LIMIT,
     "detail": ERROR_DETAIL_LIMIT,
+    "pm_note": NOTE_TEXT_BYTES,
+    "basis_text": BASIS_TEXT_BYTES,
 }
 
 
@@ -1083,6 +1172,27 @@ def _sanitize_free_text(scope: WireScope, name: str, value: object) -> object:
     return _sanitize_text(scope, value, limit)
 
 
+def recorded_task_state(
+    scope: WireScope, value: object
+) -> dict[str, object] | None:
+    """The exact representation a task snapshot has *after* it is stored.
+
+    A writer that must compare a caller's snapshot with the ledger's recorded
+    one has to compare like with like: the stored form went through the scope's
+    redact/clip policy (the same one :func:`build_event` applies), while the
+    caller still holds the raw value. Returning the sanitized, validated
+    snapshot is what lets a known-secret-bearing ``before`` be repeated by exact
+    equality without ever re-reading or writing the secret. ``None`` stays
+    ``None`` and an empty list stays an empty list (no axis is filled in).
+    """
+    try:
+        validated = decision_task_state.validate_task_state(value)
+    except decision_task_state.TaskStateInputError as exc:
+        raise WireScopeError(str(exc)) from None
+    recorded = _sanitize_free_text(scope, "task_before", validated)
+    return recorded if isinstance(recorded, dict) else None
+
+
 def build_event(
     scope: WireScope,
     kind: str,
@@ -1153,11 +1263,7 @@ def build_event(
             if isinstance(value, Capture):
                 value = value.as_dict()
         elif name in ("task_before", "task_after"):
-            try:
-                value = decision_task_state.validate_task_state(value)
-            except decision_task_state.TaskStateInputError as exc:
-                raise WireScopeError(str(exc)) from None
-            value = _sanitize_free_text(scope, name, value)
+            value = recorded_task_state(scope, value)
         elif name in free_text:
             value = _sanitize_free_text(scope, name, value)
         row[name] = value
@@ -1514,6 +1620,126 @@ def book_snapshot_event(
     )
 
 
+def request_event(
+    scope: WireScope,
+    *,
+    logical_id: str,
+    dp: str,
+    available: bool,
+    replayed: bool,
+    choice: str | None,
+    basis_id: str | None,
+    basis_text: str | None,
+    basis_source: str | None,
+    prepared_at: str,
+    basis_catalog_sha256: str | None,
+    business_decisions: int,
+    transport_attempts: int,
+    attempts: int,
+    reason: str | None,
+    parent_ref: str | None = None,
+    task_before: dict[str, object] | None = None,
+    event_id: str | None = None,
+) -> dict[str, object]:
+    """One real prepared request (T10): transport facts and business decision apart.
+
+    ``available``/``transport_attempts`` describe the wire; ``choice``/
+    ``basis_*`` describe the single valid business decision and stay null when
+    ``business_decisions`` is 0. ``prepared_at`` is the PM preparation's own
+    time, never the write time. Validation lives in the lifecycle writer, which
+    is the only production caller.
+    """
+    return build_event(
+        scope,
+        "request",
+        event_id=event_id,
+        fields={
+            "logical_id": logical_id,
+            "dp": dp,
+            "available": available,
+            "replayed": replayed,
+            "choice": choice,
+            "basis_id": basis_id,
+            "basis_text": basis_text,
+            "basis_source": basis_source,
+            "prepared_at": prepared_at,
+            "basis_catalog_sha256": basis_catalog_sha256,
+            "business_decisions": business_decisions,
+            "transport_attempts": transport_attempts,
+            "attempts": attempts,
+            "reason": reason,
+            "parent_ref": parent_ref,
+            "task_before": task_before,
+        },
+    )
+
+
+def note_event(
+    scope: WireScope,
+    *,
+    logical_id: str,
+    pm_note: str,
+    prepared_at: str,
+    note_source: str,
+    parent_ref: str | None = None,
+    task_before: dict[str, object] | None = None,
+    event_id: str | None = None,
+) -> dict[str, object]:
+    """The PM's pre-submission note as its own fact (T10, spec AC-007).
+
+    It never shares a row with the model's selected basis: a note is the PM's
+    declared intent (matter/action/goal evidence/budget basis/end condition),
+    the basis is the PM-prepared catalogue item the model picked. Neither is
+    inferred from the other, and a failure reason never becomes either.
+    """
+    return build_event(
+        scope,
+        "note",
+        event_id=event_id,
+        fields={
+            "logical_id": logical_id,
+            "pm_note": pm_note,
+            "prepared_at": prepared_at,
+            "note_source": note_source,
+            "parent_ref": parent_ref,
+            "task_before": task_before,
+        },
+    )
+
+
+def terminal_event(
+    scope: WireScope,
+    *,
+    logical_id: str,
+    terminal: str,
+    reason: str,
+    task_after: dict[str, object] | None,
+    evidence: str | None = None,
+    parent_ref: str | None = None,
+    event_id: str | None = None,
+) -> dict[str, object]:
+    """This task's real terminal observation (T10), never a settlement shortcut.
+
+    ``settled``/``consumed`` are decision-round facts; the task terminal is its
+    own fact with its own reason and the real post observation. It does not
+    close a key, phase, claim or sign-off, and no reader may derive it from
+    ``settled``.
+    """
+    return build_event(
+        scope,
+        "terminal",
+        event_id=event_id,
+        fields={
+            "logical_id": logical_id,
+            "terminal": terminal,
+            "reason": reason,
+            "evidence": evidence,
+            "parent_ref": parent_ref,
+            "task_after": task_after,
+        },
+    )
+
+
 # -- serialization and line budget -----------------------------------------
 
 def _encode_row(row: Mapping[str, object]) -> bytes:
@@ -1749,7 +1975,11 @@ def _event_id_present(sink: pathlib.Path, event_id: str) -> bool:
 
 
 def append_event(
-    scope: WireScope, event: Mapping[str, object], *, dedupe_event_id: bool = False
+    scope: WireScope,
+    event: Mapping[str, object],
+    *,
+    dedupe_event_id: bool = False,
+    guard: Callable[[], None] | None = None,
 ) -> WriteResult:
     """Append one event; never raises into the caller's business result.
 
@@ -1758,6 +1988,19 @@ def append_event(
     ``status="duplicate"`` is returned. Deduplication is by ``event_id`` only -
     never by ``(decision_id, kind word)``: the same word twice is two real
     actions and must stay two rows.
+
+    ``guard`` is a read-only precondition that runs while the append lock is
+    held, so a precondition based on the ledger's current rows cannot be passed
+    by two writers at once (a read-then-append outside the lock is a TOCTOU). A
+    refusal by the guard is the caller's own input error, not a capture failure:
+    it propagates as-is, nothing is appended and no failure sidecar is written.
+
+    The duplicate scan runs first, inside that same lock: an ``event_id`` this
+    ledger already records is answered ``duplicate`` (zero bytes) *before* the
+    guard, because a replay appends nothing and a precondition about the rows
+    being added has nothing to reject. Dedupe and the guard therefore take both
+    decisions on the same locked view of the ledger; a new ``event_id`` still
+    faces the guard before it is appended.
     """
     if event.get("schema_version") != SCHEMA_VERSION:
         return _fail(scope, "schema", WireScopeError("schema_version mismatch"), event)
@@ -1802,6 +2045,9 @@ def append_event(
     tail_repaired = False
     try:
         if dedupe_event_id:
+            # Same locked view as the guard below: a recorded id is a replay and
+            # appends nothing, so it is answered before any new-row
+            # precondition can refuse it (AC-052 idempotency).
             event_id = event.get("event_id")
             if not isinstance(event_id, str) or not event_id:
                 return _fail(
@@ -1823,6 +2069,10 @@ def append_event(
                     event_id=event_id,
                     capture_status=status if isinstance(status, str) else None,
                 )
+        if guard is not None:
+            # Ledger-derived precondition: it must see the same rows the append
+            # is about to extend, which is only true while this lock is held.
+            guard()
         tail_repaired = _terminate_dangling_tail(sink)
         fd = os.open(
             str(sink), os.O_WRONLY | os.O_CREAT | os.O_APPEND | _BINARY_FLAG, 0o644

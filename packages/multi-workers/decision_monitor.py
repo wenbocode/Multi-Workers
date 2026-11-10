@@ -77,6 +77,7 @@ import urllib.request
 from typing import Callable, Iterator, Mapping, Sequence
 
 import decision
+import decision_book
 import decision_history
 import decision_points
 import decision_wire
@@ -198,20 +199,42 @@ def load_static_assets() -> dict[str, tuple[str, str]]:
 
 STATIC_ASSETS: dict[str, tuple[str, str]] = load_static_assets()
 
-# ── Offline workbench cases (design §4.5 / D007) ────────────────────────────
+# ── Offline workbench cases (design §4.5 / D007, T05 eight-case source) ─────
 
-#: The *only* four synthetic cases the workbench ships. The table is the whole
-#: lookup: a caller never supplies a path, a filename or a directory, and the
-#: directory is never scanned, so the route cannot be pointed elsewhere.
+#: The eight synthetic cases the workbench ships: one complete schema-3 book for
+#: each active entry of design §1.1, produced offline by
+#: ``scripts/build_decide_cases.py`` (the single source, never a second copy of
+#: the material). The table is the whole lookup: a caller never supplies a path,
+#: a filename or a directory, and the directory is never scanned, so the route
+#: cannot be pointed elsewhere.
 CASE_VERSION = 1
 DECIDE_CASES_DIR = ASSET_DIR / "decide_cases"
 CASE_IDS: dict[str, str] = {
+    "dp-w-type": "dp-w-type.json",
+    "dp-pm-steer": "dp-pm-steer.json",
+    "dp-w-check-task": "dp-w-check-task.json",
+    "dp-QG": "dp-QG.json",
+    "dp-gate-approve": "dp-gate-approve.json",
+    "dp-sign-key": "dp-sign-key.json",
+    "dp-auto": "dp-auto.json",
+    "dp-route": "dp-route.json",
+}
+
+#: The four pre-consolidation case files: byte-locked read-only history. Their
+#: ids are retired, so they are never loadable, never part of the submittable
+#: menu and never an alias route: the page only gets their read-only identity
+#: (id/file/sha256/bytes) plus the retirement explanation.
+LEGACY_CASE_IDS: dict[str, str] = {
     "dp1-dispatch-type": "dp1.json",
     "dp2-checkpoint-split": "dp2.json",
     "dp3-worker-clarify": "dp3.json",
     "dp25-signoff-conclusion": "dp25.json",
 }
 _CASE_SHELL_KEYS = frozenset({"case_version", "dp", "title", "note", "questions", "book"})
+#: The evidence anchor of the shipped cases (``path:line`` rows name the offline
+#: generator). It is explicit, so a fixture/CI copy never resolves against a
+#: different checkout: the repository root of this shipped package.
+CASE_EVIDENCE_ROOT = ASSET_DIR.parents[1]
 
 
 # ── Errors ──────────────────────────────────────────────────────────────────
@@ -270,10 +293,12 @@ class _ApiError(Exception):
 class CaseError(RuntimeError):
     """A refused offline case read (``kind`` is the machine-readable part).
 
-    Kinds: ``case-unknown`` (not one of the four ids), ``case-unsafe`` (the
-    fixed slot escaped its directory / became a symlink), ``case-missing``
-    (the shipped file is absent or unreadable) and ``case-invalid`` (the file
-    is not a well-formed case shell). The message never echoes file content.
+    Kinds: ``case-unknown`` (not one of the eight active ids), ``case-retired``
+    (one of the four read-only legacy ids: history, never an alias),
+    ``case-unsafe`` (the fixed slot escaped its directory / became a symlink),
+    ``case-missing`` (the shipped file is absent or unreadable) and
+    ``case-invalid`` (the file is not a well-formed schema-3 case shell or the
+    production book gate refuses it). The message never echoes file content.
     """
 
     def __init__(self, kind: str, message: str) -> None:
@@ -291,8 +316,14 @@ def _case_directory(cases_dir: pathlib.Path | str | None) -> pathlib.Path:
 
 def _case_file_path(dp_id: object, cases_dir: pathlib.Path | str | None = None) -> pathlib.Path:
     """The one legal file for ``dp_id``; every other shape is refused."""
+    if isinstance(dp_id, str) and dp_id in LEGACY_CASE_IDS:
+        raise CaseError(
+            "case-retired",
+            "this id is retired history: its case file stays byte-locked read-only "
+            "and old ids are never a runnable alias of an active entry",
+        )
     if not isinstance(dp_id, str) or dp_id not in CASE_IDS:
-        raise CaseError("case-unknown", "not one of the four offline workbench cases")
+        raise CaseError("case-unknown", "not one of the eight active workbench cases")
     directory = _case_directory(cases_dir)
     path = directory / CASE_IDS[dp_id]
     try:
@@ -341,9 +372,15 @@ def _validate_case(raw: bytes, dp_id: str) -> dict:
 
     ``questions`` (T10) is the case's complete native question set: the same
     strict DP mapping / type / instructions / criteria gate the observation path
-    applies, checked against the case state that would be sent. A slugged or
+    applies, checked against the material that would be sent. A slugged or
     hand-edited shell that does not carry it is refused instead of silently
     falling back to a second question source.
+
+    The book itself is judged by the production gate (:func:`decision_book.
+    check_book`): schema 3 (``material`` + ``preparation`` + local ``meta``),
+    closed typed fields, placeholder/evidence/budget/secret checks. The case
+    file is read-only here, so this is a pure load-side verification and never
+    a model/credential/write path.
     """
     try:
         parsed = json.loads(raw.decode("utf-8"))
@@ -369,13 +406,27 @@ def _validate_case(raw: bytes, dp_id: str) -> dict:
         raise CaseError("case-invalid", "case.book must be a JSON object")
     if book.get("decision_point") != dp_id:
         raise CaseError("case-invalid", "case.book names a different decision point")
-    if not isinstance(book.get("state"), dict):
-        raise CaseError("case-invalid", "case.book.state must be a JSON object")
+    if book.get("schema_version") != decision_book.BOOK_SCHEMA_VERSION:
+        raise CaseError(
+            "case-invalid",
+            f"case.book.schema_version must be {decision_book.BOOK_SCHEMA_VERSION}",
+        )
     questions = parsed.get("questions")
     if not isinstance(questions, dict):
         raise CaseError("case-invalid", "case.questions must be a JSON object")
+    # The production book gate is the one authority: an unlaunched/placeholder or
+    # legacy-shaped book is refused here, never served as a ready-to-submit case.
     try:
-        issues = decision_points.question_override_issues(dp_id, questions, book["state"])
+        book_issues = decision_book.check_book(book, repo_root=CASE_EVIDENCE_ROOT)
+    except decision.DecisionInputError as exc:
+        raise CaseError("case-invalid", "the case names an unregistered decision point") from exc
+    if book_issues:
+        detail = "; ".join(f"{issue.code} {issue.path}: {issue.detail}" for issue in book_issues)
+        raise CaseError("case-invalid", f"the case book is not legal ({detail})"[:400])
+    try:
+        issues = decision_points.question_override_issues(
+            dp_id, questions, decision_book.book_state(book)
+        )
     except decision.DecisionInputError as exc:
         raise CaseError("case-invalid", "the case names an unregistered decision point") from exc
     if issues:
@@ -389,6 +440,21 @@ def _validate_case(raw: bytes, dp_id: str) -> dict:
     if questions_text in serialised:
         raise CaseError("case-invalid", "the shell questions leaked into the sent book")
     return parsed
+
+
+def legacy_case_identity(path: pathlib.Path) -> dict[str, object]:
+    """Read-only identity of one legacy case file (no body, no questions).
+
+    The four pre-consolidation cases stay byte-locked history: the page may
+    explain them (id/file/sha256/bytes + the retirement note) but can never
+    load, validate or submit them, and no alias route is created.
+    """
+    data = _read_case_bytes(path)
+    return {
+        "file": path.name,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+    }
 
 
 def load_case(
@@ -1395,13 +1461,13 @@ def _closed_json(
 
 
 def _book_state_scope(dp: str) -> tuple[set[str], set[str], set[str]]:
-    """Registered state paths for ``dp``: full paths, container prefixes, free subtrees.
+    """Registered material/state paths for ``dp``: full paths, prefixes, free subtrees.
 
     ``decision_points`` is the same registry authority ``decision_book``
     consumes, so this never invents a second field vocabulary. Declared
-    ``object`` fields (dp1 ``history``) own their whole subtree, exactly like
-    ``decision_book._check_state_closed`` accepts descendants of an optional
-    object.
+    ``object`` fields (for example an entry's nested ``pm_note``) own their whole
+    subtree, exactly like ``decision_book`` accepts descendants of a declared
+    object path.
     """
     required = set(decision_points.REQUIRED_STATE_FIELDS.get(dp, ()))
     optional = set(decision_points.OPTIONAL_STATE_FIELDS.get(dp, ()))
@@ -1450,21 +1516,53 @@ def _scan_smuggled_keys(
             _scan_smuggled_keys(item, prefix, full, prefixes, free, found)
 
 
+def _book_material_scope(dp: str) -> tuple[set[str], set[str], set[str]]:
+    """Registered *material* paths for ``dp`` (the schema-3 business layer).
+
+    Same registry authority as :func:`_book_state_scope`, applied to the
+    ``material`` layer: required/optional paths are dotted material paths here,
+    so the closure check and the depth scan share one vocabulary.
+    """
+    required = set(decision_points.REQUIRED_STATE_FIELDS.get(dp, ()))
+    optional = set(decision_points.OPTIONAL_STATE_FIELDS.get(dp, ()))
+    full = required | optional
+    free = {
+        path
+        for path in full
+        if (decision_points.STATE_FIELD_DESCRIPTIONS.get(path) or {}).get("type") == "object"
+    }
+    prefixes: set[str] = set()
+    for path in full:
+        parts = path.split(".")
+        for index in range(1, len(parts)):
+            prefixes.add(".".join(parts[:index]))
+    return full, prefixes, free
+
+
 def _smuggled_book_paths(book: Mapping[str, object], dp: str) -> list[str]:
     """Defense-in-depth scan of the submitted book (AC-017 / VC-015).
 
     This is *not* ``check_book``: it only refuses execution/authorization key
     names that the dp's registry does not declare, at any nesting level. Real
-    typed fields whose names merely look forbidden (dp12 ``action.command``,
-    dp24 ``project.path``, dp1 ``history`` subtrees) are left for the provider,
-    so a legitimate book is never blocked by this seam.
+    typed fields whose names merely look forbidden (the gate's
+    ``pm_note.basis.authority``, the auto entry's candidate objects) are left
+    for the provider, so a legitimate book is never blocked by this seam.
+
+    Schema 3 puts the business facts under ``material``; a legacy ``state`` book
+    is still scanned here so the refusal happens before any provider call (the
+    production gate refuses the legacy shape itself).
     """
-    full, prefixes, free = _book_state_scope(dp)
+    full, prefixes, free = _book_material_scope(dp)
     found: list[str] = []
+    material = book.get("material")
+    if isinstance(material, Mapping):
+        _scan_smuggled_keys(material, "", full, prefixes, free, found)
     state = book.get("state")
-    _scan_smuggled_keys(state, "", full, prefixes, free, found)
+    if isinstance(state, Mapping):
+        state_full, state_prefixes, state_free = _book_state_scope(dp)
+        _scan_smuggled_keys(state, "", state_full, state_prefixes, state_free, found)
     for key, value in book.items():
-        if key == "state":
+        if key in ("state", "material"):
             continue
         name = str(key)
         if name in FORBIDDEN_KEYS:
@@ -1872,6 +1970,19 @@ class _MonitorHandler(http.server.BaseHTTPRequestHandler):
         data = {
             "schema": snapshot["schema"],
             "points": points,
+            # The callable set is exactly the eight active entries; the 25 retired
+            # ids are a separate read-only directory (never an alias of a point).
+            "callable_count": len(points),
+            "retired": list(snapshot.get("retired") or []),
+            # The generated snapshot (``decide_registry.json``) is byte-locked as
+            # an artifact; this route is a *dynamic* projection of the same
+            # registry plus this control root's effective config, so the two are
+            # deliberately not byte-comparable.
+            "projection": {
+                "points_source": snapshot.get("generated_from"),
+                "effective_config": str(config.layer),
+                "generated_snapshot": "decide_registry.json (byte lock; not this projection)",
+            },
             "transport": {"state": deps.transport_state, "detail": deps.transport_detail},
             "config": {"layer": config.layer, "warnings": list(config.warnings[:20])},
             # The DP test page needs the same budget the book gate applies and the
@@ -1918,12 +2029,14 @@ class _MonitorHandler(http.server.BaseHTTPRequestHandler):
     # -- offline workbench cases (read-only, zero model/credential) ---------
 
     def _act_test_cases(self, *, query: dict[str, str], params: dict[str, str], body: bytes):
-        """The four shipped synthetic cases (page role, GET, read-only).
+        """The eight shipped schema-3 cases (page role, GET, read-only).
 
         No path, filename or directory is ever taken from the caller: ``dp`` is
         an optional id filter over :data:`CASE_IDS`. Loading a case reads the
         fixed file only - no credential snapshot, no transport, no model, no
         write - so the page can load/edit a book before any explicit submit.
+        The four retired case files are only explained read-only in the
+        ``retired`` block: they are never loadable and never a submit menu item.
         """
         del params, body
         unknown = sorted(set(query) - {"dp"})
@@ -1935,14 +2048,23 @@ class _MonitorHandler(http.server.BaseHTTPRequestHandler):
             )
         wanted = query.get("dp")
         if wanted is not None and wanted not in CASE_IDS:
-            raise _ApiError(400, "invalid-filter", "'dp' is not one of the four offline case ids")
+            if wanted in LEGACY_CASE_IDS:
+                raise _ApiError(
+                    400,
+                    "case-retired",
+                    "this id is retired history: legacy cases stay byte-locked read-only "
+                    "and are never a runnable alias of an active entry",
+                )
+            raise _ApiError(
+                400, "invalid-filter", "'dp' is not one of the eight active case ids"
+            )
         ids = [wanted] if wanted else list(CASE_IDS)
         cases: list[dict[str, object]] = []
         for dp in ids:
             try:
                 case = load_case(dp)
             except CaseError as exc:
-                status = 400 if exc.kind == "case-unknown" else 503
+                status = 400 if exc.kind in ("case-unknown", "case-retired") else 503
                 raise _ApiError(status, exc.kind, exc.message) from exc
             book = case["book"]
             cases.append(
@@ -1956,13 +2078,49 @@ class _MonitorHandler(http.server.BaseHTTPRequestHandler):
                     "bytes": len(case_book_bytes(book)),
                 }
             )
-        data = {"case_version": CASE_VERSION, "source": "offline", "cases": cases}
+        data = {
+            "case_version": CASE_VERSION,
+            "source": "offline",
+            "schema_version": decision_book.BOOK_SCHEMA_VERSION,
+            "cases": cases,
+            "retired": self._retired_case_directory(),
+        }
         return _redact_payload(data, self.monitor.deps.redactor), None
+
+    @staticmethod
+    def _retired_case_directory() -> list[dict[str, object]]:
+        """Read-only retirement explanation of the four legacy case files.
+
+        Identity and integrity only (id/file/sha256/bytes) plus the registry's
+        own retirement note: no book, no questions, no alias. A missing or broken
+        historical file is reported as absent instead of being reconstructed.
+        """
+        directory: list[dict[str, object]] = []
+        for dp, name in LEGACY_CASE_IDS.items():
+            entry: dict[str, object] = {
+                "dp": dp,
+                "file": name,
+                "registry_status": "retired",
+                "readonly": True,
+                "rerun_available": False,
+            }
+            record = decision_points.retired_dp(dp)
+            if record is not None:
+                entry["disposition"] = record.disposition
+                entry["migrated_to"] = record.migrated_to
+                entry["note"] = record.note
+            try:
+                entry.update(legacy_case_identity(DECIDE_CASES_DIR / name))
+            except CaseError as exc:
+                entry["integrity"] = exc.kind
+            directory.append(entry)
+        return directory
 
     def _act_scaffold(self, *, query: dict[str, str], params: dict[str, str], body: bytes):
         del query, params
         raw = _closed_json(body, allowed=frozenset({"dp"}))
         dp = self._require_str(raw, "dp")
+        _require_callable_dp(dp)
         result = self._provider_call("scaffold", lambda playground: playground.scaffold(dp))  # type: ignore[attr-defined]
         return _redact_payload(result, self.monitor.deps.redactor), None
 
@@ -1970,6 +2128,7 @@ class _MonitorHandler(http.server.BaseHTTPRequestHandler):
         del query, params
         raw = _closed_json(body, allowed=frozenset({"dp", "book", "questions"}))
         dp = self._require_str(raw, "dp")
+        _require_callable_dp(dp)
         book = raw.get("book")
         if not isinstance(book, dict):
             raise _ApiError(400, "invalid-field", "'book' must be a JSON object")
@@ -2032,16 +2191,7 @@ class _MonitorHandler(http.server.BaseHTTPRequestHandler):
                 issues=_safe_names(missing),
             )
         dp = self._require_str(raw, "dp")
-        try:
-            decision_points.get_decision_point(dp)
-        except decision.DecisionInputError as exc:
-            # Unknown ids are refused before any provider call; a broken registry
-            # (any other exception) must surface as an internal error instead.
-            raise _ApiError(
-                400,
-                "invalid-field",
-                "'dp' is not a registered decision point; no provider was called",
-            ) from exc
+        _require_callable_dp(dp)
         submit_id = self._require_str(raw, "submit_id")
         if not _SUBMIT_ID_PATTERN.match(submit_id):
             raise _ApiError(400, "invalid-field", "'submit_id' must be a short opaque identifier")
@@ -2135,6 +2285,34 @@ class _MonitorHandler(http.server.BaseHTTPRequestHandler):
         if not isinstance(value, str) or not value:
             raise _ApiError(400, "invalid-field", f"'{name}' must be a non-empty string")
         return value
+
+
+def _require_callable_dp(dp: str) -> None:
+    """Refuse a retired/unknown dp before any provider (or model) is consulted.
+
+    The eight active entries are the only callable set. A retired id is an
+    explicit, auditable refusal (disposition only, never an alias and never a
+    successor as an implicit target); an unknown id stays a plain invalid-field.
+    """
+    if decision_points.is_retired_dp(dp):
+        record = decision_points.retired_dp(dp)
+        disposition = record.disposition if record is not None else "retired"
+        raise _ApiError(
+            400,
+            "retired-dp",
+            f"retired decision point id ({disposition}): old ids are read-only history, "
+            "not callable; no provider was called",
+        )
+    try:
+        decision_points.get_decision_point(dp)
+    except decision.DecisionInputError as exc:
+        # Unknown ids are refused before any provider call; a broken registry
+        # (any other exception) must surface as an internal error instead.
+        raise _ApiError(
+            400,
+            "invalid-field",
+            "'dp' is not a registered decision point; no provider was called",
+        ) from exc
 
 
 # ── Dependencies (T07 read side, T06 playground, redactor) ──────────────────

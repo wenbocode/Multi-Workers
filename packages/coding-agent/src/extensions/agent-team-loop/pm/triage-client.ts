@@ -1,64 +1,23 @@
-/**
- * triage-client.ts — decision-point client for the pre-dispatch triage
- * (mw-jev-provider-integration T-03; mw-decision-substitution T-04; design
- * D-004/D-005/D-006/D-007 + D-019/D-021).
- *
- * Contract:
- * - Input is `(dpId, material, meta)` for the four-DP business contract
- *   (mw-decision-context T03): `material` carries ONLY the registry's
- *   `modelStateFields` for that dp (the single allowlist projection), `meta`
- *   carries the local envelope (`record_version`, `logical_id`, `key`,
- *   `task_key`, `initiator_role`, `retry_of`) and NEVER reaches the model.
- *   The stdin payload is exactly `{material, meta}`.
- * - The older **structured state** entry (`{state}`, D6 Q1.1) is still accepted
- *   by {@link triageDispatch} for callers that do not build the envelope yet;
- *   it validates L0 enums/counters/L1 summaries and caps the state at 2000B.
- *   The free-form dp1 string state and its `triage_risk` question map are gone
- *   (spec §1.7: a replaced contract is not kept as a compatibility branch).
- *   L2 content (credentials / user quotes / absolute paths / code) has **no
- *   place in either signature** — it is excluded by construction, not washed
- *   afterwards (D-019).
- * - Canonical serialisation = recursive key sort + compact separators, measured
- *   in UTF-8 bytes (D6 Q1.1/Q2.2). > {@link MAX_STRUCTURED_STATE_BYTES}
- *   triggers the two-stage truncation: drop optional L1 → halve required L1 →
- *   refuse `input-oversize`. A missing / wrongly typed / over-cap required
- *   field refuses with `input-incomplete`. Both refusals are **zero spawn** and
- *   set `escalate_to_human` (D-021: record it, never alert).
- * - The question set is authoritative in the Python decision registry
- *   (design §2.1 "问题集（TS 不再持有字面量）"), so the structured request
- *   carries no `questions` map. The legacy string path keeps forwarding the
- *   frozen DP-1 choice set so its bytes stay identical.
- * - `state_digest` is computed by Python (`sha256(canonical)[:16]`) and only
- *   passed through here — this module never hashes (D-004).
- * - The single egress point is **one** `JSON.stringify` of the request envelope
- *   in {@link triageDispatch}. It is pure serialisation: no redaction, no
- *   truncation, no hashing happens there.
- *
- * Unchanged hard rules (T-03):
- * - **Default off** (D-007): `.mw/decide.json` missing / invalid / `enabled !=
- *   true` / `points.dp1.enabled == false` means a complete bypass — this module
- *   then performs ZERO spawn and ZERO write.
- * - **Fail-soft** (D-004): every failure (missing mw.py, timeout, non-JSON
- *   stdout, non-zero exit, thrown exception) normalises to
- *   `available=false`, never throws, never affects the dispatch.
- * - **State on stdin only** (D-003): `state` rides the request JSON on stdin;
- *   the command line carries only `--project` / `--dp` / `--json`.
- * - **Spawn reuse** (D-001 / W1): the child is the existing `PYTHON_EXE` +
- *   `findMwPy()` resolution from `shared/mw-runner.ts` (MW_PY override,
- *   global-install sidecar, `-X utf8`), never a bare `spawn` with a guessed
- *   interpreter/path.
- * - **Single writer** (D-005): the structured evidence file
- *   `.agenticdoc/_autopilot/triage-decisions.jsonl` is written by the Python
- *   decision client only; this module never touches it.
- * - **Confidence provenance** (D-002/D-004): `confidence_source` is carried
- *   through verbatim; callers must label `model-self-report` as an unverified
- *   self-report that is NOT usable for gating.
- */
+/** PM dispatch client. Active requests use the generated dp-w-type contract
+ * and carry independently prepared material, basis, optional context and local
+ * identity. The structured-state helpers remain available for historical state
+ * inspection; an old producer cannot submit that shape to an active entry.
+ * The Python service controls policy, redaction, model calls and persistence. */
 
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import {
+	claimedPmKey,
+	type DecisionPreparation,
+	decisionActorAllowed,
+	decisionIdRefusal,
+	type PreparedBasis,
+	preparationProblems,
+	selectedDecisionBasis,
+	validateDecisionMaterial,
+} from "../shared/decide-policy.ts";
 import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.ts";
 import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.ts";
 import { copyTaskState, isTaskStateSnapshot, type TaskStateSnapshot } from "./decision-task-state.ts";
@@ -74,7 +33,7 @@ export const MAX_STRUCTURED_STATE_BYTES = 2_000;
  * are the **registry ids verbatim** (`decision_points.DP_REGISTRY`), never short
  * forms: a short id silently misses every dp-specific row below. The drift lock
  * in `test/suite/triage-client-state.test.ts` pins this against the registry. */
-export const DP1_ID = "dp1-dispatch-type";
+export const DP1_ID = "dp-w-type";
 
 /** TS-local refusal reasons (they never come back from the Python response;
  * `decision.py`'s frozen 8-value reason set is untouched by them). */
@@ -114,6 +73,9 @@ export interface DecisionEnvelopeMeta {
 
 /** The stdin payload for `mw decide run <dp> --stdin` (four-DP contract). */
 export interface DecisionMaterialEnvelope {
+	parent_decision_ref?: string;
+	preparation: DecisionPreparation;
+	context?: Record<string, unknown>;
 	material: TriageState;
 	meta: DecisionEnvelopeMeta;
 }
@@ -204,6 +166,7 @@ export interface TriageResult {
 	available: boolean;
 	reason?: string;
 	triage_type?: string;
+	basis?: PreparedBasis;
 	triage_risk?: string;
 	confidences: Record<string, number | null>;
 	confidence_source: string;
@@ -274,14 +237,14 @@ export function readDecidePolicy(projectDir: string): DecidePolicy {
 	const obj = raw as Record<string, unknown>;
 	if (obj.enabled !== true) return { ...DISABLED_POLICY };
 	const points = asRecord(obj.points);
-	const dp1 = asRecord(points?.dp1);
+	const dp1 = asRecord(points?.[DP1_ID]);
 	const timeoutS =
 		typeof obj.timeout_s === "number" && Number.isFinite(obj.timeout_s) && obj.timeout_s > 0
 			? obj.timeout_s
 			: undefined;
 	return {
 		enabled: true,
-		dp1Enabled: dp1?.enabled !== false,
+		dp1Enabled: dp1?.enabled !== false && asRecord(points?.dp1)?.enabled !== false,
 		alertOnDisagreement: dp1?.alert_on_disagreement !== false,
 		notifyOnUnavailable: obj.triage_notify_on_unavailable === true,
 		timeoutMs: timeoutS === undefined ? DEFAULT_TRIAGE_TIMEOUT_MS : Math.round(timeoutS * 1000),
@@ -298,6 +261,9 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  * no-window contract (`windowsHide`) plus `-X utf8` for the Chinese
  * diagnostics (design D-001; `agentic-scripts.ts:65-71` precedent). */
 export const runDecideMw: DecideRunner = (request) => {
+	const refused = decisionIdRefusal(request.dp);
+	if (refused || !request.viaStdin)
+		return { status: 2, stdout: "", stderr: refused ?? "preparation required", timedOut: false };
 	const mwPy = findMwPy();
 	if (!mwPy) return { status: null, stdout: "", stderr: "", error: "mw.py not found", timedOut: false };
 	const args = ["-X", "utf8", mwPy, "decide", "run", `--project=${request.projectDir}`, "--dp", request.dp];
@@ -841,7 +807,7 @@ function answerOf(
 	const entry = asRecord(answers?.[id]);
 	if (!entry) return undefined;
 	const rawValue = entry.value;
-	const value = typeof rawValue === "string" && rawValue.trim() !== "" ? rawValue.trim() : undefined;
+	const value = typeof rawValue === "string" && rawValue.trim() !== "" ? rawValue : undefined;
 	const rawConfidence = entry.confidence;
 	const confidence =
 		typeof rawConfidence === "number" && Number.isFinite(rawConfidence)
@@ -916,35 +882,44 @@ export type DecisionEnvelopePreparation =
  * refused before any spawn. */
 export function prepareDecisionEnvelope(
 	dpId: string,
-	material: TriageState,
+	material: unknown,
 	meta: DecisionEnvelopeMeta,
 	maxBytes = 0,
+	preparation?: DecisionPreparation,
+	context?: Record<string, unknown>,
+	parentDecisionRef?: string,
 ): DecisionEnvelopePreparation {
-	const entry = DECIDE_REGISTRY[dpId];
-	if (entry === undefined) return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: ["dp"] };
+	const refusal = decisionIdRefusal(dpId);
+	if (refusal) return { ok: false, reason: refusal, missing: ["dp"] };
+	if (
+		!decisionActorAllowed(dpId, meta.initiator_role) ||
+		(DECIDE_REGISTRY[dpId].roleScope === "worker" && !meta.task_key?.trim())
+	)
+		return { ok: false, reason: "role-forbidden", missing: ["meta.initiator_role"] };
+	if (
+		parentDecisionRef !== undefined &&
+		(meta.initiator_role !== "pm" ||
+			typeof parentDecisionRef !== "string" ||
+			!parentDecisionRef.trim() ||
+			/[\r\n\0]/.test(parentDecisionRef))
+	)
+		return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: ["parent_decision_ref"] };
 	const metaProblems = validateDecisionMeta(meta);
 	if (metaProblems.length > 0) {
 		return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: metaProblems.map((name) => `meta.${name}`) };
 	}
-	if (material === null || typeof material !== "object" || Array.isArray(material)) {
-		return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: ["material"] };
-	}
-	const allowed = new Set(entry.modelStateFields);
-	const problems: string[] = [];
-	for (const key of Object.keys(material)) {
-		if (!allowed.has(key)) problems.push(`unexpected:${key}`);
-	}
-	for (const field of entry.requiredStateFields) {
-		const value = material[field.name];
-		if (field.type === "string" && (typeof value !== "string" || value.trim() === "")) problems.push(field.name);
-		else if (value === undefined || value === null) problems.push(field.name);
-	}
-	if (problems.length > 0) {
-		return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: problems };
-	}
+	const validated = validateDecisionMaterial(dpId, material);
+	if (!validated.ok)
+		return {
+			ok: false,
+			reason: TRIAGE_REASON_INPUT_INCOMPLETE,
+			missing: validated.issues.map((issue) => issue.field),
+		};
+	const problems = preparationProblems(dpId, validated.material, preparation, context);
+	if (!preparation || problems.length) return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: problems };
 	let bytes: number;
 	try {
-		bytes = canonicalStateBytes(material);
+		bytes = canonicalStateBytes({ material, preparation, context });
 	} catch {
 		return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: ["material:serializable"] };
 	}
@@ -953,7 +928,13 @@ export function prepareDecisionEnvelope(
 	}
 	return {
 		ok: true,
-		envelope: { material: canonicalize(material) as TriageState, meta },
+		envelope: {
+			material: validated.material,
+			preparation,
+			...(context === undefined ? {} : { context }),
+			meta,
+			...(parentDecisionRef === undefined ? {} : { parent_decision_ref: parentDecisionRef }),
+		},
 		bytes,
 	};
 }
@@ -979,14 +960,12 @@ function projectDecisionPayload(
 		return result;
 	}
 	const answers = asRecord(payload.answers);
-	const type = answerOf(answers, "triage_type");
-	const risk = answerOf(answers, "triage_risk");
-	if (!type?.value && !risk?.value) return unavailable("bad-response", latency, digest);
+	const type = answerOf(answers, DECIDE_REGISTRY[DP1_ID].businessQuestionId);
+	if (!type?.value) return unavailable("bad-response", latency, digest);
 	const result: TriageResult = {
 		available: true,
 		triage_type: type?.value,
-		triage_risk: risk?.value,
-		confidences: { triage_type: type?.confidence ?? null, triage_risk: risk?.confidence ?? null },
+		confidences: { triage_type: type?.confidence ?? null },
 		confidence_source:
 			typeof payload.confidence_source === "string" && payload.confidence_source !== ""
 				? payload.confidence_source
@@ -1006,40 +985,13 @@ function projectDecisionPayload(
 /** Run one decision point. Never throws; a non-enabled policy is a `disabled`
  * no-op that performs no spawn. */
 export function triageDispatch(input: TriageRunInput): TriageResult {
-	const started = Date.now();
-	try {
-		const policy = input.policy ?? readDecidePolicy(input.projectDir);
-		if (!policy.enabled || !policy.dp1Enabled) return unavailable("disabled");
-		const dpId = input.dpId ?? input.dp ?? DP1_ID;
-		// Structured path — validate/refuse before any spawn, then bound.
-		const prepared = prepareStructuredState(dpId, input.state);
-		if (!prepared.ok) return refused(prepared.reason, prepared.missing, prepared.dropped);
-		// Question-set authority is the Python registry (design §2.1), so the
-		// envelope carries the state only.
-		const run = input.run ?? runDecideMw;
-		const request: DecideRunRequest = {
-			projectDir: input.projectDir,
-			dp: dpId,
-			timeoutMs: input.timeoutMs ?? policy.timeoutMs,
-			// Single egress point: pure serialisation, no redaction, no hashing.
-			input: JSON.stringify({ state: prepared.state }),
-		};
-		let raw: RawDecideRun;
-		try {
-			raw = run(request);
-		} catch {
-			return unavailable("upstream-error", Date.now() - started);
-		}
-		if (raw.timedOut) return unavailable("timeout", Date.now() - started);
-		if (raw.error !== undefined) return unavailable("upstream-error", Date.now() - started);
-		if (raw.status !== 0) return unavailable("upstream-error", Date.now() - started);
-		const payload = parseJsonPayload(raw.stdout);
-		if (!payload) return unavailable("bad-response", Date.now() - started);
-		return projectDecisionPayload(payload, started, prepared.dropped);
-	} catch {
-		// Structural fail-soft: a bug in this client must never break a dispatch.
-		return unavailable("upstream-error", Date.now() - started);
-	}
+	const dp = input.dpId ?? input.dp ?? DP1_ID;
+	const refusal = decisionIdRefusal(dp);
+	return refused(
+		refusal ?? TRIAGE_REASON_INPUT_INCOMPLETE,
+		refusal ? ["dp"] : ["material", "preparation", "meta"],
+		[],
+	);
 }
 
 /** Run one decision point with the four-DP business material on the local
@@ -1054,12 +1006,30 @@ export function triageDispatchEnvelope(input: {
 	run?: DecideRunner;
 	timeoutMs?: number;
 	maxBytes?: number;
+	preparation?: DecisionPreparation;
+	context?: Record<string, unknown>;
 }): TriageResult {
 	const started = Date.now();
 	try {
+		const refusal = decisionIdRefusal(input.dpId);
+		if (refusal) return refused(refusal, ["dp"], []);
+		if (
+			input.dpId !== DP1_ID ||
+			process.env.PI_WORKER_TASK ||
+			input.meta.initiator_role !== "pm" ||
+			claimedPmKey(input.projectDir, input.meta.key) !== input.meta.key
+		)
+			return refused("role-forbidden", ["dp"], []);
 		const policy = input.policy ?? readDecidePolicy(input.projectDir);
-		if (!policy.enabled) return unavailable("disabled");
-		const prepared = prepareDecisionEnvelope(input.dpId, input.material, input.meta, input.maxBytes);
+		if (!policy.enabled || !policy.dp1Enabled) return unavailable("disabled");
+		const prepared = prepareDecisionEnvelope(
+			input.dpId,
+			input.material,
+			input.meta,
+			input.maxBytes,
+			input.preparation,
+			input.context,
+		);
 		if (!prepared.ok) return refused(prepared.reason, prepared.missing, []);
 		const run = input.run ?? runDecideMw;
 		const request: DecideRunRequest = {
@@ -1078,9 +1048,31 @@ export function triageDispatchEnvelope(input: {
 		}
 		if (raw.timedOut) return unavailable("timeout", Date.now() - started);
 		if (raw.error !== undefined) return unavailable("upstream-error", Date.now() - started);
-		if (raw.status !== 0) return unavailable("upstream-error", Date.now() - started);
 		const payload = parseJsonPayload(raw.stdout);
+		if (raw.status !== 0 && payload?.available !== false) return unavailable("upstream-error", Date.now() - started);
 		if (!payload) return unavailable("bad-response", Date.now() - started);
+		if (payload.available === true) {
+			const answers = asRecord(payload.answers);
+			const choice = answerOf(answers, DECIDE_REGISTRY[input.dpId].businessQuestionId)?.value;
+			const basisId = answerOf(answers, "basis_id")?.value;
+			const basis = selectedDecisionBasis(
+				input.dpId,
+				input.material,
+				prepared.envelope.preparation,
+				choice,
+				basisId,
+			);
+			if (
+				payload.decision_id !== `${input.dpId}:${input.meta.logical_id}` ||
+				(payload.mode !== "auto" && payload.mode !== "suggest") ||
+				payload.acted !== false ||
+				(payload.logical_id !== undefined && payload.logical_id !== input.meta.logical_id) ||
+				(payload.dp !== undefined && payload.dp !== input.dpId) ||
+				!basis
+			)
+				return unavailable("bad-response", Date.now() - started);
+			return { ...projectDecisionPayload(payload, started, []), basis };
+		}
 		return projectDecisionPayload(payload, started, []);
 	} catch {
 		return unavailable("upstream-error", Date.now() - started);

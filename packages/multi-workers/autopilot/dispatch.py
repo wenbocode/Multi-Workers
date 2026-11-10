@@ -2343,6 +2343,196 @@ def _check_args(argv: Sequence[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+# ── H09 proposal exhaustion verification + bounded recovery (T26) ────────────
+
+PROPOSAL_WORKER_ARTIFACTS = ("output.md", "report.md")
+RECOVERY_ACTIONS = frozenset({"retry", "replan"})
+
+
+@dataclasses.dataclass(frozen=True)
+class ProposalExhaustion:
+    """Verified state of a proposal dispatch family (never guessed)."""
+
+    state: str  # complete | in-flight | retryable | exhausted | none | unknown
+    reason: str
+    attempts: int
+    task_keys: tuple[str, ...]
+    artifacts: tuple[str, ...]
+
+
+def _proposal_family(row: dict, source_key: str, request_id: str) -> bool:
+    task_key = str(row.get("task_key") or "")
+    prefix = f"ap-{source_key}-xkey-{request_id}-proposal"
+    return task_key == prefix or task_key.startswith(prefix + "-a")
+
+
+def _proposal_artifacts(project_root: pathlib.Path, owner: str, task_key: str) -> tuple[str, ...]:
+    base = pathlib.Path(project_root) / ".agenticdoc" / owner / "workers" / task_key
+    found: list[str] = []
+    for name in PROPOSAL_WORKER_ARTIFACTS:
+        path = base / name
+        try:
+            if path.is_file() and path.stat().st_size > 0:
+                found.append(name)
+        except OSError:
+            continue
+    return tuple(found)
+
+
+def inspect_proposal_exhaustion(
+    project_root: pathlib.Path,
+    ticket: dict,
+    rows: Sequence[dict],
+    *,
+    proposal_path: pathlib.Path,
+    max_attempts: int,
+) -> ProposalExhaustion:
+    """Verify dispatch/execution/receipt, attempts and artifacts before any bound.
+
+    AC-030/031: an unknown or still in-flight attempt is never redispatched and
+    a bound is never recorded as success; the caller decides what to do with a
+    verified ``retryable``/``exhausted`` fact. The ticket fields are read only.
+    """
+    request_id = str(ticket.get("request_id") or "")
+    source_key = str(ticket.get("source_key") or "")
+    attempts = ticket.get("proposal_attempts")
+    if not request_id or not source_key:
+        return ProposalExhaustion("unknown", "ticket has no request/source binding", 0, (), ())
+    if not isinstance(attempts, int) or attempts < 0:
+        return ProposalExhaustion("unknown", "proposal_attempts is unreadable", 0, (), ())
+    path = pathlib.Path(proposal_path)
+    try:
+        if path.is_file() and path.stat().st_size > 0:
+            return ProposalExhaustion("complete", "proposal artifact is on disk", attempts, (), ())
+    except OSError:
+        return ProposalExhaustion("unknown", "proposal artifact cannot be inspected", attempts, (), ())
+    family = [row for row in rows if isinstance(row, dict) and _proposal_family(row, source_key, request_id)]
+    task_keys = tuple(str(row.get("task_key") or "") for row in family)
+    in_flight = [row for row in family if row.get("status") not in mw_common._TERMINAL_STATUSES]
+    if in_flight:
+        return ProposalExhaustion(
+            "in-flight",
+            f"live dispatch row(s): {', '.join(str(r.get('task_key')) for r in in_flight)}",
+            attempts, task_keys, (),
+        )
+    if attempts == 0:
+        return ProposalExhaustion("none", "no proposal attempt was recorded", 0, task_keys, ())
+    if not family:
+        return ProposalExhaustion(
+            "unknown",
+            f"{attempts} attempt(s) recorded but no dispatch row remains; inspect before redispatch",
+            attempts, task_keys, (),
+        )
+    artifacts: list[str] = []
+    for task_key in task_keys:
+        artifacts.extend(f"{task_key}/{item}" for item in _proposal_artifacts(project_root, source_key, task_key))
+    if attempts >= int(max_attempts):
+        detail = "all dispatches terminal with no proposal"
+        if artifacts:
+            detail += f"; artifacts: {', '.join(artifacts)}"
+        return ProposalExhaustion("exhausted", detail, attempts, task_keys, tuple(artifacts))
+    return ProposalExhaustion(
+        "retryable",
+        f"{len(family)} terminal dispatch(es), attempt {attempts}/{max_attempts}, no proposal",
+        attempts, task_keys, tuple(artifacts),
+    )
+
+
+def bounded_recovery_plan(ticket: dict) -> tuple[dict | None, tuple[str, ...]]:
+    """Validate a PM/gate-authorized proposal recovery plan.
+
+    A plan must carry a real authorization reference, an action from the
+    closed set, a new substantive version, a bounded budget and a stop
+    condition. Nothing is generated here; an absent plan returns no plan.
+    """
+    plan = ticket.get("proposal_recovery")
+    if plan is None:
+        return None, ()
+    if not isinstance(plan, dict):
+        return None, ("proposal_recovery is not an object",)
+    issues: list[str] = []
+    for name in ("authorization_ref", "action", "version", "budget", "end_condition"):
+        value = plan.get(name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            issues.append(f"proposal_recovery.{name} is missing")
+    if plan.get("action") not in RECOVERY_ACTIONS:
+        issues.append(f"proposal_recovery.action {plan.get('action')!r} is not bounded recovery")
+    if plan.get("version") == ticket.get("proposal_failure_version"):
+        issues.append("proposal_recovery.version does not change the substantive version")
+    return (None if issues else plan), tuple(issues)
+
+
+def roadmap_replan_issues(used: int, rejected_note: str) -> tuple[str, ...]:
+    """H10: a later roadmap proposal needs a real revision basis.
+
+    The first proposal has no prior rejection to answer. Every re-plan must
+    carry the rejected proposal's concrete note; without it the same proposal
+    would be looped and the old reason would be lost.
+    """
+    if int(used) <= 0:
+        return ()
+    if not str(rejected_note or "").strip():
+        return (
+            "a roadmap re-plan needs the rejected proposal's concrete revision basis; "
+            "ask the human for the changed goal/priority/permission",
+        )
+    return ()
+
+
+# T26-H10 / VC-033 (mw-dp-consolidation): a controlled roadmap re-plan must not
+# irretrievably overwrite the only old proposal. ``_roadmap_writer_prompt``
+# instructs a WHOLE-FILE rewrite of `_roadmap.md`; without an immutable archive
+# captured before the new writer is queued, the rejected proposal's bytes are
+# lost forever and the new version cannot link the old source/rejection/attempt.
+# The archive lives under .agenticdoc (inside the writer's read_scope), is
+# attempt-keyed and write-once, and is written by the producer at the H10
+# dispatch boundary — never by the worker (whose only write face is _roadmap.md).
+ROADMAP_PRIOR_DIR = ".agenticdoc/_autopilot/roadmap-prior"
+
+
+def roadmap_prior_archive_rel(stage_number: int, prior_attempt: int) -> str:
+    """Deterministic, attempt-keyed relative path of one archived proposal."""
+    return f"{ROADMAP_PRIOR_DIR}/stage-{int(stage_number)}-a{int(prior_attempt)}.md"
+
+
+def preserve_roadmap_prior(
+    project_root: pathlib.Path | str,
+    source: pathlib.Path | str,
+    stage_number: int,
+    prior_attempt: int,
+) -> tuple[bool, str]:
+    """Capture the current (old) roadmap proposal bytes into an immutable
+    archive BEFORE a controlled H10 re-plan publishes its new writer.
+
+    Returns ``(ok, archive_rel)``. Fail closed on any capture failure: a
+    missing/unreadable source, an existing snapshot with different bytes
+    (never rewritten), or a write error -> ``(False, ...)`` so the caller
+    publishes NO new queue. Write-once / idempotent: an existing archive with
+    byte-identical content is retained verbatim and reports success, so a
+    retried dispatch never mints a second snapshot or rewrites an older one.
+    Unrelated snapshots (other stage/attempt) are never touched.
+    """
+    archive_rel = roadmap_prior_archive_rel(stage_number, prior_attempt)
+    archive = pathlib.Path(project_root) / archive_rel
+    try:
+        data = pathlib.Path(source).read_bytes()
+    except OSError:
+        return False, archive_rel
+    if archive.is_file():
+        try:
+            return (archive.read_bytes() == data), archive_rel
+        except OSError:
+            return False, archive_rel
+    try:
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        # exclusive create: a concurrent writer's snapshot is never clobbered
+        with open(archive, "xb") as fh:
+            fh.write(data)
+    except OSError:
+        return False, archive_rel
+    return True, archive_rel
+
+
 def check_command(argv: Sequence[str]) -> int:
     """`check` subcommand → exit code (0 clean / 2 refused / 1 IO)."""
     args = _check_args(argv)

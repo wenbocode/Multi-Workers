@@ -12,6 +12,7 @@ import { cardDigest } from "../shared/card-digest.ts";
 import { runProxyCommand } from "../shared/codex-local.ts";
 import { readConcurrencySnapshot, taskQueueStatus } from "../shared/concurrency-view.ts";
 import { runContextCommand } from "../shared/context-extension.ts";
+import type { DecisionPreparation } from "../shared/decide-policy.ts";
 import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.ts";
 import {
 	CLAIM_GATE_DEFAULT,
@@ -91,7 +92,12 @@ export { classifyWriteTargetShape, type WriteTargetShape } from "../shared/write
 
 import { isShellRole, isWritelessRole } from "../worker/worker-mode.ts";
 import { captureDecisionTaskState, copyTaskState, type TaskStateSnapshot } from "./decision-task-state.ts";
-import { type DecisionLifecycleEnvelope, type LifecycleRunner, writeDecisionLifecycle } from "./decision-tool.ts";
+import {
+	ASK_DECISION_PARAMETERS,
+	type DecisionLifecycleEnvelope,
+	type LifecycleRunner,
+	writeDecisionLifecycle,
+} from "./decision-tool.ts";
 import { formatDispatchAlarm, recordDispatchAlarm } from "./pm-orchestrator.ts";
 import { planReviewSplitGate } from "./review-split-gate.ts";
 import { StateManager } from "./state-manager.ts";
@@ -325,16 +331,18 @@ export interface Dp1DispatchPlan {
 	/** Card seed sections; absent means the producer has no original material. */
 	sections?: CardSections;
 	taskBefore?: TaskStateSnapshot;
+	preparation?: DecisionPreparation;
+	imagesRequired?: boolean;
 }
 
 /** Call-site facts only the dispatch entry knows. */
-export type Dp1DispatchFacts = Pick<Dp1DispatchPlan, "key" | "taskKey" | "sections" | "taskBefore">;
+export type Dp1DispatchFacts = Pick<Dp1DispatchPlan, "key" | "taskKey" | "sections" | "taskBefore" | "preparation">;
 
-const DP1_TYPE_CHOICES: readonly string[] = ["coding", "research", "review"];
+const DP1_TYPE_CHOICES = DECIDE_REGISTRY[DP1_ID].fixedChoiceIds;
 
 /** Build result for one dp1 material envelope. The builder itself never
  * truncates or summarises (the transport refuses over-budget material as a
- * whole); `unsupported-type` means the role is outside dp1's three-value
+ * whole); `unsupported-type` means the role is outside the registered
  * taxonomy and the dispatch must ask no decision at all. */
 export type Dp1MaterialBuild =
 	| { ok: true; material: Dp1TaskMaterial; bytes: number }
@@ -343,9 +351,8 @@ export type Dp1MaterialBuild =
 /** Build the dp1 business material from the dispatch card (T03).
  *
  * Exactly the registry's `modelStateFields` for dp1 — `task_goal`,
- * `task_requirements`, `task_deliverables` — each the card's ORIGINAL body
- * (上下文 / 要求 / 交付格式), verbatim. No summary, no risk label, no identity
- * fields: those ride on the local envelope (`newDecisionMeta`). */
+ * `task_requirements`, `task_deliverables` — plus the actual image requirement.
+ * Source text is verbatim; audit identity belongs to `meta`. */
 export function buildDp1DecisionMaterial(plan: Dp1DispatchPlan): Dp1MaterialBuild {
 	const taskType = plan.taskType ?? "";
 	if (!DP1_TYPE_CHOICES.includes(taskType)) return { ok: false, reason: "unsupported-type" };
@@ -354,6 +361,7 @@ export function buildDp1DecisionMaterial(plan: Dp1DispatchPlan): Dp1MaterialBuil
 		task_goal: (sections?.context ?? "").trim(),
 		task_requirements: (sections?.requirements ?? "").trim(),
 		task_deliverables: (sections?.deliverables ?? "").trim(),
+		images_required: plan.imagesRequired === true,
 	};
 	if (Object.values(material).some((value) => value === "")) return { ok: false, reason: "missing-material" };
 	return { ok: true, material, bytes: canonicalStateBytes(material) };
@@ -419,7 +427,7 @@ export function buildDp1LifecycleFact(
 	const logicalId = triage?.meta?.logical_id;
 	const decisionId = triage?.result.decision_id ?? "";
 	if (triage === null || triage.meta === undefined) return undefined;
-	if (logicalId === undefined || logicalId === "" || decisionId === "") return undefined;
+	if (!logicalId || decisionId !== `${DP1_ID}:${logicalId}`) return undefined;
 	const envelope: DecisionLifecycleEnvelope = {
 		meta: triage.meta,
 		decision_id: decisionId,
@@ -480,9 +488,8 @@ export function formatDp1ConsumerReceipt(results: Array<{ stage: string; status:
  *
  * Order is the real order of facts: the answer was `consumed`; then either the
  * dispatch was refused (`settled` rework, no `executed`), or it really
- * dispatched (`executed` type-read + `settled` ok). `executed`'s result records
- * the dispatch it did, and a disagreement keeps the original type
- * (`kept-type:<type>`) because the advice never rewrites the dispatch.
+ * dispatched (`executed` type-read + `settled` ok). A selected type that
+ * disagrees with the reviewed card is recorded as a refused dispatch.
  *
  * A failed write is REPORTED (`failed`), never retried with a different action
  * and never re-run as a dispatch.
@@ -504,7 +511,7 @@ export async function writeDp1DispatchFeedback(input: {
 			results.push(await writeDp1Lifecycle(projectDir, triage, "consumed", { answer }, lifecycleRun));
 		}
 	}
-	if (results.length === 0) return results;
+	if (!triage?.meta || triage.result.decision_id !== `${DP1_ID}:${triage.meta.logical_id}`) return results;
 	if (refused) {
 		results.push(
 			await writeDp1Lifecycle(
@@ -517,13 +524,13 @@ export async function writeDp1DispatchFeedback(input: {
 		);
 		return results;
 	}
-	const keptType = triage?.disagreement ?? false;
+	if (!triage.result.available || triage.result.triage_type !== dispatchedType) return results;
 	results.push(
 		await writeDp1Lifecycle(
 			projectDir,
 			triage,
 			"executed",
-			{ action: "type-read", result: keptType ? `kept-type:${dispatchedType}` : `dispatched:${taskKey}` },
+			{ action: "type-read", result: `dispatched:${taskKey}`, taskAfter: input.taskAfter },
 			lifecycleRun,
 		),
 	);
@@ -600,7 +607,7 @@ export function assertStateMatchesRegistry(dpId: string, state: Record<string, u
  * Never throws.
  *
  * T03: the request shape is `{material, meta}` (dp1 model state = the three
- * business strings; identity only in `meta`). A role outside the three-value
+ * business strings and actual image requirement; identity only in `meta`). A role outside the registered
  * taxonomy, missing material or over-budget material is a ZERO-spawn skip,
  * recorded in {@link DispatchTriage.stateTrace} (never silent) — the old
  * `{state}` / string fallback branches, which also asked a `triage_risk`
@@ -640,6 +647,7 @@ export function computeDispatchTriage(input: {
 			dpId: DP1_ID,
 			material: built.material,
 			meta: candidate as DecisionEnvelopeMeta,
+			preparation: plan?.preparation,
 			policy,
 			run: input.run,
 		});
@@ -1795,11 +1803,11 @@ export function planDispatchFrontmatter(input: {
 	/** Test seam for the DP-1 child (T-03): production callers omit it and the
 	 * triage client spawns the real `mw decide run`. */
 	triageRun?: DecideRunner;
-	/** T-04d dispatch facts for the dp1 STRUCTURED state (owning key + the
-	 * card's write face). Omitted / incomplete falls back to the legacy string
-	 * state, and the fallback is traced (`[DECISION] dp1 state=legacy ...`). */
+	/** Host-owned task identity and the PM's prepared source material and basis. */
 	dp1?: Dp1DispatchFacts;
-}): { ok: true; frontmatter: string; echo: string; triage: DispatchTriage | null } | { ok: false; message: string } {
+}):
+	| { ok: true; frontmatter: string; echo: string; triage: DispatchTriage | null }
+	| { ok: false; message: string; triage?: DispatchTriage } {
 	const role = roleForTaskType(input.taskType);
 	const configured = readRoleModel(input.cwd, role) ?? "";
 	const requested = input.model.trim();
@@ -1814,7 +1822,15 @@ export function planDispatchFrontmatter(input: {
 			? false
 			: input.images === "yes"
 				? true
-				: detectImageNeed(input.cwd, input.description ?? "");
+				: detectImageNeed(
+						input.cwd,
+						[
+							input.description,
+							input.dp1?.sections?.context,
+							input.dp1?.sections?.requirements,
+							input.dp1?.sections?.deliverables,
+						].join("\n"),
+					);
 	// Write side (D-013): a detected need writes `images: yes` too, so the
 	// worker's runtime fallback covers auto-detected tasks.
 	const imagesField: "yes" | "no" | undefined = input.images === "no" ? "no" : imagesRequested ? "yes" : undefined;
@@ -1867,25 +1883,78 @@ export function planDispatchFrontmatter(input: {
 		}
 	}
 
-	// DP-1 advisory triage (T-03/D-006): computed inside this shared plan point —
-	// before any dispatch fs write — and attached to the result. It NEVER mutates
-	// the frontmatter/echo below: the default-off path returns null and changes
-	// nothing, and the suggestion never rewrites type/role/model/cli.
-	// T03: the request carries the card's ORIGINAL goal/requirements/deliverables
-	// on the local envelope (`{material, meta}`); identity and the reserved task
-	// id ride in `meta` only.
+	if (requested && configured && requested !== configured && !reason) {
+		return {
+			ok: false,
+			message:
+				`Model override for role '${role}' needs model_reason: dispatch.yml ${role}=${configured}, requested=${requested}. ` +
+				"Omit the model to use the configured default, or re-dispatch with model_reason explaining the deviation.",
+		};
+	}
+	const policy = readDecidePolicy(input.cwd);
+	const governed = policy.enabled && policy.dp1Enabled && DP1_TYPE_CHOICES.includes(input.taskType);
+	if (governed) {
+		if (input.dp1?.sections?.type && input.dp1.sections.type !== input.taskType)
+			return {
+				ok: false,
+				message: `Task card declares ${input.dp1.sections.type}; dispatch the matching reviewed card.`,
+			};
+		if (imagesRequested !== (input.taskType === "vision"))
+			return {
+				ok: false,
+				message: imagesRequested
+					? "Image input requires a reviewed vision task and proven image support."
+					: "Vision dispatch requires an actual image input.",
+			};
+	}
+	// Confirm the decision before creating the task. The reviewed card owns
+	// its role and write scope, including when the model suggests a different type.
 	const triage = computeDispatchTriage({
 		projectDir: input.cwd,
 		dispatchedType: input.taskType,
+		policy,
 		run: input.triageRun,
 		dp1: {
 			key: input.dp1?.key,
 			taskKey: input.dp1?.taskKey,
 			taskBefore: input.dp1?.taskBefore,
+			preparation: input.dp1?.preparation,
+			imagesRequired: imagesRequested,
 			taskType: input.taskType,
 			sections: input.dp1?.sections,
 		},
 	});
+	if (governed && triage) {
+		if (!triage.result.available || !triage.result.basis) {
+			const reason = triage.result.reason ?? "bad-response";
+			const detail = [
+				"input-incomplete",
+				"input-oversize",
+				"role-forbidden",
+				"upstream-error",
+				"entry-unavailable",
+				"provider-unavailable",
+				"budget-exhausted",
+				"timeout",
+				"bad-response",
+				"disabled",
+				"unavailable",
+			].includes(reason)
+				? reason
+				: "unavailable";
+			return {
+				ok: false,
+				triage,
+				message: `dp-w-type blocked (${detail}). Use dispatch_worker with the claimed key, original card and decision_preparation containing the PM's prepared basis.`,
+			};
+		}
+		if (triage.result.triage_type !== input.taskType)
+			return {
+				ok: false,
+				triage,
+				message: `dp-w-type selected ${triage.result.triage_type}; use a matching reviewed card and role before dispatch.`,
+			};
+	}
 
 	// Auto-route result: the vision model is pinned (the role default cannot take
 	// image input) and the machine-readable source rides both the task
@@ -1924,15 +1993,6 @@ export function planDispatchFrontmatter(input: {
 			frontmatter: typeLines,
 			echo: `model: dispatch.yml ${role}=${configured} (requested value matches the configured default; not pinned)`,
 			triage,
-		};
-	}
-
-	if (configured && !reason) {
-		return {
-			ok: false,
-			message:
-				`Model override for role '${role}' needs model_reason: dispatch.yml ${role}=${configured}, requested=${requested}. ` +
-				"Omit the model to use the configured default, or re-dispatch with model_reason explaining the deviation.",
 		};
 	}
 
@@ -3132,6 +3192,7 @@ export function registerWorkerTools(
 				description:
 					"Unique kebab-case key for this task (e.g. 'fix-login-bug', 'add-auth-endpoint'). Must be unique across tasks in this project.",
 			}),
+			decision_preparation: ASK_DECISION_PARAMETERS.properties.preparation,
 			card_path: Type.String({
 				description:
 					"REQUIRED. Path to the dispatch card (task book) this worker is generated from — relative to the repo root or absolute, e.g. '.agenticdoc/<key>/tasks/T-02-slug.md'. The card must carry the dispatch envelope (type + 上下文 / 要求 / 交付格式), the per-type extras (coding: 写入允许面/写入禁止面/验收命令/改动历史; research: 唯一证据文件; review: 审计目标/未覆盖面声明), and the seed minimum (a goal.md reference plus at least one path:line reference); an incomplete or missing card refuses the dispatch with zero side effects. The card's envelope, extras and context are injected as the seed (not an upper bound on what the worker may read) and recorded via card_path/card_sha256 in task.md for traceability.",
@@ -3185,6 +3246,7 @@ export function registerWorkerTools(
 		execute: async (_toolCallId, params, _signal, _onUpdate, _context) => {
 			const {
 				task_key,
+				decision_preparation,
 				card_path,
 				description,
 				cli = "pi",
@@ -3196,6 +3258,7 @@ export function registerWorkerTools(
 				allow_foreign_write,
 			} = params as {
 				task_key: string;
+				decision_preparation?: DecisionPreparation;
 				card_path: string;
 				description: string;
 				cli?: string;
@@ -3352,11 +3415,29 @@ export function registerWorkerTools(
 					key: ownerKey,
 					taskKey: task_key,
 					sections: cardGate.sections,
+					preparation: decision_preparation,
 					taskBefore: captureDecisionTaskState(workerStore, ownerKey, task_key),
 				},
 			});
 			if (!modelPlan.ok) {
-				return { content: [{ type: "text", text: modelPlan.message }], details: undefined };
+				const feedback = await writeDp1DispatchFeedback({
+					projectDir,
+					triage: modelPlan.triage ?? null,
+					lifecycleRun,
+					taskKey: task_key,
+					dispatchedType: typeField,
+					refused: true,
+					taskAfter: captureDecisionTaskState(workerStore, ownerKey, task_key),
+				});
+				return {
+					content: [
+						{
+							type: "text",
+							text: [modelPlan.message, formatDp1ConsumerReceipt(feedback)].filter(Boolean).join("\n"),
+						},
+					],
+					details: undefined,
+				};
 			}
 			// DP-1 ledger + (on disagreement) the one PM wake for this dispatch.
 			emitDispatchTriage(pi, agenticdocRoot, modelPlan.triage);
@@ -3390,6 +3471,7 @@ export function registerWorkerTools(
 			const outcome = await dispatchTask(
 				{ taskKey: task_key, status: "pending", cli, provider, model: model ?? "", taskPath: taskMdPath },
 				workerStore,
+				{ modelRegistry: _context?.modelRegistry },
 			);
 			if (!outcome.ok) {
 				cleanupRefusedTaskDir(taskMdPath);
@@ -3927,7 +4009,19 @@ export function registerWorkerCommands(
 				},
 			});
 			if (!modelPlan.ok) {
-				ctx.ui.notify(modelPlan.message, "warning");
+				const feedback = await writeDp1DispatchFeedback({
+					projectDir,
+					triage: modelPlan.triage ?? null,
+					lifecycleRun,
+					taskKey,
+					dispatchedType: typeField,
+					refused: true,
+					taskAfter: captureDecisionTaskState(workerStore, ownerKey, taskKey),
+				});
+				ctx.ui.notify(
+					[modelPlan.message, formatDp1ConsumerReceipt(feedback)].filter(Boolean).join("\n"),
+					"warning",
+				);
 				return;
 			}
 			// DP-1 ledger + (on disagreement) the one PM wake for this dispatch.
@@ -3961,6 +4055,7 @@ export function registerWorkerCommands(
 			const outcome = await dispatchTask(
 				{ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath },
 				workerStore,
+				{ modelRegistry: ctx.modelRegistry },
 			);
 			if (!outcome.ok) {
 				cleanupRefusedTaskDir(taskMdPath);
@@ -4608,7 +4703,7 @@ export async function runMwStatsCommand(
  * `decide_signoff.CONCLUSIONS`). The window never picks one — the decision model
  * produces it during the write — so the list only drives the read-only preview
  * rendering (one verdict line per conclusion). */
-export const DECIDE_CONCLUSIONS = ["continue", "narrow", "revoke"] as const;
+export const DECIDE_CONCLUSIONS = ["finalize", "continue", "user-confirm"] as const;
 
 /** Usage line of the window face (the `--key` flag only exists on `sign`).
  * `sign` takes no conclusion: the decision model produces it during the write,
@@ -4781,6 +4876,12 @@ export interface DecidePreviewFacts {
  * unsigned write carries `note` (decision model unavailable) or the plain line
  * Python prints before the payload (`signoff: disable`). */
 export interface DecidePreview {
+	dp?: string;
+	key?: string;
+	logical_id?: string;
+	decision_id?: string;
+	signoff_status?: string;
+	signoff_path?: string | null;
 	ok?: boolean | null;
 	conclusion?: string | null;
 	problems?: string[];
@@ -4870,10 +4971,6 @@ export interface DecideSignOutcome {
 	path?: string;
 }
 
-const SIGNED_VIA_LINE = /^[ \t]*signed_via:[ \t]*(\S+)[ \t]*$/m;
-const CONCLUSION_LINE = /^[ \t]*conclusion:[ \t]*(\S+)[ \t]*$/m;
-const WROTE_LINE = /^[ \t]*wrote[ \t]+(.+?)[ \t]*$/m;
-
 /** The write-side `signed_via` vocabulary (a single value since
  * mw-signoff-decide-only, mirror of `decide_signoff.SIGNED_VIA_VALUES`). The
  * `--json` write payload proves the write with `path` but does not repeat the
@@ -4889,23 +4986,20 @@ const SIGNED_VIA_AUTO = "auto-decide";
 export function parseDecideSignOutcome(output: string): DecideSignOutcome {
 	const text = output.replace(/\r\n/g, "\n");
 	const payload = parseDecidePreview(text);
-	const jsonSignedVia = payload?.signed_via;
-	const signedVia =
-		SIGNED_VIA_LINE.exec(text)?.[1] ??
-		(typeof jsonSignedVia === "string" && jsonSignedVia !== "" ? jsonSignedVia : undefined);
-	const jsonPath = payload?.path;
-	const wroteLine = WROTE_LINE.exec(text)?.[1];
-	const path =
-		typeof jsonPath === "string" && jsonPath !== ""
-			? jsonPath
-			: wroteLine !== undefined && wroteLine !== ""
-				? wroteLine
-				: undefined;
-	const jsonConclusion = payload?.conclusion;
-	const conclusion =
-		CONCLUSION_LINE.exec(text)?.[1] ??
-		(typeof jsonConclusion === "string" && jsonConclusion !== "" ? jsonConclusion : undefined);
-	return { signed: signedVia !== undefined || path !== undefined, signedVia, conclusion, path };
+	if (
+		payload?.dp !== "dp-sign-key" ||
+		typeof payload.key !== "string" ||
+		payload.key.trim() === "" ||
+		typeof payload.logical_id !== "string" ||
+		payload.logical_id.trim() === "" ||
+		payload.decision_id !== `dp-sign-key:${payload.logical_id}` ||
+		payload.conclusion !== "finalize" ||
+		(payload.signoff_status !== "written" && payload.signoff_status !== "existing") ||
+		typeof payload.signoff_path !== "string" ||
+		payload.signoff_path.trim() === ""
+	)
+		return { signed: false };
+	return { signed: true, conclusion: payload.conclusion, path: payload.signoff_path };
 }
 
 /** Human reason of an unsigned run: the JSON `note` (decision model unavailable)
@@ -5032,7 +5126,14 @@ export async function runMwDecideCommand(
 	} catch (err) {
 		return reportDecide(ctx, `mw decide 预览失败: ${err instanceof Error ? err.message : String(err)}`, "error");
 	}
-	if (!preview.ok) return reportDecide(ctx, `mw decide 预览失败: ${preview.error}`, "error");
+	if (!preview.ok) {
+		return reportDecide(
+			ctx,
+			`mw decide 预览失败: ${preview.error}\n` +
+				"签收需要通过已注册的 ask_decision dp-sign-key 提交本次四部分材料与 preparation；窗口预览不提供签收准备。",
+			"error",
+		);
+	}
 	const payload = parseDecidePreview(preview.output);
 	if (payload === null) {
 		return reportDecide(ctx, `mw decide 预览输出不是 JSON，原文尾部:\n${tailLines(preview.output)}`, "error");
@@ -5041,7 +5142,7 @@ export async function runMwDecideCommand(
 	if (parsed.action === "show") {
 		return reportDecide(
 			ctx,
-			`${formatDecidePreview(payload)}\n(preview only — nothing written; /mw decide sign 触发决策模型判定，判据通过时写入)`,
+			`${formatDecidePreview(payload)}\n(preview only — nothing written; 签收请通过 ask_decision dp-sign-key 提交本次四部分材料与 preparation)`,
 			"info",
 		);
 	}
@@ -5060,7 +5161,14 @@ export async function runMwDecideCommand(
 			"error",
 		);
 	}
-	if (!written.ok) return reportDecide(ctx, `mw decide sign ${key} 写入失败: ${written.error}`, "error");
+	if (!written.ok) {
+		return reportDecide(
+			ctx,
+			`mw decide sign ${key} 写入失败: ${written.error}\n` +
+				"请通过已注册的 ask_decision dp-sign-key 提交本次四部分材料与 preparation；此命令未提供准备材料。",
+			"error",
+		);
+	}
 
 	const outcome = parseDecideSignOutcome(written.output);
 	if (!outcome.signed) {
@@ -5075,7 +5183,6 @@ export async function runMwDecideCommand(
 	const lines = [`已签收 ${key} → ${outcome.path ?? `${key}/evidence/review/sign-final.md`}`];
 	lines.push(`signed_via: ${outcome.signedVia ?? SIGNED_VIA_AUTO}`);
 	if (outcome.conclusion !== undefined) lines.push(`conclusion: ${outcome.conclusion}`);
-	lines.push("authority-change 档案行已追加。");
 	return reportDecide(ctx, lines.join("\n"), "info");
 }
 
