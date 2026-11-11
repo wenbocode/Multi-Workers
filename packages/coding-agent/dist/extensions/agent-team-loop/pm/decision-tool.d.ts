@@ -1,75 +1,13 @@
-/**
- * pm/decision-tool.ts — the `ask_decision` tool: the ONLY LLM-facing channel
- * for asking an external decision point (mw-decision-substitution T-05, spec
- * DS-7/DS-10, design D-017, D4 research Q1..Q6).
- *
- * Contract
- * - Input: `dp` (enum of the registry ids this module holds as constants),
- *   `trigger` (audit label: `<task_key>` | `<task_key>#ckpt<N>` | `ts`; the
- *   decision id itself is resolved by Python, see below), optional `question`
- *   (one question id) and optional `note` (L0/L1 summary).
- * - Output text: ONE line of JSON
- *   `{available, decision_id, mode, acted, answers, confidence_source, latency_ms}`
- *   on success; on failure `{available:false, unavailable:<reason>,
- *   action:"blocked-ask-human"}` plus `escalated_reason` (the child's own
- *   7-value vocabulary) and/or `missing_fields` when they apply, followed by a
- *   fixed second line that forbids guessing. The model sees this text verbatim
- *   as the tool result, so both shapes are deterministic (no prose rewriting,
- *   design Q2 §2.4).
- * - `execute` runs `python -X utf8 mw.py decide run --project=<dir> --dp <id>
- *   --request-file <tmp> --json` with an ASYNC spawn and a hard 20 s wall
- *   (design D-017: a synchronous child inside a tool call would freeze the
- *   event loop, the heartbeat and trace writes). The request JSON travels in a
- *   temp file, never on argv (spec D-003).
- * - Failure shape: a SERVICE failure is DATA (`available:false` + directive) —
- *   it must not throw, or the model would lose the "do not guess" instruction.
- *   Only argument misuse (the TypeBox enum) is rejected by the loop's
- *   `validateToolArguments`, because `AgentToolResult`
- *   (`packages/agent/src/types.ts:355-368`) has no `isError` field; `execute`
- *   throwing is the only other way to surface a hard error.
- *
- * Authorization, `mode` and `acted` (D-036 / D-041)
- * - A structured request (`--dp <registry id>`, no `questions`) makes
- *   `mw decide run` call `decision_points.decide_for(..., intent="answer")`,
- *   which is the single authority: it reads `.mw/decide-points.json` itself
- *   (step 2), resolves the mode (step 3) and archives one row per decision
- *   (`packages/multi-workers/mw.py:_decide_run`). Its JSON therefore carries
- *   `decision_id` / `mode` / `acted` / `escalated_reason`
- *   (`_decide_run_payload`, T-02b).
- * - This module consumes those four keys verbatim. It never reads the
- *   authorization table, never derives `mode` from a tier default and never
- *   turns `mode` into `acted`: D-041 makes `acted` a consuming-side fact, and
- *   an `intent="answer"` decision is archived with `acted=false` (D-035) no
- *   matter what the mode is.
- * - `trigger` is an audit label for the trace line and the directives only. The
- *   authoritative `decision_id` is `<dp>:<trigger_id>` resolved by Python from
- *   the state's `key`/`task_key` (`decision_points.py:Trigger.resolved_id`), so
- *   a locally concatenated id would drift from the archive row.
- * - Nothing here writes config or the archive: Python stays the single writer
- *   (D-005).
- *
- * Structured state (spec §5.4 L0/L1, D6 Q5.1)
- * - {@link buildDecisionState} fills only what this call site knows
- *   (`v`/`dp`/`key`/`task_key`/`task_summary`). `decide_for` step 5 refuses a
- *   state that misses one of the registry's `REQUIRED_STATE_FIELDS`
- *   (`packages/multi-workers/decision_points.py:626`), so for the dps that map
- *   covers (dp1/dp2/dp3) the tool refuses **before** the spawn and reports the
- *   field names (names only: L0) instead of spending a round trip on a state
- *   Python can only answer with `input-incomplete`/`bad-response` (MAJOR-2).
- * - The field table itself is not copied: the check reuses
- *   `pm/triage-client.ts`'s structured-state validator and
- *   `REQUIRED_FIELDS_BY_DP` (single source). Only the id set of the dps the
- *   registry gates is held here, pinned to the Python source by the suite.
- *
- * Anti-retry (spec §5.3 / design Q3 §3.3)
- * - A per-dp block counter is scoped to one agent turn (`turn_start` resets it).
- *   Reaching {@link ASK_DECISION_MAX_BLOCKED_PER_TURN} marks the tool result
- *   `terminate: true` and appends a terminal directive, so the tool loop stops
- *   instead of the model re-asking forever. Every block/answer leaves one
- *   machine line in the worker's trace.log.
- */
+/** Registered PM/worker decision tools. One stdin envelope carries business
+ * material, the independently prepared basis catalog, optional context and local
+ * identity. Only the generated active entries and the registering window's role
+ * can reach the service. A valid reply records consumption. Explicit receipts
+ * describe subsequent actions. Signing uses its single dedicated writer. */
 import { type TLiteral, Type } from "typebox";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
+import { type DecisionPreparation, type PreparedBasis, validateDecisionMaterial } from "../shared/decide-policy.ts";
+export { validateDecisionMaterial };
+export type { MaterialIssue, MaterialValidation } from "../shared/decide-policy.ts";
 import { type TaskStateSnapshot } from "./decision-task-state.ts";
 /** Registered tool name (referenced by `activeToolsForType` wiring in index.ts). */
 export declare const ASK_DECISION_TOOL = "ask_decision";
@@ -94,22 +32,10 @@ export declare const ASK_DECISION_BLOCKED_ACTION = "blocked-ask-human";
  * second authority, and lowering it would silently shrink real task material
  * the service already accepted (T08 gap 1). */
 export declare const ASK_DECISION_MAX_STATE_BYTES = 2000;
-/**
- * The 25 decision-point ids, copied verbatim from
- * `packages/multi-workers/decision_points.py:DP_REGISTRY` (the authority). The
- * suite asserts both the id set and the tier map against that file, so a
- * drift shows up as a red test, not as a silently unregistered call.
- */
-export declare const ASK_DECISION_DP_IDS: readonly ["dp1-dispatch-type", "dp2-checkpoint-split", "dp3-worker-clarify", "dp4-failure-handling", "dp5-test-triage", "dp6-qg-verdict", "dp7-gate-failure", "dp8-scope-change", "dp9-model-select", "dp10-dependency", "dp11-credential", "dp12-destructive", "dp13-commit-release", "dp14-rule-conflict", "dp15-autopilot-gate", "dp16-goal", "dp17-spec-lock", "dp18-claim", "dp19-foreign-write", "dp20-stage-close", "dp21-refine", "dp22-debug-plan", "dp23-snapshot", "dp24-pi-trust", "dp25-signoff-conclusion"];
-export type AskDecisionDpId = (typeof ASK_DECISION_DP_IDS)[number];
-/** Registry ids whose `decide_for` step 5 enforces `REQUIRED_STATE_FIELDS`
- * (`packages/multi-workers/decision_points.py:626`). Only these dps may be
- * refused client-side on a missing field: every other dp requires nothing
- * beyond the state builder's `v`/`dp`/`questions_version`, so pre-gating it
- * here would over-gate a call the authority accepts. The id set is pinned to
- * the Python source by `decision-tool.test.ts`; the **field** names themselves
- * come from `pm/triage-client.ts` and are never copied. */
-export declare const ASK_DECISION_ENFORCED_STATE_DP_IDS: readonly ["dp1-dispatch-type", "dp2-checkpoint-split", "dp3-worker-clarify", "dp25-signoff-conclusion"];
+/** IDs and per-entry eligibility follow the generated Python contracts. */
+export declare const ASK_DECISION_DP_IDS: string[];
+export type AskDecisionDpId = string;
+export declare const ASK_DECISION_ENFORCED_STATE_DP_IDS: string[];
 /** Frozen transport reasons (`decision.py:REASON_CODES`). A reason outside this
  * set is normalised to `upstream-error` exactly like `decision.py` does. */
 export declare const ASK_DECISION_PYTHON_REASONS: ReadonlySet<string>;
@@ -128,14 +54,8 @@ export type DecisionToolRole = "pm" | "coding" | "research" | "review";
 /** `unknown` is the honest role of a worker whose card cannot be read; Python
  * accepts it (`INITIATOR_ROLES`) and it never impersonates the PM. */
 export type DecisionInitiatorRole = DecisionToolRole | "unknown";
-/** Only the PM may prepare these decisions (design D003/§4.4): a worker that
- * reaches the entry with one of them is refused with ZERO spawn — a model must
- * never borrow the PM's checkpoint or sign-off conclusion. */
-export declare const ASK_DECISION_PM_ONLY_DP_IDS: readonly ["dp2-checkpoint-split", "dp25-signoff-conclusion"];
-/** The dps whose material is the approved business contract (T01): the caller
- * supplies every field verbatim on the local envelope. Every other dp keeps
- * the legacy L0/L1 state path byte-identical. */
-export declare const ASK_DECISION_MATERIAL_DP_IDS: readonly ["dp2-checkpoint-split", "dp3-worker-clarify", "dp25-signoff-conclusion"];
+export declare const ASK_DECISION_PM_ONLY_DP_IDS: string[];
+export declare const ASK_DECISION_MATERIAL_DP_IDS: string[];
 /** dp3 native dynamic-choice protocol (`decision_points.dynamic_choices_value_error`). */
 export declare const DP3_ID = "dp3-worker-clarify";
 export declare const DP3_HANDLING_MIN_OPTIONS = 2;
@@ -186,9 +106,10 @@ export interface AskDecisionAvailable {
     answers: AskDecisionAnswers;
     confidence_source: string;
     latency_ms: number;
-    /** Set on the four-dp material path: the exact candidate the selection names. */
+    /** Set on the prepared material path: the exact candidate the selection names. */
     selection?: DecisionSelection;
-    /** Set on the four-dp material path: the automatic `consumed` write result. */
+    basis?: PreparedBasis;
+    /** Set on the prepared material path: the automatic `consumed` write result. */
     feedback?: DecisionFeedbackResult;
     /** Set on the dp25 path: the sign CLI's own receipt (one judgment, real
      * sign-off write or a concrete PM/user handoff). */
@@ -252,7 +173,7 @@ export interface AskDecisionOutcome {
      * join key of every feedback row and is NEVER handed to the model. */
     meta?: DecisionToolMeta;
 }
-/** True for the 25 ids the tool exposes (and therefore for every id Python can
+/** True for the active IDs the tool exposes (and therefore for every id Python can
  * resolve); the enum itself is pinned to `DP_REGISTRY` by the suite. */
 export declare function isRegisteredDp(dp: string): dp is AskDecisionDpId;
 /** Code-point-safe UTF-8 truncation (never splits a surrogate pair). */
@@ -289,20 +210,6 @@ export declare function missingDecisionStateFields(dp: string, state: Record<str
 /** Serialise the request envelope (single line; questions come from the
  * registry because `--dp` is always given, design D-027). */
 export declare function buildDecisionRequestJson(state: Record<string, unknown>): string;
-/** One refused material field. `field` is a registry path (dotted for nested
- * facts); the rule is a name, never a value — no material leaks into an
- * error payload (AC-019). */
-export interface MaterialIssue {
-    field: string;
-    rule: string;
-}
-export type MaterialValidation = {
-    ok: true;
-    material: Record<string, unknown>;
-} | {
-    ok: false;
-    issues: MaterialIssue[];
-};
 /** The local envelope metadata (design §4.1). Never part of the material. */
 export interface DecisionToolMeta {
     record_version: typeof DECISION_RECORD_VERSION;
@@ -319,6 +226,9 @@ export interface DecisionToolMeta {
 }
 /** The stdin payload for `mw decide run <dp> --stdin` (design §4.1). */
 export interface DecisionToolEnvelope {
+    parent_decision_ref?: string;
+    preparation: DecisionPreparation;
+    context?: Record<string, unknown>;
     material: Record<string, unknown>;
     meta: DecisionToolMeta;
 }
@@ -329,18 +239,6 @@ export declare function isPmOnlyDp(dp: string): boolean;
 export declare function isMaterialDp(dp: string): boolean;
 /** Read the declared business paths of a material object (registry order). */
 export declare function missingMaterialPaths(dp: string, material: unknown): string[];
-/**
- * Validate one dp's business material against the generated registry.
- *
- * Every field, and the closed key set, comes from `DECIDE_REGISTRY`
- * (`modelStateFields` + `requiredStateFields`/`optionalStateFields`) — the one
- * authority T01 publishes — so a renamed field shows up here as a refusal, not
- * as a second contract drifting from Python. The material is returned VERBATIM
- * (no truncation, no default, no invention): necessary material that cannot be
- * sent is refused as `input-oversize` by the caller instead. Unknown facts stay
- * `unknown` in the text the agent wrote; this function never derives one.
- */
-export declare function validateDecisionMaterial(dp: string, material: unknown): MaterialValidation;
 /** Build the local envelope metadata for ONE new decision.
  *
  * `logical_id` is minted here, so a caller cannot accidentally reuse a previous
@@ -359,20 +257,23 @@ export declare function buildDecisionEnvelope(input: {
     dp: string;
     material: Record<string, unknown>;
     meta: DecisionToolMeta;
+    /** Local reference supplied by the host consuming a prepared follow-up. */
+    parentDecisionRef?: string;
+    preparation?: DecisionPreparation;
+    context?: Record<string, unknown>;
 }): DecisionToolEnvelope;
-/** The worker's real initiating role, read from its own card's `type:`.
+/** The worker's real lifecycle role, read from its own card's `type:`.
  *
- * A card that cannot be read, or a type outside coding/research/review, is
- * `unknown` — the tool never upgrades a role to make a PM-only dp callable. */
+ * Framework types follow the approved Python `_FRAMEWORK_CARD_ROLES` mapping,
+ * not the model-role buckets or the four-choice dispatch menu. Unknown, retired
+ * and PM card types stay unknown; a caller option cannot upgrade the card. */
 export declare function initiatorRoleFromWorkerTask(taskPath: string | undefined): DecisionInitiatorRole;
 /** Resolve dp3's native `handling` answer to the candidate the asker supplied. */
 export declare function resolveHandlingSelection(answers: unknown, options: unknown): DecisionSelection | undefined;
 /** The fixed material-preparation prompts handed to the asking agent
  * (design §2 "固定提示"). They are part of the tool contract, not UI copy. */
 export declare const DECISION_MATERIAL_PROMPTS: {
-    readonly dp3: string;
-    readonly dp2: string;
-    readonly dp25: string;
+    [k: string]: string;
 };
 /** The closed action set of T02's `decision_lifecycle.EXECUTED_ACTIONS`. An
  * action outside it is never recorded ("未知动作只未记录"). */
@@ -412,6 +313,7 @@ export declare function buildLifecycleArgv(mwPy: string, projectDir: string): st
 export declare const runLifecycleMw: LifecycleRunner;
 /** The dp25 sign-off conclusion point (the managed PM sign path). */
 export declare const DP25_ID = "dp25-signoff-conclusion";
+export declare const SIGN_KEY_ID = "dp-sign-key";
 /** The three conclusions T05 accepts (`decision_signoff_result.CONCLUSIONS`). */
 export declare const DECISION_SIGNOFF_CONCLUSIONS: readonly string[];
 /** One `mw decide sign <key> --stdin --json` invocation. */
@@ -512,8 +414,12 @@ export interface AskDecisionInput {
     key?: string;
     /** The REAL task this decision belongs to; `null` for a task-less PM decision. */
     initiatorRole?: DecisionInitiatorRole;
-    /** Business material of the four material dps (dp2/dp3/dp25), verbatim. */
+    /** Business material of the selected active entry, verbatim. */
     material?: Record<string, unknown>;
+    /** Local reference supplied by the host consuming a prepared follow-up. */
+    parentDecisionRef?: string;
+    preparation?: DecisionPreparation;
+    context?: Record<string, unknown>;
     /** Points at the previous `logical_id` when this call retries another one. */
     retryOf?: string | null;
     taskBefore?: TaskStateSnapshot;
@@ -591,32 +497,17 @@ export declare const ASK_DECISION_PARAMETERS: Type.TObject<{
     trigger: Type.TString;
     question: Type.TOptional<Type.TString>;
     note: Type.TOptional<Type.TString>;
-    material: Type.TOptional<Type.TObject<{
-        task_goal: Type.TOptional<Type.TString>;
-        task_requirements: Type.TOptional<Type.TString>;
-        task_deliverables: Type.TOptional<Type.TString>;
-        pm_decision_background: Type.TOptional<Type.TString>;
-        worker_execution: Type.TOptional<Type.TString>;
-        question: Type.TOptional<Type.TString>;
-        background: Type.TOptional<Type.TObject<{
-            task_goal: Type.TOptional<Type.TString>;
-            current_state: Type.TOptional<Type.TString>;
-            decision_reason: Type.TOptional<Type.TString>;
-            constraints_impact: Type.TOptional<Type.TString>;
-        }>>;
-        handling_options: Type.TOptional<Type.TArray<Type.TObject<{
+    material: Type.TOptional<Type.TUnsafe<Record<string, unknown>>>;
+    preparation: Type.TOptional<Type.TObject<{
+        prepared_at: Type.TString;
+        basis_catalog: Type.TArray<Type.TObject<{
             id: Type.TString;
-            label: Type.TString;
-            description: Type.TString;
-        }>>>;
-        delivery_goal: Type.TOptional<Type.TString>;
-        actual_completion: Type.TOptional<Type.TString>;
-        verification_evidence: Type.TOptional<Type.TObject<{
-            verified: Type.TOptional<Type.TArray<Type.TString>>;
-            unverified: Type.TOptional<Type.TArray<Type.TString>>;
+            text: Type.TString;
+            material_refs: Type.TArray<Type.TString>;
+            applies_to: Type.TArray<Type.TString>;
         }>>;
-        unfinished_impact: Type.TOptional<Type.TArray<Type.TString>>;
     }>>;
+    context: Type.TOptional<Type.TRecord<"^.*$", Type.TUnknown>>;
     key: Type.TOptional<Type.TString>;
     task_before: Type.TOptional<Type.TObject<{
         status: Type.TUnion<TLiteral<"done" | "failed" | "lost" | "needs-clarification" | "not-queued" | "pending" | "running" | "unknown">[]>;
@@ -674,5 +565,4 @@ export interface DecisionReceiptDetails {
  * same `logical_id` meta).
  */
 export declare function registerAskDecisionTool(pi: ExtensionAPI, options?: AskDecisionToolOptions): AskDecisionToolHandle;
-export {};
 //# sourceMappingURL=decision-tool.d.ts.map

@@ -3,6 +3,7 @@ import { AckStore } from "../shared/ack-store.ts";
 import { IndexStore } from "../shared/index-store.ts";
 import { type RunIdentityRefusal, readRunState } from "../shared/run-store.ts";
 import { type WorkerEntry, type WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
+import { type AskDecisionInput, runAskDecision } from "./decision-tool.ts";
 import { type DispatchRefusal } from "./task-dispatcher.ts";
 import { type PmUiHolder, type PmWatchState } from "./ui-bridge.ts";
 export type PhaseDocName = "spec.md" | "design.md" | "plan.md";
@@ -396,9 +397,9 @@ export declare function recordDroppedGateReminder(pi: ExtensionAPI, seen: Set<st
     gateKey: string;
 }, reason: "no-watch" | "other-key" | "read-error", error?: string): void;
 /** Decision-point id (registry authority: packages/multi-workers/decision_points.py). */
-export declare const DP2_CHECKPOINT_ID = "dp2-checkpoint-split";
+export declare const DP2_CHECKPOINT_ID = "dp-pm-steer";
 /** Registry question id whose value carries the dp2 answer. */
-export declare const DP2_CHECKPOINT_QUESTION = "checkpoint_action";
+export declare const DP2_CHECKPOINT_QUESTION: string;
 /** Steer request file the PM writes into the worker's task dir. The worker
  * consumes it at its next checkpoint tick (design §5.3: file transport keeps
  * coordination file-driven and the PM the single writer). */
@@ -411,9 +412,6 @@ export declare const DP2_NARROW_MARKER = "[mw dp2-narrow]";
  * the consumer-side contract (`worker-mode` strips exactly this line); the
  * machine loop no longer writes the file itself (T03). */
 export declare const DP2_STEER_REQUEST_HEADER = "[dp2-narrow-request]";
-/** `questions_version` for dp2 = `q-<sha256(canonical questions)[:8]>`, i.e. the
- * exact short code the Python registry derives (D-026). The suite re-derives it
- * from the registry source so a question-set edit cannot drift silently. */
 export declare const DP2_QUESTIONS_VERSION: string;
 /** One `[CHECKPOINT]` line reduced to the trend counters. The design's dp2
  * input asks for "最近 ≤3 条 (elapsed_s, reads, writes)" — enough to tell "still
@@ -473,5 +471,8 @@ export declare const PARALLEL_PROTOCOL_MARKER = "[mw] \u5E76\u884C\u4F18\u5148\u
  * file/module boundary. PM-only by construction: pmActivate() runs only when
  * PI_WORKER_TASK is unset (index.ts). */
 export declare const PARALLEL_PROTOCOL: string;
-export declare function pmActivate(pi: ExtensionAPI): void;
+/** Register only in a PM window. The tool coordinates a prepared request; the
+ * normal task tools and the T10 writer remain the only authorities for work. */
+export declare function registerPmGateFollowup(pi: ExtensionAPI, projectDir: string, workers: WorkerStore, watch: PmWatchState, decide?: (input: AskDecisionInput) => ReturnType<typeof runAskDecision>): void;
+export declare function pmActivate(pi: ExtensionAPI, projectDir?: string): void;
 //# sourceMappingURL=pm-orchestrator.d.ts.map

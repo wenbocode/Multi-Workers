@@ -1,59 +1,9 @@
-/**
- * triage-client.ts — decision-point client for the pre-dispatch triage
- * (mw-jev-provider-integration T-03; mw-decision-substitution T-04; design
- * D-004/D-005/D-006/D-007 + D-019/D-021).
- *
- * Contract:
- * - Input is `(dpId, material, meta)` for the four-DP business contract
- *   (mw-decision-context T03): `material` carries ONLY the registry's
- *   `modelStateFields` for that dp (the single allowlist projection), `meta`
- *   carries the local envelope (`record_version`, `logical_id`, `key`,
- *   `task_key`, `initiator_role`, `retry_of`) and NEVER reaches the model.
- *   The stdin payload is exactly `{material, meta}`.
- * - The older **structured state** entry (`{state}`, D6 Q1.1) is still accepted
- *   by {@link triageDispatch} for callers that do not build the envelope yet;
- *   it validates L0 enums/counters/L1 summaries and caps the state at 2000B.
- *   The free-form dp1 string state and its `triage_risk` question map are gone
- *   (spec §1.7: a replaced contract is not kept as a compatibility branch).
- *   L2 content (credentials / user quotes / absolute paths / code) has **no
- *   place in either signature** — it is excluded by construction, not washed
- *   afterwards (D-019).
- * - Canonical serialisation = recursive key sort + compact separators, measured
- *   in UTF-8 bytes (D6 Q1.1/Q2.2). > {@link MAX_STRUCTURED_STATE_BYTES}
- *   triggers the two-stage truncation: drop optional L1 → halve required L1 →
- *   refuse `input-oversize`. A missing / wrongly typed / over-cap required
- *   field refuses with `input-incomplete`. Both refusals are **zero spawn** and
- *   set `escalate_to_human` (D-021: record it, never alert).
- * - The question set is authoritative in the Python decision registry
- *   (design §2.1 "问题集（TS 不再持有字面量）"), so the structured request
- *   carries no `questions` map. The legacy string path keeps forwarding the
- *   frozen DP-1 choice set so its bytes stay identical.
- * - `state_digest` is computed by Python (`sha256(canonical)[:16]`) and only
- *   passed through here — this module never hashes (D-004).
- * - The single egress point is **one** `JSON.stringify` of the request envelope
- *   in {@link triageDispatch}. It is pure serialisation: no redaction, no
- *   truncation, no hashing happens there.
- *
- * Unchanged hard rules (T-03):
- * - **Default off** (D-007): `.mw/decide.json` missing / invalid / `enabled !=
- *   true` / `points.dp1.enabled == false` means a complete bypass — this module
- *   then performs ZERO spawn and ZERO write.
- * - **Fail-soft** (D-004): every failure (missing mw.py, timeout, non-JSON
- *   stdout, non-zero exit, thrown exception) normalises to
- *   `available=false`, never throws, never affects the dispatch.
- * - **State on stdin only** (D-003): `state` rides the request JSON on stdin;
- *   the command line carries only `--project` / `--dp` / `--json`.
- * - **Spawn reuse** (D-001 / W1): the child is the existing `PYTHON_EXE` +
- *   `findMwPy()` resolution from `shared/mw-runner.ts` (MW_PY override,
- *   global-install sidecar, `-X utf8`), never a bare `spawn` with a guessed
- *   interpreter/path.
- * - **Single writer** (D-005): the structured evidence file
- *   `.agenticdoc/_autopilot/triage-decisions.jsonl` is written by the Python
- *   decision client only; this module never touches it.
- * - **Confidence provenance** (D-002/D-004): `confidence_source` is carried
- *   through verbatim; callers must label `model-self-report` as an unverified
- *   self-report that is NOT usable for gating.
- */
+/** PM dispatch client. Active requests use the generated dp-w-type contract
+ * and carry independently prepared material, basis, optional context and local
+ * identity. The structured-state helpers remain available for historical state
+ * inspection; an old producer cannot submit that shape to an active entry.
+ * The Python service controls policy, redaction, model calls and persistence. */
+import { type DecisionPreparation, type PreparedBasis } from "../shared/decide-policy.ts";
 import { type TaskStateSnapshot } from "./decision-task-state.ts";
 /** Hard client-side wall-clock budget for one `mw decide run` child (D-006). */
 export declare const DEFAULT_TRIAGE_TIMEOUT_MS = 20000;
@@ -64,7 +14,7 @@ export declare const MAX_STRUCTURED_STATE_BYTES = 2000;
  * are the **registry ids verbatim** (`decision_points.DP_REGISTRY`), never short
  * forms: a short id silently misses every dp-specific row below. The drift lock
  * in `test/suite/triage-client-state.test.ts` pins this against the registry. */
-export declare const DP1_ID = "dp1-dispatch-type";
+export declare const DP1_ID = "dp-w-type";
 /** TS-local refusal reasons (they never come back from the Python response;
  * `decision.py`'s frozen 8-value reason set is untouched by them). */
 export declare const TRIAGE_REASON_INPUT_INCOMPLETE = "input-incomplete";
@@ -98,6 +48,9 @@ export interface DecisionEnvelopeMeta {
 }
 /** The stdin payload for `mw decide run <dp> --stdin` (four-DP contract). */
 export interface DecisionMaterialEnvelope {
+    parent_decision_ref?: string;
+    preparation: DecisionPreparation;
+    context?: Record<string, unknown>;
     material: TriageState;
     meta: DecisionEnvelopeMeta;
 }
@@ -168,6 +121,7 @@ export interface TriageResult {
     available: boolean;
     reason?: string;
     triage_type?: string;
+    basis?: PreparedBasis;
     triage_risk?: string;
     confidences: Record<string, number | null>;
     confidence_source: string;
@@ -302,7 +256,7 @@ export type DecisionEnvelopePreparation = {
  * apply there), and no new client ceiling may be invented before the four-case
  * measurement. Shape validation still happens here, so a malformed material is
  * refused before any spawn. */
-export declare function prepareDecisionEnvelope(dpId: string, material: TriageState, meta: DecisionEnvelopeMeta, maxBytes?: number): DecisionEnvelopePreparation;
+export declare function prepareDecisionEnvelope(dpId: string, material: unknown, meta: DecisionEnvelopeMeta, maxBytes?: number, preparation?: DecisionPreparation, context?: Record<string, unknown>, parentDecisionRef?: string): DecisionEnvelopePreparation;
 /** Run one decision point. Never throws; a non-enabled policy is a `disabled`
  * no-op that performs no spawn. */
 export declare function triageDispatch(input: TriageRunInput): TriageResult;
@@ -318,6 +272,8 @@ export declare function triageDispatchEnvelope(input: {
     run?: DecideRunner;
     timeoutMs?: number;
     maxBytes?: number;
+    preparation?: DecisionPreparation;
+    context?: Record<string, unknown>;
 }): TriageResult;
 /** Provenance-qualified confidence wording. Only `api` may read as a real
  * confidence; `model-self-report` must carry the "not for gating" marker

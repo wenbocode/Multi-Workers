@@ -175,6 +175,22 @@ function cardClamp(value, max) {
 function cardLine(value) {
     return cardClamp(value, GATE_CARD_LINE_MAX);
 }
+/** Preserve decision facts and references; repeat the label on wrapped lines. */
+function decisionFact(label, value) {
+    const prefix = `${label}: `;
+    const lines = [];
+    let line = prefix;
+    for (const character of value) {
+        if (character === "\n" || line.length + character.length > GATE_CARD_LINE_MAX) {
+            lines.push(line);
+            line = prefix;
+        }
+        if (character !== "\n")
+            line += character;
+    }
+    lines.push(line);
+    return lines;
+}
 /** "45s" / "3m" / "3.9h" / "15d" — waited-time for the card's L1. */
 function formatWaited(ms) {
     const s = Math.max(0, Math.floor(ms / 1000));
@@ -293,13 +309,15 @@ function downstreamKeys(stage, gate) {
  * fixed order, every line <= 110 columns (AC-026 / design D3.2). Missing v2
  * fields render the one sentinel literal — never prose, never a guess. */
 export function renderGateCards(gates, projectDir, nowMs) {
-    const pending = gates.filter((g) => g.status === "pending");
-    if (pending.length === 0)
+    // Decision gates retain the legacy pending status even after application.
+    // Their typed transport/business/effect fields are the authoritative facts.
+    const pending = gates.filter((g) => g.status === "pending" && g.decision === undefined);
+    if (pending.length === 0 && gates.every((gate) => gate.decision === undefined))
         return [`no pending gates (${gates.length} total)`];
     const roadmap = readRoadmap(projectDir);
     const stages = roadmap.ok ? roadmap.stages : [];
     const autoMode = readAutoGateMode(projectDir);
-    const lines = [`${pending.length} pending gate(s):`];
+    const lines = pending.length === 0 ? [`no pending gates (${gates.length} total)`] : [`${pending.length} pending gate(s):`];
     for (const g of pending) {
         const stage = g.stage === null ? undefined : stages.find((s) => s.number === g.stage);
         const createdMs = Date.parse(g.createdAt);
@@ -349,6 +367,24 @@ export function renderGateCards(gates, projectDir, nowMs) {
         lines.push(cardLine(`constraints: ${cardClamp(constraints, 50)} | prior: ${cardClamp(priorNote, 40)}`));
         lines.push(cardLine(`open-items: ${g.openItems === null ? MISSING_FIELD_SENTINEL : JSON.stringify(g.openItems)}`));
         lines.push(cardLine(`answer: /autopilot gate ${g.id} approve|reject --note <text>  expected: ${g.answerSource ?? MISSING_FIELD_SENTINEL}`));
+    }
+    // Render decision records separately from actionable human gate cards.
+    for (const gate of gates) {
+        const decision = gate.decision;
+        if (decision === undefined)
+            continue;
+        lines.push(...decisionFact("decision-gate", `${gate.id} [${gate.kind}] ${gateScope(gate)}`));
+        lines.push(...decisionFact("question", gate.question));
+        lines.push(cardLine(`decision: transport=${decision.transport} business=${decision.business ?? MISSING_FIELD_SENTINEL} effect=${decision.effect}`));
+        lines.push(...decisionFact("pm-note", decision.pmNote));
+        lines.push(...decisionFact("model-basis", decision.modelBasis ?? MISSING_FIELD_SENTINEL));
+        lines.push(...decisionFact("decision-ref", decision.decisionRef ?? MISSING_FIELD_SENTINEL));
+        lines.push(...decisionFact("matter", decision.matterRef));
+        lines.push(...decisionFact("version", decision.substantiveVersion));
+        lines.push(...decisionFact("closure-kind", decision.closureKind ?? MISSING_FIELD_SENTINEL));
+        lines.push(...decisionFact("open-items", jsonSummary(gate.openItems)));
+        lines.push(cardLine(`task-completion: ${MISSING_FIELD_SENTINEL}`));
+        lines.push(...decisionFact("source", gate.path));
     }
     return lines;
 }

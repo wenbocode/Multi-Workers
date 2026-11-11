@@ -1,11 +1,29 @@
+import type { ModelRegistry } from "../../../core/model-registry.ts";
 import { type WorkerEntry, type WorkerStore } from "../shared/worker-store.ts";
 import { type WriteFaceRejectCode } from "../shared/write-face.ts";
-export declare function dispatchTask(entry: Omit<WorkerEntry, "dispatchedAt" | "updatedAt">, store: WorkerStore): Promise<DispatchOutcome>;
+export type ImageCapability = "yes" | "no" | "unknown";
+export interface ImageCapabilityFacts {
+    model: string;
+    provider: string;
+    cli: string;
+    taskType: string;
+    imagesRequired: boolean;
+}
+/** Production callers must prove image support before an image-reading vision
+ * task can enter the worker queue. Tests inject the same lookup seam with faux
+ * model facts; no provider call or image read occurs here. */
+export type ImageCapabilityLookup = (facts: ImageCapabilityFacts) => ImageCapability;
+export interface DispatchTaskOptions {
+    imageCapability?: ImageCapabilityLookup;
+    /** Runtime catalog supplied by the PM window. UI wiring is owned by T30. */
+    modelRegistry?: ModelRegistry;
+}
+export declare function dispatchTask(entry: Omit<WorkerEntry, "dispatchedAt" | "updatedAt">, store: WorkerStore, dispatchOptions?: DispatchTaskOptions): Promise<DispatchOutcome>;
 /** Stable PM-side refusal codes. `write-face-overlap` / `write-face-undeclared`
  * are the conductor's codes (`dispatch.py:1173/1198/1208`); the remaining
  * values are the parse-time codes the shared operator emits, which the
  * conductor refuses with the same code (`dispatch.py:1164`). */
-export type DispatchRefusalCode = "write-face-overlap" | "write-face-undeclared" | WriteFaceRejectCode;
+export type DispatchRefusalCode = "write-face-overlap" | "write-face-undeclared" | "image-capability-unproven" | WriteFaceRejectCode;
 /** A zero-side-effect dispatch refusal / D-003 deferral (D-008). The PM audit
  * channel is this return value (the conductor writes `timeline.jsonl`). */
 export interface DispatchRefusal {
@@ -15,6 +33,8 @@ export interface DispatchRefusal {
     overlapWith?: string;
     /** Lexically-provable conflict sample path (provable overlap only). */
     sample?: string;
+    /** Image capability observed by the vision dispatch hard gate. */
+    capability?: ImageCapability;
     /** D-003: serial-only deferral, not an invalid task. */
     serialOnly?: boolean;
     /** Number of same-owner in-flight workers (undeclared deferral only). */

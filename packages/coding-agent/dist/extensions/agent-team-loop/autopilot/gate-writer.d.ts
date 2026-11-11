@@ -20,14 +20,12 @@
  * here, so tests drive the writer without a project layout.
  */
 import { type LockOptions } from "../shared/file-lock.ts";
-export interface AnswerGateOptions {
+interface GateFileOptions {
     /** Path of the gate .md file to answer. */
     gateFile: string;
     /** The `.mw/gates.lock` path (O_CREAT|O_EXCL). */
     lockFile: string;
-    decision: "approve" | "reject";
-    /** Free-form single-line answer note. Omitted → the note field is
-     * cleared (rewritten to its empty form). */
+    /** Human answer note, or a check against an already stored PM note. */
     note?: string;
     /** Audit identity written to `answered_by` — the answering window's
      * claimId (host:pid). */
@@ -35,6 +33,11 @@ export interface AnswerGateOptions {
     /** Timestamp override for `answered_at`. Defaults to now at second
      * precision in the `...Z` form gates.py _check_iso explicitly accepts. */
     answeredAt?: string;
+    /** Lock retry options (tests inject small values). */
+    lockOpts?: LockOptions;
+}
+export interface AnswerGateOptions extends GateFileOptions {
+    decision: "approve" | "reject";
     /** G3 (D-011/D-012): action types this answer authorizes, from the closed
      * set {@link AUTHORIZES_ACTIONS} `{retry, contract-change}`. Values outside
      * the set are refused fail-closed and nothing is written. Omitted or empty
@@ -42,13 +45,20 @@ export interface AnswerGateOptions {
      * already exist (the conductor materializes `authorizes: []` for new
      * gates): this writer only rewrites existing lines and refuses otherwise. */
     authorizes?: string[];
-    /** Lock retry options (tests inject small values). */
-    lockOpts?: LockOptions;
+}
+interface DecisionBinding {
+    modelBasis: string;
+    decisionRef: string;
+    matterRef: string;
+    substantiveVersion: string;
+}
+export interface PreparedGateAnswerOptions extends GateFileOptions, DecisionBinding {
+    decision: "approve" | "steer" | "need_fix" | "reject";
 }
 export type AnswerGateResult = {
     ok: true;
     gateFile: string;
-    status: "approved" | "rejected";
+    status: "approved" | "rejected" | "pending";
 } | {
     ok: false;
     error: string;
@@ -62,4 +72,9 @@ export declare function renderScalar(value: string): string;
  * concurrent lock-respecting writer (the conductor creating gates, another
  * window answering) can never interleave with ours. */
 export declare function answerGate(opts: AnswerGateOptions): Promise<AnswerGateResult>;
+/** Deposit an answer for the PM-prepared matter only. Caller authorization
+ * and the actual decision evidence are verified by the producer. This writer
+ * records the answer without granting authority or recording an effect. */
+export declare function answerPreparedGate(opts: PreparedGateAnswerOptions): Promise<AnswerGateResult>;
+export {};
 //# sourceMappingURL=gate-writer.d.ts.map

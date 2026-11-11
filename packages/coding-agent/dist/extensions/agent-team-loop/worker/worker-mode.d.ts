@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
+import { type LifecycleRunner } from "../pm/decision-tool.ts";
 import { type DecideRunner } from "../pm/triage-client.ts";
 import { type RagRuntime } from "../rag/tools.ts";
 import { type Claim } from "../shared/dispatch-card.ts";
@@ -552,6 +553,7 @@ export interface WorkerModeOptions {
     /** Test seam for the dp3 decision service (production uses the triage
      * client's `runDecideMw`, which reuses `findMwPy()` + `PYTHON_EXE`). */
     dp3Runner?: DecideRunner;
+    reachabilityLifecycleRunner?: LifecycleRunner;
 }
 export declare function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeOptions): Promise<void>;
 /** `PI_WORKER_TRIED_MODELS` csv -> ordered, deduped model labels

@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
 import type { ModelRegistry } from "../../../core/model-registry.ts";
 import type { AckStore } from "../shared/ack-store.ts";
+import type { DecisionPreparation } from "../shared/decide-policy.ts";
 import { CLAIM_GATE_DEFAULT, type Claim } from "../shared/dispatch-card.ts";
 import { type IndexStore } from "../shared/index-store.ts";
 import type { DoctorJson, MwCliResult } from "../shared/mw-runner.ts";
@@ -89,12 +90,14 @@ export interface Dp1DispatchPlan {
     /** Card seed sections; absent means the producer has no original material. */
     sections?: CardSections;
     taskBefore?: TaskStateSnapshot;
+    preparation?: DecisionPreparation;
+    imagesRequired?: boolean;
 }
 /** Call-site facts only the dispatch entry knows. */
-export type Dp1DispatchFacts = Pick<Dp1DispatchPlan, "key" | "taskKey" | "sections" | "taskBefore">;
+export type Dp1DispatchFacts = Pick<Dp1DispatchPlan, "key" | "taskKey" | "sections" | "taskBefore" | "preparation">;
 /** Build result for one dp1 material envelope. The builder itself never
  * truncates or summarises (the transport refuses over-budget material as a
- * whole); `unsupported-type` means the role is outside dp1's three-value
+ * whole); `unsupported-type` means the role is outside the registered
  * taxonomy and the dispatch must ask no decision at all. */
 export type Dp1MaterialBuild = {
     ok: true;
@@ -107,9 +110,8 @@ export type Dp1MaterialBuild = {
 /** Build the dp1 business material from the dispatch card (T03).
  *
  * Exactly the registry's `modelStateFields` for dp1 — `task_goal`,
- * `task_requirements`, `task_deliverables` — each the card's ORIGINAL body
- * (上下文 / 要求 / 交付格式), verbatim. No summary, no risk label, no identity
- * fields: those ride on the local envelope (`newDecisionMeta`). */
+ * `task_requirements`, `task_deliverables` — plus the actual image requirement.
+ * Source text is verbatim; audit identity belongs to `meta`. */
 export declare function buildDp1DecisionMaterial(plan: Dp1DispatchPlan): Dp1MaterialBuild;
 /** Local-envelope metadata for one dp1 dispatch. The PM is the initiating role;
  * `task_key` is the id the dispatch already reserved (never inferred). The role
@@ -177,9 +179,8 @@ export declare function formatDp1ConsumerReceipt(results: Array<{
  *
  * Order is the real order of facts: the answer was `consumed`; then either the
  * dispatch was refused (`settled` rework, no `executed`), or it really
- * dispatched (`executed` type-read + `settled` ok). `executed`'s result records
- * the dispatch it did, and a disagreement keeps the original type
- * (`kept-type:<type>`) because the advice never rewrites the dispatch.
+ * dispatched (`executed` type-read + `settled` ok). A selected type that
+ * disagrees with the reviewed card is recorded as a refused dispatch.
  *
  * A failed write is REPORTED (`failed`), never retried with a different action
  * and never re-run as a dispatch.
@@ -211,7 +212,7 @@ export declare function assertStateMatchesRegistry(dpId: string, state: Record<s
  * Never throws.
  *
  * T03: the request shape is `{material, meta}` (dp1 model state = the three
- * business strings; identity only in `meta`). A role outside the three-value
+ * business strings and actual image requirement; identity only in `meta`). A role outside the registered
  * taxonomy, missing material or over-budget material is a ZERO-spawn skip,
  * recorded in {@link DispatchTriage.stateTrace} (never silent) — the old
  * `{state}` / string fallback branches, which also asked a `triage_risk`
@@ -499,9 +500,7 @@ export declare function planDispatchFrontmatter(input: {
     /** Test seam for the DP-1 child (T-03): production callers omit it and the
      * triage client spawns the real `mw decide run`. */
     triageRun?: DecideRunner;
-    /** T-04d dispatch facts for the dp1 STRUCTURED state (owning key + the
-     * card's write face). Omitted / incomplete falls back to the legacy string
-     * state, and the fallback is traced (`[DECISION] dp1 state=legacy ...`). */
+    /** Host-owned task identity and the PM's prepared source material and basis. */
     dp1?: Dp1DispatchFacts;
 }): {
     ok: true;
@@ -511,6 +510,7 @@ export declare function planDispatchFrontmatter(input: {
 } | {
     ok: false;
     message: string;
+    triage?: DispatchTriage;
 };
 /** Paired markers of the dispatch-injected write-surface contract (contract
  * C2, producer T-02 → consumer T-03). The runtime consumer only greps for
@@ -1125,7 +1125,7 @@ export declare function runMwStatsCommand(ctx: ExtensionCommandContext, projectD
  * `decide_signoff.CONCLUSIONS`). The window never picks one — the decision model
  * produces it during the write — so the list only drives the read-only preview
  * rendering (one verdict line per conclusion). */
-export declare const DECIDE_CONCLUSIONS: readonly ["continue", "narrow", "revoke"];
+export declare const DECIDE_CONCLUSIONS: readonly ["finalize", "continue", "user-confirm"];
 /** Usage line of the window face (the `--key` flag only exists on `sign`).
  * `sign` takes no conclusion: the decision model produces it during the write,
  * so no caller-supplied positional remains to validate. The second line
@@ -1202,6 +1202,12 @@ export interface DecidePreviewFacts {
  * unsigned write carries `note` (decision model unavailable) or the plain line
  * Python prints before the payload (`signoff: disable`). */
 export interface DecidePreview {
+    dp?: string;
+    key?: string;
+    logical_id?: string;
+    decision_id?: string;
+    signoff_status?: string;
+    signoff_path?: string | null;
     ok?: boolean | null;
     conclusion?: string | null;
     problems?: string[];

@@ -56,4 +56,32 @@ export declare function coerceDecidePolicyValue(key: DecidePolicyKey, value: unk
  * is not a declaration, so an unset file never masks the built-in layer.
  */
 export declare function resolveDecidePolicy(dpId: string, projectDir: string): ResolvedDecidePolicy;
+export interface PreparedBasis {
+    id: string;
+    text: string;
+    material_refs: string[];
+    applies_to: string[];
+}
+export interface DecisionPreparation {
+    prepared_at: string;
+    basis_catalog: PreparedBasis[];
+}
+export interface MaterialIssue {
+    field: string;
+    rule: string;
+}
+export type MaterialValidation = {
+    ok: true;
+    material: Record<string, unknown>;
+} | {
+    ok: false;
+    issues: MaterialIssue[];
+};
+export declare function decisionIdRefusal(dp: string): string | undefined;
+export declare function decisionActorAllowed(dp: string, role: unknown): boolean;
+export declare function validateDecisionMaterial(dp: string, material: unknown): MaterialValidation;
+export declare function preparationProblems(dp: string, material: Record<string, unknown>, preparation: unknown, context: unknown): string[];
+export declare function selectedDecisionBasis(dp: string, material: Record<string, unknown>, prep: DecisionPreparation, choice: unknown, basisId: unknown): PreparedBasis | undefined;
+/** Resolve only an unambiguous live claim of this PM process, on every call. */
+export declare function claimedPmKey(projectDir: string, requested?: string): string | undefined;
 //# sourceMappingURL=decide-policy.d.ts.map

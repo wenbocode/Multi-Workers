@@ -266,7 +266,19 @@ export declare const GATE_FRONTMATTER_FIELDS: readonly ["id", "kind", "stage", "
  * renders this exact literal for a field that is absent. Never prose, never a
  * guess, never derived from `question`/`note`. */
 export declare const MISSING_FIELD_SENTINEL = "unknown (no field)";
+interface GateDecisionFields {
+    transport: string;
+    business: string | null;
+    effect: string;
+    decisionRef: string | null;
+    matterRef: string;
+    substantiveVersion: string;
+    pmNote: string;
+    modelBasis: string | null;
+    closureKind: string | null;
+}
 export interface GateRecord {
+    decision?: GateDecisionFields;
     id: string;
     kind: string;
     status: string;
@@ -457,13 +469,28 @@ export interface StageKeyView {
     /** Optional so every pre-T-05 model shape (and every exact `toEqual` on it)
      * stays valid; set only when a run.json actually carries claims. */
     claims?: ClaimMetricsView;
+    workerReachability?: WorkerReachabilityReport[];
 }
 export interface StageView {
     current: number;
     status: string;
     keys: StageKeyView[];
 }
+export interface WorkerReachabilityReport {
+    taskKey: string;
+    decisionId: string | null;
+    choice: "terminate" | "investigate" | null;
+    reason: string;
+    completed: string;
+    remaining: string;
+    blockers: string;
+    evidence: string;
+}
+/** Project only a terminal observation from the worker's own run. Legacy
+ * outputs and progress snapshots cannot supply a missing conclusion. */
+export declare function readWorkerReachability(taskDir: string, ownerKey: string, taskKey: string): WorkerReachabilityReport | undefined;
 export interface GateView {
+    decision?: GateDecisionFields;
     id: string;
     kind: string;
     status: string;
@@ -547,4 +574,5 @@ export declare function deriveStatusModel(projectDir: string, nowMs?: number): S
  * payload (view parity, VC-017): every number below is taken from the model
  * object, so the two views cannot drift. */
 export declare function renderStatusText(model: StatusModel): string;
+export {};
 //# sourceMappingURL=status-model.d.ts.map

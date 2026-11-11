@@ -1,9 +1,14 @@
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { promisify } from "node:util";
 import { TERMINAL_WORKER_STATUSES } from "../autopilot/status-model.js";
 import { RAG_MARKER_V1, renderRagBlock } from "../rag/block.js";
 import { loadRagConfig } from "../rag/config.js";
+import { LOCAL_CODEX_PROVIDER } from "../shared/codex-proxy.js";
+import { PREFIX_TO_PROVIDER_ID, parseModelValue } from "../shared/dispatch-models.js";
 import { acquireLock } from "../shared/file-lock.js";
+import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.js";
 import { controlRootFromTaskPath } from "../shared/paths.js";
 import { renderToolchainCommand, resolveWorkspaceConfig } from "../shared/target-config.js";
 import { readTaskHeaderScalar, readTaskType } from "../shared/task-frontmatter.js";
@@ -239,7 +244,7 @@ function insertDenyGlobs(content, denyGlobs) {
  * line to EOF (AC-019) — including a v1-marked legacy block under partition
  * activation, and a drop to nothing under a non-injecting mode (parked
  * single restores the pre-injection bytes). */
-function injectWorkspaceProfile(taskPath) {
+function injectWorkspaceProfile(taskPath, vision) {
     const controlRoot = controlRootFromTaskPath(taskPath);
     const config = resolveWorkspaceConfig(controlRoot);
     let original;
@@ -247,6 +252,8 @@ function injectWorkspaceProfile(taskPath) {
         original = fs.readFileSync(taskPath, "utf8");
     }
     catch (err) {
+        if (vision)
+            throw err;
         console.error(`[mw] profile injection skipped for ${taskPath}: ${err instanceof Error ? err.message : String(err)}`);
         return;
     }
@@ -255,7 +262,16 @@ function injectWorkspaceProfile(taskPath) {
     // re-append the freshly rendered block at the very end. This keeps both
     // blocks idempotent under re-dispatch and drops a stale RAG block when the
     // project no longer enables RAG (D-009).
-    const base = stripRagBlock(original);
+    let pinned = original;
+    if (vision) {
+        if (original !== vision.checked)
+            throw new Error("Vision task changed during model verification");
+        if (readTaskHeaderScalar(original, "model") !== vision.model) {
+            const newline = original.includes("\r\n") ? "\r\n" : "\n";
+            pinned = original.replace(/^\uFEFF?(?:[ \t]*---[ \t]*\r?\n)?/, (prefix) => `${prefix}model: ${vision.model}${newline}`);
+        }
+    }
+    const base = stripRagBlock(pinned);
     const existing = findProfileBlock(base);
     const ownDenyGlobs = /^deny_globs:/m.test(base);
     let out = base;
@@ -287,7 +303,69 @@ function injectWorkspaceProfile(taskPath) {
     if (out !== original)
         fs.writeFileSync(taskPath, out, "utf8");
 }
-export async function dispatchTask(entry, store) {
+// Use the installed launcher's read-only resolver. It owns task.md, YAML
+// validation, CLI compatibility and window fallback. Pass task data as argv.
+const READ_LAUNCH_MODEL = `import pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import launcher
+model, _ = launcher._resolve_entry_model({"task_path": sys.argv[2], "cli": sys.argv[3]}, pathlib.Path(sys.argv[4]))
+print(model)`;
+async function imageDispatchCapability(entry, options) {
+    const unproven = { model: "", capability: "unknown" };
+    const mw = findMwPy();
+    if (!mw || entry.cli.toLowerCase() !== "pi")
+        return unproven;
+    try {
+        const project = controlRootFromTaskPath(entry.taskPath);
+        const { stdout } = await promisify(execFile)(PYTHON_EXE, [
+            "-I",
+            "-B",
+            "-X",
+            "utf8",
+            "-c",
+            READ_LAUNCH_MODEL,
+            path.dirname(path.resolve(mw)),
+            entry.taskPath,
+            entry.cli,
+            project,
+        ], { timeout: 5000, windowsHide: true, maxBuffer: 65536 });
+        const model = stdout.trim();
+        if (!model || /\s/u.test(model))
+            return unproven;
+        const { prefix, modelId } = parseModelValue(model);
+        if (prefix && !Object.hasOwn(PREFIX_TO_PROVIDER_ID, prefix))
+            return unproven;
+        const provider = prefix ? PREFIX_TO_PROVIDER_ID[prefix] : entry.provider.trim();
+        if (!provider || !modelId)
+            return unproven;
+        if (options.imageCapability) {
+            return {
+                model,
+                capability: options.imageCapability({
+                    model,
+                    provider,
+                    cli: entry.cli,
+                    taskType: "vision",
+                    imagesRequired: true,
+                }),
+            };
+        }
+        const registry = options.modelRegistry;
+        if (!registry)
+            return unproven;
+        const routedProvider = provider === "openai-codex" && registry.getAll().some((row) => row.provider === LOCAL_CODEX_PROVIDER)
+            ? LOCAL_CODEX_PROVIDER
+            : provider;
+        const selected = registry.find(routedProvider, modelId);
+        if (!selected || !Array.isArray(selected.input))
+            return unproven;
+        return { model, capability: selected.input.includes("image") ? "yes" : "no" };
+    }
+    catch {
+        return unproven;
+    }
+}
+export async function dispatchTask(entry, store, dispatchOptions = {}) {
     const now = new Date().toISOString();
     const full = {
         ...entry,
@@ -315,7 +393,23 @@ export async function dispatchTask(entry, store) {
         const refusal = writeFaceVerdict({ entry, content, store, options });
         if (refusal !== null)
             return refusal;
-        injectWorkspaceProfile(entry.taskPath);
+        const taskType = readTaskType(content).type ?? "";
+        const imagesRequired = readTaskHeaderScalar(content, "images") === "yes";
+        let vision;
+        if (taskType === "vision" && imagesRequired) {
+            const { model, capability } = await imageDispatchCapability(entry, dispatchOptions);
+            if (capability !== "yes") {
+                return {
+                    ok: false,
+                    code: "image-capability-unproven",
+                    capability,
+                    reason: `image-capability-unproven: ${capability}`,
+                    detail: `${entry.taskKey}: vision image capability ${capability}; dispatch blocked`,
+                };
+            }
+            vision = { checked: content, model };
+        }
+        injectWorkspaceProfile(entry.taskPath, vision);
         store.upsertWithinLock(full);
     }
     finally {
