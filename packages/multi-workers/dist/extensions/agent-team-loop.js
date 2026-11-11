@@ -37026,7 +37026,7 @@ function completeContextGroups(messages, start = 0) {
   for (let index = start; index < messages.length; ) {
     const first = messages[index];
     if (first.role === "toolResult") throw new Error("MW_CONTEXT_ORPHAN_TOOL_RESULT");
-    const calls = first.role === "assistant" ? first.content.filter((part) => part.type === "toolCall") : [];
+    const calls = first.role === "assistant" && first.stopReason !== "error" && first.stopReason !== "aborted" ? first.content.filter((part) => part.type === "toolCall") : [];
     const pending = new Map(calls.map((call) => [call.id, call.name]));
     if (pending.size !== calls.length) throw new Error("MW_CONTEXT_DUPLICATE_TOOL_CALL");
     const begin = index++;
