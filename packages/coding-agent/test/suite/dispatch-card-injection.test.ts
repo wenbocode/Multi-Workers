@@ -27,9 +27,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { VERSION } from "../../src/config.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../src/core/extensions/types.ts";
+import { PARALLEL_PROTOCOL } from "../../src/extensions/agent-team-loop/pm/pm-orchestrator.ts";
 import {
 	applyCardSeedSections,
 	CARD_SEED_DISCLAIMER,
@@ -41,12 +43,15 @@ import {
 	registerWorkerCommands,
 	registerWorkerTools,
 	renderCardSeedSections,
+	windowClaimId,
 } from "../../src/extensions/agent-team-loop/pm/ui-bridge.ts";
 import { resolveRagPython } from "../../src/extensions/agent-team-loop/rag/cli-bridge.ts";
 import { AckStore } from "../../src/extensions/agent-team-loop/shared/ack-store.ts";
 import { cardDigest, sha256EolNormalizedBytes } from "../../src/extensions/agent-team-loop/shared/card-digest.ts";
 import { IndexStore } from "../../src/extensions/agent-team-loop/shared/index-store.ts";
 import { WorkerStore } from "../../src/extensions/agent-team-loop/shared/worker-store.ts";
+import { parseTaskMd, resolveBudgetMs } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
+import { createHarness } from "./harness.ts";
 
 const MULTI_WORKERS_DIR = fileURLToPath(new URL("../../../multi-workers/", import.meta.url));
 
@@ -211,7 +216,9 @@ interface DispatchFixture {
 
 /** `_scratch` dispatch fixture: no phase docs needed, tool + queue available. */
 function setupDispatch(): DispatchFixture {
-	const root = mkdtemp();
+	const root = path.join(mkdtemp(), ".agenticdoc");
+	fs.mkdirSync(root);
+	fs.writeFileSync(path.join(root, "target.yml"), "active: single\n");
 	const store = new WorkerStore(root);
 	const { pi, tools } = fakePi();
 	registerWorkerTools(pi, store, new AckStore(root), new IndexStore(root), root, { key: "_scratch" }, root);
@@ -233,6 +240,132 @@ async function dispatch(fx: DispatchFixture, params: Record<string, unknown>): P
 // ── 1. positive: byte-level injection ───────────────────────────────────────
 
 describe("dispatch card injection (G-2)", () => {
+	it("refuses a renamed retry before writing its task and keeps independent dispatch available", async () => {
+		const fx = setupDispatch();
+		const params = { task_key: "first", card_path: fx.cardRelPath, description: "work" };
+		await dispatch(fx, params);
+		const original = fx.store.findByKey("first");
+		if (!original) throw new Error("fixture failed to dispatch");
+		const task = fs.readFileSync(original.taskPath, "utf8");
+		await fx.store.upsert({ ...original, status: "failed" });
+		const folder = path.dirname(original.taskPath);
+		fs.writeFileSync(
+			path.join(folder, "run.json"),
+			JSON.stringify({
+				task_key: "first",
+				run_id: "first@start",
+				status: "failed",
+				started_at: "2026-11-17T00:00:00Z",
+				ended_at: "2026-11-17T00:01:00Z",
+			}),
+		);
+		fs.writeFileSync(path.join(folder, "trace.log"), "[TIMEOUT] 2026-11-17T00:01:00Z wall: budget 60s exceeded\n");
+		expect(await dispatch(fx, { ...params, task_key: "renamed" })).toContain("replan-required:");
+		expect(fs.existsSync(taskDirOf(fx.root, "renamed"))).toBe(false);
+		expect(fs.readFileSync(original.taskPath, "utf8")).toBe(task);
+		const registered = fakePi();
+		registerWorkerTools(registered.pi, fx.store, new AckStore(fx.root), new IndexStore(fx.root), fx.root, {
+			key: "_scratch",
+		});
+		const replan = registered.tools.get("replan_tasks");
+		if (!replan) throw new Error("replan_tasks not registered");
+		fs.writeFileSync(
+			path.join(fx.root, "_index.parallel"),
+			`| _scratch | active | EXECUTE | ${windowClaimId()} | | | now |\n`,
+		);
+		const inspection = await replan.execute(
+			"inspect",
+			{ operation: "inspect", key: "_scratch", task: "first" },
+			undefined,
+			undefined,
+			fakeCtx(),
+		);
+		expect(JSON.parse(inspection.content[0].text)).toMatchObject({
+			ok: true,
+			facts: {
+				category: "wall-timeout",
+				card: `tasks/${process.platform === "win32" ? CARD_NAME.toLowerCase() : CARD_NAME}`,
+			},
+			acceptance: ["AC-001"],
+		});
+		const { pi, commands } = fakePi();
+		registerWorkerCommands(pi, fx.store, new IndexStore(fx.root), fx.root, { key: "_scratch" }, fx.root);
+		const { ctx, notifications } = fakeCommandCtx();
+		await commands.get("worker")?.(`pi --type coding --card ${fx.cardRelPath} work`, ctx);
+		expect(notifications.join("\n")).toContain("replan-required:");
+		writeCard(fx.root, "_scratch", "independent.md", COMPLIANT_CARD.replace("AC-001", "AC-002"));
+		await dispatch(fx, { ...params, task_key: "other", card_path: "_scratch/tasks/independent.md" });
+		expect(fx.store.findByKey("other")?.status).toBe("pending");
+	});
+
+	it("puts key dependencies and the first verification step in the PM planning instructions", () => {
+		expect(PARALLEL_PROTOCOL).toContain("可独立验收的结果");
+		expect(PARALLEL_PROTOCOL).toContain("下游实际依赖的接口或产物");
+		expect(PARALLEL_PROTOCOL).toContain("首个可验证结果、取得它的命令或操作");
+	});
+
+	it.each([
+		["# R25\n\ntype: coding\ntimeout: 12", 12],
+		["---\ntype: coding\ntimeout: 1.5\n---", 1.5],
+		["type: coding", undefined],
+		["type: coding\ntimeout: invalid", undefined],
+	] as const)("carries the card budget through dispatch and worker parsing (%s)", async (prologue, expected) => {
+		const fx = setupDispatch();
+		const card = COMPLIANT_CARD.replace("type: coding", prologue);
+		fs.writeFileSync(
+			fx.cardAbsPath,
+			card.replace(CARD_REQUIREMENTS, `${CARD_REQUIREMENTS}\n\n\`\`\`yaml\ntimeout: 99\n\`\`\``),
+		);
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) =>
+					registerWorkerTools(
+						pi,
+						fx.store,
+						new AckStore(fx.root),
+						new IndexStore(fx.root),
+						fx.root,
+						{ key: "_scratch" },
+						fx.root,
+					),
+			],
+		});
+		try {
+			harness.setResponses([
+				fauxAssistantMessage(
+					[
+						fauxToolCall("dispatch_worker", {
+							task_key: "budget",
+							card_path: fx.cardRelPath,
+							description: "work",
+						}),
+					],
+					{ stopReason: "toolUse" },
+				),
+				fauxAssistantMessage("done"),
+			]);
+			await harness.session.prompt("Dispatch the task.");
+			expect(fx.store.readAll().map((row) => row.taskKey)).toEqual(["budget"]);
+		} finally {
+			harness.cleanup();
+		}
+		const meta = parseTaskMd(path.join(taskDirOf(fx.root, "budget"), "task.md"));
+		expect(meta.timeoutMin).toBe(expected);
+		expect(resolveBudgetMs(meta.timeoutMin, "90000")).toBe(expected === undefined ? 90000 : expected * 60000);
+	});
+
+	it("carries the card timeout through /worker", async () => {
+		const fx = setupDispatch();
+		fs.writeFileSync(fx.cardAbsPath, COMPLIANT_CARD.replace("type: coding", "type: coding\ntimeout: 12"));
+		const { pi, commands } = fakePi();
+		registerWorkerCommands(pi, fx.store, new IndexStore(fx.root), fx.root, { key: "_scratch" }, fx.root);
+		const { ctx, notifications } = fakeCommandCtx();
+		await commands.get("worker")?.(`pi --type coding --card ${fx.cardRelPath} work`, ctx);
+		const rows = fx.store.readAll();
+		expect(rows, notifications.join("\n")).toHaveLength(1);
+		expect(parseTaskMd(path.join(taskDirOf(fx.root, rows[0].taskKey), "task.md")).timeoutMin).toBe(12);
+	});
+
 	it("dispatches a compliant card and injects the three sections byte-for-byte", async () => {
 		const fx = setupDispatch();
 		const before = fx.store.readAll().length;

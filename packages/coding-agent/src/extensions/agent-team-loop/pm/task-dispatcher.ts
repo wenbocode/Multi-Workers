@@ -22,6 +22,7 @@ import {
 	type WriteFaceRejectCode,
 	writeFacesOverlap,
 } from "../shared/write-face.ts";
+import { replanAdmission } from "./replan.ts";
 
 /** Sentinel opening the legacy (dual/single) profile block — makes
  * re-dispatch idempotent (the block is appended at most once per task.md).
@@ -329,6 +330,8 @@ export interface ImageCapabilityFacts {
 export type ImageCapabilityLookup = (facts: ImageCapabilityFacts) => ImageCapability;
 
 export interface DispatchTaskOptions {
+	card?: { headerPath: string; sha256: string; resolvedPath: string };
+	publishCard?: () => void;
 	imageCapability?: ImageCapabilityLookup;
 	/** Runtime catalog supplied by the PM window. UI wiring is owned by T30. */
 	modelRegistry?: ModelRegistry;
@@ -421,6 +424,26 @@ export async function dispatchTask(
 
 	const release = await acquireLock(store.lockFilePath);
 	try {
+		const controlRoot = writeFaceBase(path.dirname(store.queuePath));
+		const owner = workerOwnerKey(full);
+		const oldCard = dispatchOptions.card;
+		const inputPath = oldCard?.resolvedPath ?? entry.taskPath;
+		const prior = fs.existsSync(inputPath) ? fs.readFileSync(inputPath, "utf8") : "";
+		const reason = replanAdmission(
+			controlRoot,
+			owner,
+			entry.taskKey,
+			oldCard?.headerPath ?? readTaskHeaderScalar(prior, "card_path") ?? "",
+			oldCard?.sha256 ?? readTaskHeaderScalar(prior, "card_sha256") ?? "",
+			store
+				.readAll()
+				.some(
+					(row) => workerOwnerKey(row) === owner && ["failed", "lost", "needs-clarification"].includes(row.status),
+				),
+			readTaskHeaderScalar(prior, "supersedes") ?? undefined,
+		);
+		if (reason) return { ok: false, code: "replan-required", reason, detail: reason };
+		dispatchOptions.publishCard?.();
 		let content = "";
 		try {
 			content = fs.readFileSync(entry.taskPath, "utf8");
@@ -463,6 +486,7 @@ export async function dispatchTask(
  * values are the parse-time codes the shared operator emits, which the
  * conductor refuses with the same code (`dispatch.py:1164`). */
 export type DispatchRefusalCode =
+	| "replan-required"
 	| "write-face-overlap"
 	| "write-face-undeclared"
 	| "image-capability-unproven"

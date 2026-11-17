@@ -75,6 +75,7 @@ import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "
 import { type PmStateClaimSyncResult, syncPmStateClaimId } from "../shared/pm-state-claim.ts";
 import { PHASE_ORDER, phaseAuditWarnings } from "../shared/pm-state-guard.ts";
 import { type RunDetachedOptions, type RunDetachedResult, runDetachedMw } from "../shared/run-detached.ts";
+import { readTaskHeaderScalar } from "../shared/task-frontmatter.ts";
 import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 import {
 	classifyWriteTargetShape,
@@ -84,6 +85,7 @@ import {
 } from "../shared/write-surface.ts";
 import { RECOVERY_CONTRACT_HEADING, recoveryContractSection } from "../worker/output-sections.ts";
 import { isSameOrUnder } from "../worker/read-scope.ts";
+import { registerReplanTool } from "./replan.ts";
 
 // W1 (mw-worker-output-contract): shape classification and the basename
 // whitelist moved to the write-surface single source; these re-exports keep the
@@ -2561,6 +2563,7 @@ export interface CardExtraSection {
  * card's unclassified sections (the §1.2 type extras) so the derived task.md
  * passes the SAME extras judge the service layer (G-3) runs. */
 export interface CardSections {
+	timeoutMin?: number;
 	context: string;
 	requirements: string;
 	deliverables: string;
@@ -2623,6 +2626,18 @@ export function extractCardSections(cardText: string): CardSections {
 			headings.push({ level: match[1]?.length ?? 2, text: stripCardHeadingNumbering(match[2] ?? ""), line: i });
 	}
 	const out: CardSections = { context: "", requirements: "", deliverables: "", extras: [] };
+	// A source card can put its metadata immediately after a Markdown title (R25).
+	const prologue = raw
+		.slice(0, headings[0]?.line)
+		.join("\n")
+		.trimStart()
+		.replace(/^#[ \t]+[^\n]*\n\s*/, "");
+	const metadata = prologue.split(/^[ \t]*(?:```|~~~)/m, 1)[0];
+	const rawTimeout = readTaskHeaderScalar(metadata, "timeout") ?? "";
+	const timeout = Number(rawTimeout);
+	if (/^\+?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(rawTimeout) && Number.isFinite(timeout) && timeout > 0) {
+		out.timeoutMin = timeout;
+	}
 	/** Body of heading `index` (to the next same-or-higher heading). */
 	const bodyOf = (index: number): string => {
 		const heading = headings[index];
@@ -2838,7 +2853,9 @@ function mergeCardHeader(frontmatter: string, cardPath: string, cardSha256: stri
 			: `${writeFaceEntries.length > 0 ? renderWriteFaceLine(writeFaceEntries) : "write_face: -"}\n`;
 	return (
 		`${header}\ncard_path: ${cardPath}\ncard_sha256: ${cardSha256}\n` +
-		`${ENVELOPE_PRODUCER_KEY}: ${envelopeProducerIdentity()}\n${writeFaceLine}`
+		`${ENVELOPE_PRODUCER_KEY}: ${envelopeProducerIdentity()}\n` +
+		(sections.timeoutMin === undefined ? "" : `timeout: ${sections.timeoutMin}\n`) +
+		writeFaceLine
 	);
 }
 
@@ -2857,6 +2874,7 @@ function cleanupRefusedTaskDir(taskPath: string): void {
 /** Render a write-face refusal / D-003 deferral for the user-facing channel
  * (D-008: the PM audit channel is the dispatch return value). */
 function writeFaceRefusalText(taskKey: string, refusal: DispatchRefusal): string {
+	if (refusal.code === "replan-required") return refusal.detail;
 	if (refusal.code === "write-face-undeclared") {
 		return (
 			`Worker dispatch of '${taskKey}' held serial-only: the card declares no 写入允许面` +
@@ -3180,6 +3198,7 @@ export function registerWorkerTools(
 	 * `mw decide lifecycle` child is the single write face). */
 	lifecycleRun?: LifecycleRunner,
 ): void {
+	registerReplanTool(pi, projectDir, windowClaimId);
 	// dispatch_worker: create a task.md and immediately dispatch it to the worker queue.
 	pi.registerTool({
 		name: "dispatch_worker",
@@ -3442,39 +3461,40 @@ export function registerWorkerTools(
 			// DP-1 ledger + (on disagreement) the one PM wake for this dispatch.
 			emitDispatchTriage(pi, agenticdocRoot, modelPlan.triage);
 
-			const written = writeDispatchTaskMd(
-				{ agenticdocRoot, ownerKey },
-				{
-					taskKey: task_key,
-					type: typeField,
-					body: description,
-					frontmatter: modelPlan.frontmatter,
-					writeScope:
-						writelessRole && isShellRole(typeField) ? renderDefaultWriteScope(ownerKey, task_key) : undefined,
-					// T-02/design §4: claims-backed read budget. `caps=null` (no claims
-					// block) leaves both the bytes and the interception behaviour alone.
-					readScope: cardGate.caps === null ? undefined : claimReadScope(ownerKey, cardGate.claims),
-					readFileCap: cardGate.caps?.fileCap,
-					readByteCap: cardGate.caps?.byteCap,
-					injectWriteSurface: writelessRole,
-					allowForeignWrite,
-					card: { headerPath: cardGate.headerPath, sha256: cardGate.sha256, sections: cardGate.sections },
-					// T-08/T-04c: the decision this dispatch ADOPTED (D-041). `suggest` and
-					// unavailable advice carry no decision, so the bytes stay pre-T-08.
-					decision: modelPlan.triage?.decision,
-					// T-04d: record which dp1 state shape the child actually received.
-					decisionTrace: modelPlan.triage?.stateTrace,
-				},
-			);
-			const taskMdPath = written.path;
+			const publish = () =>
+				writeDispatchTaskMd(
+					{ agenticdocRoot, ownerKey },
+					{
+						taskKey: task_key,
+						type: typeField,
+						body: description,
+						frontmatter: modelPlan.frontmatter,
+						writeScope:
+							writelessRole && isShellRole(typeField) ? renderDefaultWriteScope(ownerKey, task_key) : undefined,
+						// T-02/design §4: claims-backed read budget. `caps=null` (no claims
+						// block) leaves both the bytes and the interception behaviour alone.
+						readScope: cardGate.caps === null ? undefined : claimReadScope(ownerKey, cardGate.claims),
+						readFileCap: cardGate.caps?.fileCap,
+						readByteCap: cardGate.caps?.byteCap,
+						injectWriteSurface: writelessRole,
+						allowForeignWrite,
+						card: { headerPath: cardGate.headerPath, sha256: cardGate.sha256, sections: cardGate.sections },
+						// T-08/T-04c: the decision this dispatch ADOPTED (D-041). `suggest` and
+						// unavailable advice carry no decision, so the bytes stay pre-T-08.
+						decision: modelPlan.triage?.decision,
+						// T-04d: record which dp1 state shape the child actually received.
+						decisionTrace: modelPlan.triage?.stateTrace,
+					},
+				);
+			const taskMdPath = path.join(taskDir, "task.md");
 
 			const outcome = await dispatchTask(
 				{ taskKey: task_key, status: "pending", cli, provider, model: model ?? "", taskPath: taskMdPath },
 				workerStore,
-				{ modelRegistry: _context?.modelRegistry },
+				{ modelRegistry: _context?.modelRegistry, publishCard: publish, card: cardGate },
 			);
 			if (!outcome.ok) {
-				cleanupRefusedTaskDir(taskMdPath);
+				if (outcome.code !== "replan-required") cleanupRefusedTaskDir(taskMdPath);
 				// The refused dispatch is still a real outcome of the decision: the
 				// consumed fact stands, the round settles as `rework`, and NO executed
 				// fact is written (nothing was executed).
@@ -4026,39 +4046,40 @@ export function registerWorkerCommands(
 			}
 			// DP-1 ledger + (on disagreement) the one PM wake for this dispatch.
 			emitDispatchTriage(pi, agenticdocRoot, modelPlan.triage);
-			const written = writeDispatchTaskMd(
-				{ agenticdocRoot, ownerKey },
-				{
-					taskKey,
-					type: typeField,
-					body: description,
-					frontmatter: modelPlan.frontmatter,
-					writeScope:
-						writelessRole && isShellRole(typeField) ? renderDefaultWriteScope(ownerKey, taskKey) : undefined,
-					// T-02/design §4: same claims-backed read budget as dispatch_worker.
-					readScope: cardGate.caps === null ? undefined : claimReadScope(ownerKey, cardGate.claims),
-					readFileCap: cardGate.caps?.fileCap,
-					readByteCap: cardGate.caps?.byteCap,
-					injectWriteSurface: writelessRole,
-					allowForeignWrite: allowForeignWriteArg,
-					card: { headerPath: cardGate.headerPath, sha256: cardGate.sha256, sections: cardGate.sections },
-					// T-08/T-04c: the decision this dispatch ADOPTED (D-041). `suggest` and
-					// unavailable advice carry no decision, so the bytes stay pre-T-08.
-					decision: modelPlan.triage?.decision,
-					// T-04d: record which dp1 state shape the child actually received.
-					decisionTrace: modelPlan.triage?.stateTrace,
-				},
-			);
-			const taskMdPath = written.path;
+			const publish = () =>
+				writeDispatchTaskMd(
+					{ agenticdocRoot, ownerKey },
+					{
+						taskKey,
+						type: typeField,
+						body: description,
+						frontmatter: modelPlan.frontmatter,
+						writeScope:
+							writelessRole && isShellRole(typeField) ? renderDefaultWriteScope(ownerKey, taskKey) : undefined,
+						// T-02/design §4: same claims-backed read budget as dispatch_worker.
+						readScope: cardGate.caps === null ? undefined : claimReadScope(ownerKey, cardGate.claims),
+						readFileCap: cardGate.caps?.fileCap,
+						readByteCap: cardGate.caps?.byteCap,
+						injectWriteSurface: writelessRole,
+						allowForeignWrite: allowForeignWriteArg,
+						card: { headerPath: cardGate.headerPath, sha256: cardGate.sha256, sections: cardGate.sections },
+						// T-08/T-04c: the decision this dispatch ADOPTED (D-041). `suggest` and
+						// unavailable advice carry no decision, so the bytes stay pre-T-08.
+						decision: modelPlan.triage?.decision,
+						// T-04d: record which dp1 state shape the child actually received.
+						decisionTrace: modelPlan.triage?.stateTrace,
+					},
+				);
+			const taskMdPath = path.join(taskDir, "task.md");
 
 			// Dispatch directly to _workers.parallel
 			const outcome = await dispatchTask(
 				{ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath },
 				workerStore,
-				{ modelRegistry: ctx.modelRegistry },
+				{ modelRegistry: ctx.modelRegistry, publishCard: publish, card: cardGate },
 			);
 			if (!outcome.ok) {
-				cleanupRefusedTaskDir(taskMdPath);
+				if (outcome.code !== "replan-required") cleanupRefusedTaskDir(taskMdPath);
 				const dp1Feedback = formatDp1ConsumerReceipt(
 					await writeDp1DispatchFeedback({
 						projectDir,
@@ -4510,7 +4531,7 @@ export async function runMwModelCommand(
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
 export const MW_COMMAND_DESCRIPTION =
-	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / thinking / decide / rag / stats / run-detached / ack";
+	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / thinking / decide / rag / stats / run-detached / ack / replan [task]";
 
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
@@ -5200,6 +5221,17 @@ export function registerMwCommands(
 			const trimmed = _args.trim();
 			const sub = trimmed.split(/\s+/)[0] ?? "status";
 
+			if (sub === "replan") {
+				if (!watch.key) {
+					ctx.ui.notify("请先选择当前 PM 认领的 key。", "warning");
+					return;
+				}
+				const task = trimmed.slice(sub.length).trim();
+				pi.sendUserMessage(
+					`对当前 key ${watch.key} 调用 replan_tasks inspect，检查${task ? `任务 ${task}` : "剩余计划"}。预览剩余验收项、阻塞和首批可派任务，按现有裁决流程推进。`,
+				);
+				return;
+			}
 			if (sub === "context") {
 				await runContextCommand(pi, ctx, projectDir, trimmed.slice(sub.length).trim());
 				return;

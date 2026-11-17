@@ -67,7 +67,12 @@ import {
 	runMarker,
 	writeRunState,
 } from "../shared/run-store.ts";
-import { findTypeEscalation, readTaskType, scanBodyTypeLines } from "../shared/task-frontmatter.ts";
+import {
+	findTypeEscalation,
+	readTaskHeaderScalar,
+	readTaskType,
+	scanBodyTypeLines,
+} from "../shared/task-frontmatter.ts";
 import { workspaceWriteFaceOptions } from "../shared/workspace-write-face.ts";
 import {
 	parseWriteFace,
@@ -754,7 +759,8 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 
 	const taskType = readTaskType(content).type ?? "default";
 	let phase: string | undefined;
-	let timeoutMin: number | undefined;
+	const timeout = Number(readTaskHeaderScalar(content, "timeout"));
+	const timeoutMin = Number.isFinite(timeout) && timeout > 0 ? timeout : undefined;
 	let origin: string | undefined;
 	let images: boolean | undefined;
 	const phases: TaskPhase[] = [];
@@ -775,10 +781,6 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 		if (trimmed.startsWith("phase:")) {
 			const v = trimmed.slice("phase:".length).trim();
 			if (v) phase = v;
-		}
-		if (trimmed.startsWith("timeout:")) {
-			const v = Number(trimmed.slice("timeout:".length).trim());
-			if (Number.isFinite(v) && v > 0) timeoutMin = v;
 		}
 		if (trimmed.startsWith("origin:")) {
 			origin = trimmed.slice("origin:".length).trim();

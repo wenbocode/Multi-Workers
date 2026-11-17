@@ -1880,7 +1880,7 @@ export async function dispatchNewTasks(
  * explicit retry policy (AC-004/D-005): the Exit Reason in the readback body
  * distinguishes idle (true hang) from wall (healthy but out of budget). */
 const PM_CONTINUE_HINT =
-	"[mw] worker 终态回读。请继续 PM 循环：吸收上述结果（done→推进下一任务/phase；failed→读 worker.log 与 trace.log 排查后决定重试或修复；needs-clarification→整理问题向用户澄清；超时失败（Exit Reason 含 idle/wall timeout）→ wall 型用双倍 timeout 预算重派一次，再失败转 PM 直执，idle 型直接排查环境），然后派发下一个任务或汇报阶段完成。吸收终态结果后调用 ack_worker_result(task_key)（或 /mw ack all）确认处理完成，widget 待处理区才会清空。";
+	"[mw] worker 终态回读。done 时推进就绪工作。failed 或 needs-clarification 时先看终态证据。硬超时、重派或返工前调用 replan_tasks inspect，再 preview 剩余验收、依赖和首批并行项。收窄、拆卡、接手和上抛使用已有 dp-pm-steer，依据取 preview.basis_id。拆卡和收窄由 apply 在发布后记回执。接手和上抛先执行动作并用显式 event_id 记 executed 回执，再 apply。资源等待可先排独立工作。ack_worker_result 只确认已读。";
 
 /** Runtime stats for terminal worker summaries (AC-013):
  * ` (6m-style coarse duration, ph i/n)`. Preference order: exact [START]→[END]
@@ -2404,6 +2404,10 @@ export const PARALLEL_PROTOCOL_MARKER = "[mw] 并行优先协议";
  * PI_WORKER_TASK is unset (index.ts). */
 export const PARALLEL_PROTOCOL = [
 	`${PARALLEL_PROTOCOL_MARKER}（PM 常驻规则）：`,
+	"规划 key 时写清可独立验收的结果、验收证据，以及下游实际依赖的接口或产物。可分别验收且能独立解锁下游或单独受阻的交付，拆成不同 key；端到端验收保留明确归属。",
+	"在 spec 阶段为各 key 分配验收标准，design 阶段按接口、共享资源和集成验收复核边界。执行阶段 replan 保留已确认的目标和原 AC，跨 key 的交付调整回到原规划流程。",
+	"接续 key 时用 replan_tasks inspect 查看未处理超时和剩余卡。用户要求重划或优化并行度也用此工具；实际后继卡仍走原派发和 dp-w-type。",
+	"任务卡在已有“要求”和“交付格式”中写明首个可验证结果、取得它的命令或操作，以及预期证据。一次修改和它的定点自验放在同一卡；需要独立执行者或独立验收的工作另行拆卡。",
 	"1. 拆解任何 phase（spec/design/plan/tasks）之前，先做并行性分析：可并行单元 / 共享资源与文件冲突面 / 必须串行的理由。",
 	"2. spec/design 的调研与证据收集默认全并行：把调研拆成互不重叠的研究问题 RQ-1..N，一次性派发 N 个 type: research worker",
 	"   （只读角色，彼此无文件冲突），每个 RQ 只写唯一的 evidence/research/<phase>-<rq-slug>-<date>.md；禁止两个 worker 写同一文件。",

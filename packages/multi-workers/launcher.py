@@ -58,6 +58,7 @@ import uuid
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import mw_common
+import replan_tasks
 import tree_watch
 import usage
 from autopilot import config as autopilot_config
@@ -2393,6 +2394,7 @@ def _reconcile_orphans(
         _record_reconcile(entry, reason)
         try:
             _update_status(project_dir, key, status)
+            replan_tasks.collect_terminal(project_dir, entry, status)
         except Exception as exc:  # noqa: BLE001 — never kill the poll loop
             print(
                 f"[launcher] reconcile status update failed for {key!r}: {exc}",
@@ -2646,6 +2648,8 @@ def _poll_once(
         task_dir = pathlib.Path(entry["task_path"]).parent if entry is not None else None
         status = _reap_status(task_dir, code, key)
         _update_status(project_dir, key, status)
+        if entry is not None:
+            replan_tasks.collect_terminal(project_dir, entry, status)
         # Drain queue now a slot is free
         if pending_queue:
             next_entry = pending_queue.pop(0)
@@ -2786,6 +2790,9 @@ def run(
     if dry_run:
         _dry_run(project_dir, config)
         return
+
+    for row in _parse_workers_file(_workers_path(project_dir)):
+        replan_tasks.collect_terminal(project_dir, row, row["status"])
 
     print(
         f"[launcher] max_workers={max_workers} (bounded; AC-021)",

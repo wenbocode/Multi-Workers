@@ -320,22 +320,36 @@ def test_worker_timeout_min_reads_only_explicit_project_config(
     assert dispatch._worker_timeout_min(tmp_path) == 45
 
 
+@pytest.mark.parametrize(("card_header", "expected"), [
+    (None, "45"),
+    ("type: coding", "45"),
+    ("type: coding\ntimeout: invalid", "45"),
+    ("# R25\n\ntype: coding\ntimeout: 12", "12"),
+    ("---\ntype: coding\ntimeout: 1.5\n---", "1.5"),
+])
 def test_dispatch_writes_origin_and_reachable_timeout(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, card_header: str | None, expected: str,
 ) -> None:
     monkeypatch.delenv("MW_TARGET_CONFIG", raising=False)
     cfg_dir = tmp_path / ".agenticdoc" / "_autopilot"
     cfg_dir.mkdir(parents=True)
+    (cfg_dir.parent / "target.yml").write_text("active: single\n", encoding="utf-8")
     (cfg_dir / "config.json").write_text(
         '{"enabled": true, "worker_timeout_min": 45}\n', encoding="utf-8"
     )
+    if card_header is not None:
+        tasks = cfg_dir.parent / "k1" / "tasks"
+        tasks.mkdir(parents=True)
+        (tasks / "t-12.md").write_text(
+            f"{card_header}\n\n## 要求\nExample:\n```yaml\ntimeout: 99\n```\n", encoding="utf-8",
+        )
     result = dispatch.dispatch(
         tmp_path, "k1", "t-12", "phase-writer", "Wire it.",
         loop="exec:k1:t-12", attempt=1,
     )
     assert result.ok and result.row_verified
     task_md = result.task_md.read_text(encoding="utf-8")
-    assert "timeout: 45" in task_md
+    assert mw_common.read_task_header_scalar(task_md, "timeout") == expected
     rows = mw_common.parse_workers_file(mw_common.workers_path(tmp_path))
     assert rows[0]["origin"] == "conductor"
     assert mw_common.row_belongs_to(rows[0], "k1") is True

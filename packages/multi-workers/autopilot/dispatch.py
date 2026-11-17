@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import math
 import os
 import pathlib
 import re
@@ -56,6 +57,7 @@ if str(_PARENT) not in sys.path:
     sys.path.insert(0, str(_PARENT))
 
 import mw_common  # noqa: E402  (path bootstrapped above)
+import replan_tasks  # noqa: E402
 
 from autopilot import config as autopilot_config  # noqa: E402
 from autopilot import effective_config  # noqa: E402
@@ -1168,9 +1170,17 @@ def dispatch_card(project_root: pathlib.Path, owner: str, stem: str) -> dict | N
         digest = card_digest(card_file)
     except OSError:
         return None
+    # Source cards may begin with a Markdown title before the metadata block.
+    prologue = re.split(r"^[ \t]*(?:#{2,6}\s|```|~~~)", text, maxsplit=1, flags=re.MULTILINE)[0]
+    prologue = re.sub(r"^#[ \t]+[^\n]*\n\s*", "", prologue.lstrip("\ufeff").lstrip())
+    timeout = mw_common.read_task_header_scalar(prologue, "timeout")
+    decimal_minutes = r"[+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
+    minutes = float(timeout) if timeout and re.fullmatch(decimal_minutes, timeout) else 0
     return {
         "path": card_path,
         "sha256": digest,
+        "timeout": timeout if math.isfinite(minutes) and minutes > 0 else None,
+        "supersedes": mw_common.read_task_header_scalar(prologue, "supersedes"),
         "worker_dir": f".agenticdoc/{owner}/workers/{task_key_for(owner, stem)}",
         "extras": extras,
         # T-03: claims parsed from the text above (single read, single grammar)
@@ -1490,6 +1500,7 @@ def render_task_md(
     config, legacy callers, direct unit tests) leaves the output
     byte-identical to the pre-fix renderer.
 
+    An explicit source card timeout takes precedence over the project setting.
     ``worker_timeout_min`` (D-017) renders ``timeout: <minutes>`` in the
     frontmatter only when the project explicitly configured the key
     (:func:`_worker_timeout_min`) — worker-mode.ts gives the task.md header
@@ -1554,8 +1565,11 @@ def render_task_md(
         f"loop: {loop}",
         f"attempt: {attempt}",
     ]
-    if worker_timeout_min is not None:
-        lines.append(f"timeout: {int(worker_timeout_min)}")
+    timeout = card.get("timeout") if card is not None else None
+    if timeout is None:
+        timeout = worker_timeout_min
+    if timeout is not None:
+        lines.append(f"timeout: {timeout}")
     if read_scope:
         lines.append("read_scope:")
         lines.extend(f"  - {item}" for item in read_scope)
@@ -2000,6 +2014,11 @@ def dispatch(
     # unreadable / no status) is "no information", so the historical
     # fail-open path is byte-for-byte unchanged — zero backfill.
     run_status = mw_common.read_run_status(task_dir)
+    if run_status in {"failed", "needs-clarification", "lost"}:
+        with replan_tasks.locked(mw_common.lock_path(project_root)):
+            reason = replan_tasks.admission(project_root.resolve(), owner, task_key, f"tasks/{stem}.md", attempt=attempt)
+        if reason:
+            return reject(reason, "inspect the original run with replan_tasks")
     if run_status is not None:
         if run_status in mw_common.RUN_TERMINAL_STATUSES:
             return reject(
@@ -2209,6 +2228,12 @@ def dispatch(
         # AC-014: the write-face gate runs under the SAME lock as the row
         # write. Nothing inside this section may acquire a lock again (RQ-D3:
         # a nested acquire backs off for 14.6h and then raises).
+        reason = replan_tasks.admission(project_root.resolve(), owner, task_key,
+                                        f"tasks/{stem}.md", attempt=attempt,
+                                        card_hash=card_backed["sha256"] if card_backed else None,
+                                        supersedes=card_backed.get("supersedes") if card_backed else None)
+        if reason:
+            return reject(reason, "inspect the replan issue and ready batch")
         refusal = _write_face_verdict(
             project_root, owner, task_key, content,
             card_backed=card_backed is not None, timeline=timeline,
