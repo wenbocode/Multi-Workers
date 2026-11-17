@@ -120,6 +120,43 @@ def test_start_adopts_explicit_environment_service(server, tmp_path, monkeypatch
     assert codex_proxy.read_config(tmp_path) == config
 
 
+def test_two_projects_start_concurrently(tmp_path, monkeypatch):
+    monkeypatch.setattr(codex_proxy.CodexBackend, "check_login", lambda self: "chatgpt")
+    projects = [tmp_path / name for name in ("first", "second")]
+    try:
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            starts = list(pool.map(lambda p: codex_proxy.start(p, codex=sys.executable), projects))
+        configs = [codex_proxy.read_config(project) for project in projects]
+        assert configs[0]["url"] != configs[1]["url"]
+        assert configs[0]["token"] != configs[1]["token"]
+        for project, config, status in zip(projects, configs, starts, strict=True):
+            assert codex_proxy.call(config, "/status")["instance"] == status["instance"]
+            assert codex_proxy.start(project)["instance"] == status["instance"]
+    finally:
+        for project in projects:
+            if config := codex_proxy.read_config(project):
+                codex_proxy.call(config, "/stop", "POST")
+
+
+def test_saved_port_owned_by_another_project(server, tmp_path, monkeypatch):
+    monkeypatch.setattr(codex_proxy.CodexBackend, "check_login", lambda self: "chatgpt")
+    previous = {**settings(server), "token": "other-project-token".ljust(32, "-")}
+    codex_proxy.write_config(tmp_path, previous)
+    with pytest.raises(RuntimeError, match="401"):
+        codex_proxy.call(previous, "/status")
+    with pytest.raises(RuntimeError, match="port"):
+        codex_proxy.start(tmp_path, port=server.server_port, codex=sys.executable)
+    assert codex_proxy.read_config(tmp_path) == previous
+    result = codex_proxy.start(tmp_path, codex=sys.executable)
+    config = codex_proxy.read_config(tmp_path)
+    try:
+        assert config["url"] != previous["url"] and config["token"] == previous["token"]
+        assert codex_proxy.call(config, "/status")["instance"] == result["instance"]
+        assert codex_proxy.call(settings(server), "/status")["instance"] == server.instance
+    finally:
+        codex_proxy.call(config, "/stop", "POST")
+
+
 def test_real_manager_start_stop(tmp_path, monkeypatch):
     """Exercise real manager child process without calling an installed Codex."""
     monkeypatch.setattr(codex_proxy.CodexBackend, "check_login", lambda self: "chatgpt")
@@ -134,6 +171,7 @@ def test_real_manager_start_stop(tmp_path, monkeypatch):
     config = codex_proxy.read_config(tmp_path)
     try:
         assert first["status"] == "ready"
+        assert config["url"] == f"http://127.0.0.1:{port}"
         assert codex_proxy.start(tmp_path, port, sys.executable)["instance"] == first["instance"]
         assert codex_proxy.call(config, "/stop", "POST")["status"] == "draining"
         deadline = time.monotonic() + 5

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import http.client
 import json
 import os
@@ -10,6 +11,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import urlsplit
 
@@ -52,6 +54,12 @@ def write_config(project: Path, value: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
+class RelayHTTPError(RuntimeError):
+    def __init__(self, status: int):
+        super().__init__(f"Local Codex relay HTTP {status}")
+        self.status = status
+
+
 def call(config: dict, endpoint: str, method: str = "GET", body: dict | None = None, timeout: float = 3) -> dict:
     url = urlsplit(config["url"])
     connection = http.client.HTTPConnection(url.hostname, url.port, timeout=timeout)
@@ -61,7 +69,7 @@ def call(config: dict, endpoint: str, method: str = "GET", body: dict | None = N
                            {"Authorization": f'Bearer {config["token"]}', "Content-Type": "application/json"})
         response = connection.getresponse()
         if response.status not in (200, 202):
-            raise RuntimeError(f"Local Codex relay HTTP {response.status}")
+            raise RelayHTTPError(response.status)
         if endpoint == "/complete":
             while line := response.readline():
                 remaining = deadline - time.monotonic()
@@ -81,7 +89,7 @@ def call(config: dict, endpoint: str, method: str = "GET", body: dict | None = N
         connection.close()
 
 
-def start(project: Path, port: int = 7010, codex: str = "codex") -> dict:
+def start(project: Path, port: int | None = None, codex: str = "codex") -> dict:
     lock = project / ".mw" / "codex-local.lock"
     acquire_lock(lock, deadline_s=12)
     try:
@@ -94,7 +102,12 @@ def start(project: Path, port: int = 7010, codex: str = "codex") -> dict:
                 if not config_path(project).exists():
                     write_config(project, config)
                 return status
-            except (ConnectionError, TimeoutError, OSError):
+            except RelayHTTPError as exc:
+                # A saved endpoint may now belong to another project. Explicit
+                # environment connections still require the supplied credentials.
+                if exc.status != 401 or not config_path(project).exists():
+                    raise
+            except ConnectionRefusedError:
                 pass
         executable = shutil.which(codex)
         if not executable:
@@ -102,62 +115,82 @@ def start(project: Path, port: int = 7010, codex: str = "codex") -> dict:
         backend = CodexBackend([executable])
         if backend.check_login() != "chatgpt":
             raise RuntimeError("Codex ChatGPT login unavailable; run codex login in a terminal")
-        # Existing configuration keeps its token and port across restarts.
-        config = config or {"version": 1, "url": f"http://127.0.0.1:{port}", "token": secrets.token_hex(32)}
-        write_config(project, config)
-        child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "serve", "--project", str(project),
-                                  "--codex", executable], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL,
-                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-                                 start_new_session=os.name != "nt")
-        deadline = time.monotonic() + 8
-        try:
-            while time.monotonic() < deadline:
-                if child.poll() is not None:
-                    raise RuntimeError(f"Relay startup failed (exit {child.returncode}); check port {urlsplit(config['url']).port}")
-                try:
-                    return call(config, "/status")
-                except (ConnectionError, TimeoutError, OSError):
+        with tempfile.TemporaryDirectory() as directory:
+            ready_dir = Path(directory)
+            args = [sys.executable, str(Path(__file__).resolve()), "serve", "--project", str(project),
+                    "--codex", executable, "--ready-dir", str(ready_dir)]
+            if port is not None:
+                args += ["--port", str(port)]
+            child = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL,
+                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                                     start_new_session=os.name != "nt")
+            try:
+                deadline = time.monotonic() + 8
+                while not config_path(ready_dir).exists():
+                    if child.poll() is not None:
+                        detail = f"; check port {port}" if port is not None else ""
+                        raise RuntimeError(f"Relay startup failed (exit {child.returncode}){detail}")
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("Relay startup timed out")
                     time.sleep(0.1)
-            raise RuntimeError("Relay startup timed out")
-        except BaseException:
-            # Only terminate the child we just created, never an arbitrary recorded PID.
-            if child.poll() is None:
-                child.terminate()
-                child.wait(timeout=5)
-            raise
+                bound = read_config(ready_dir)
+                status = call(bound, "/status")
+                if status.get("pid") != child.pid:
+                    raise RuntimeError("Unexpected Codex relay on the bound port")
+                write_config(project, bound)
+                return status
+            except BaseException:
+                if child.poll() is None:
+                    child.terminate()
+                    child.wait(timeout=5)
+                raise
     finally:
         release_lock(lock)
+
+
+def serve(project: Path, config: dict | None, codex: str, port: int | None, ready_dir: Path | None) -> None:
+    executable = shutil.which(codex)
+    if not executable:
+        raise RuntimeError("Codex executable not found")
+    preferred_port = port or (urlsplit(config["url"]).port if config else 0)
+    token = config["token"] if config else secrets.token_hex(32)
+    backend = CodexBackend([executable])
+    try:
+        server = RelayServer(("127.0.0.1", preferred_port), token, backend)
+    except OSError as exc:
+        can_relocate = ready_dir is not None and port is None and config_path(project).exists()
+        if not can_relocate or exc.errno not in (errno.EADDRINUSE, errno.EACCES):
+            raise
+        server = RelayServer(("127.0.0.1", 0), token, backend)
+    with server:
+        if ready_dir:
+            write_config(ready_dir, {"version": 1, "url": f"http://127.0.0.1:{server.server_port}", "token": token})
+        server.serve_forever(poll_interval=0.1)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("start", "stop", "status", "check", "serve"))
     parser.add_argument("--project", type=Path, required=True)
-    parser.add_argument("--port", type=int, default=7010)
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--ready-dir", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--codex", default="codex")
     parser.add_argument("--deep", action="store_true")
     parser.add_argument("--model")
     args = parser.parse_args()
     project = args.project.resolve()
     try:
-        if not 1 <= args.port <= 65535:
+        if args.port is not None and not 1 <= args.port <= 65535:
             raise ValueError("Port must be between 1 and 65535")
         if args.action == "start":
             result = start(project, args.port, args.codex)
         else:
             config = read_config(project)
-            if config is None:
+            if config is None and not (args.action == "serve" and args.ready_dir):
                 raise RuntimeError("Proxy is not configured; run /mw proxy start")
             if args.action == "serve":
-                executable = shutil.which(args.codex)
-                if not executable:
-                    raise RuntimeError("Codex executable not found")
-                server = RelayServer(("127.0.0.1", urlsplit(config["url"]).port), config["token"], CodexBackend([executable]))
-                try:
-                    server.serve_forever(poll_interval=0.1)
-                finally:
-                    server.server_close()
+                serve(project, config, args.codex, args.port, args.ready_dir)
                 return 0
             if args.action == "stop":
                 try:

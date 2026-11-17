@@ -227,6 +227,9 @@ class CodexBackend:
 
 class RelayServer(ThreadingHTTPServer):
     daemon_threads = True
+    # A live relay must be the only listener for its project's address.
+    allow_reuse_address = os.name != "nt"
+    allow_reuse_port = False
 
     def __init__(self, address: tuple[str, int], token: str, backend: CodexBackend, concurrency: int = 2):
         if address[0] != "127.0.0.1":

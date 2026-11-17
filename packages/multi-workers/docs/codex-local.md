@@ -27,7 +27,9 @@
 /autopilot monitor on
 ```
 
-`start` 校验本机 ChatGPT 登录，隐藏启动代理，幂等复用已运行实例，并把连接配置保存到控制工作区 `.mw/codex-local.json`。该文件包含本地共享口令，勿提交或分享。受管服务默认 7010 端口、180 秒调用期限、并发 2。多项目使用不同端口时，可先从终端执行 `python packages/multi-workers/codex_proxy.py start --project <目录> --port 7011`。
+`/mw proxy start` 为每个控制工作区启动独立代理。首次启动由操作系统分配空闲的本机端口，鉴权成功后将地址和项目口令保存到 `.mw/codex-local.json`。同一项目的 PM 和 worker 共用这份配置。该文件含口令，勿提交或分享。
+
+再次执行会复用本项目已运行的代理。代理已停止时优先使用原端口；旧端口被另一个项目占用并报 401 时，在报错的项目中执行一次 `/mw proxy start` 即可自动换端口。需要固定端口时可执行 `python packages/multi-workers/codex_proxy.py start --project <目录> --port 7011`。受管代理默认调用期限为 180 秒，并发为 2。
 
 若已通过环境变量连接同版本手动服务，`start` 会先鉴权复用它并保存项目配置；不会启动第二个实例。旧版仅支持 `/health` 的服务需先更新重启。
 
