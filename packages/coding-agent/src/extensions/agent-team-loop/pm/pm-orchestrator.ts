@@ -1880,7 +1880,7 @@ export async function dispatchNewTasks(
  * explicit retry policy (AC-004/D-005): the Exit Reason in the readback body
  * distinguishes idle (true hang) from wall (healthy but out of budget). */
 const PM_CONTINUE_HINT =
-	"[mw] worker 终态回读。done 时推进就绪工作。failed 或 needs-clarification 时先看终态证据。硬超时、重派或返工前调用 replan_tasks inspect，再 preview 剩余验收、依赖和首批并行项。收窄、拆卡、接手和上抛使用已有 dp-pm-steer，依据取 preview.basis_id。拆卡和收窄由 apply 在发布后记回执。接手和上抛先执行动作并用显式 event_id 记 executed 回执，再 apply。资源等待可先排独立工作。ack_worker_result 只确认已读。";
+	"先看该任务的终态证据。仅在剩余计划确需改变、重派被 replan-required 拒绝或用户要求重规划时，对该任务调用 replan_tasks inspect；已有 issue/snapshot 且证据未变化时复用，不重复检查或遍历 key 全量目录。只有提出计划变更才 preview。收窄、拆卡、接手和上抛使用已有 dp-pm-steer，依据取 preview.basis_id。拆卡和收窄由 apply 在发布后记回执。接手和上抛先执行动作并用显式 event_id 记 executed 回执，再 apply。资源等待可先排独立工作。ack_worker_result 只确认已读。";
 
 /** Runtime stats for terminal worker summaries (AC-013):
  * ` (6m-style coarse duration, ph i/n)`. Preference order: exact [START]→[END]
@@ -2292,9 +2292,13 @@ export function startWorkerPollLoop(
 				// processes the result, and runs the next step — the finish call
 				// of dispatch → monitor → finish call → pm run (AC-015).
 				const header = `[${entry.taskKey}] ${entry.status}${heartbeatStatsSuffix(taskDir, entry)}`;
+				const continuation =
+					entry.status === "done"
+						? "[mw] worker 已完成：验收本次交付，按现有计划推进就绪工作。ack_worker_result（或 /mw ack all）只确认已读。"
+						: `[mw] worker 终态回读（key=${watch.key}, task=${entry.taskKey}）。${PM_CONTINUE_HINT}`;
 				const body = readOutputBody(taskDir);
 				if (body) {
-					deliverWorkerResult(pi, `${header}:\n\n${body}\n\n${PM_CONTINUE_HINT}`);
+					deliverWorkerResult(pi, `${header}:\n\n${body}\n\n${continuation}`);
 				} else {
 					// Terminal but no output.md summary — never stay silent. Prefer the
 					// launcher's exact spawn-failure reason (e.g. missing credential) over
@@ -2307,7 +2311,7 @@ export function startWorkerPollLoop(
 							spawnFailure
 								? `${spawnFailure}。日志：${logPath}`
 								: `无 output.md 摘要（worker 可能崩溃/超时）。日志：${logPath}`
-						}\n\n${PM_CONTINUE_HINT}`,
+						}\n\n${continuation}`,
 					);
 				}
 			}
@@ -2409,7 +2413,7 @@ export const PARALLEL_PROTOCOL = [
 	"Plan 写完后对照 goal、AC 和设计，实际删除次要任务并合并重复项。plan.md 用“## 计划裁剪”写理由，用“## 保留任务”表列 | T-001-slug | 产出 |，用“## 闭环覆盖”表逐行列 | AC-001 或 FLOW-001 | 逗号分隔的保留任务 ID，或 existing: evidence/文件 | 逗号分隔的 VC |。逐条核对所有 AC 和 FLOW。引用已有能力前运行最小验证并留存命令与结果。通过 advance_phase 的 PLAN → TASKS 门禁后按保留任务拆卡。",
 	"规划 key 时写清可独立验收的结果、验收证据，以及下游实际依赖的接口或产物。可分别验收且能独立解锁下游或单独受阻的交付，拆成不同 key；端到端验收保留明确归属。",
 	"在 spec 阶段为各 key 分配验收标准，design 阶段按接口、共享资源和集成验收复核边界。执行阶段 replan 保留已确认的目标和原 AC，跨 key 的交付调整回到原规划流程。",
-	"接续 key 时用 replan_tasks inspect 查看未处理超时和剩余卡。用户要求重划或优化并行度也用此工具；实际后继卡仍走原派发和 dp-w-type。",
+	"正常接续 key、worker 成功或继续派发现有任务时沿用 pm-state 和现有计划，不例行调用 replan_tasks。只有剩余计划确需改变、重派被 replan-required 拒绝或用户要求重划/优化并行度时才使用；优先 inspect 具体 task，已有检查且证据未变时复用 issue/snapshot，不遍历目录或分页读完全部历史。实际后继卡仍走原派发和 dp-w-type。",
 	"任务卡在已有“要求”和“交付格式”中写明首个可验证结果、取得它的命令或操作，以及预期证据。一次修改和它的定点自验放在同一卡；需要独立执行者或独立验收的工作另行拆卡。",
 	"1. 拆解任何 phase（spec/design/plan/tasks）之前，先做并行性分析：可并行单元 / 共享资源与文件冲突面 / 必须串行的理由。",
 	"2. spec/design 的调研与证据收集默认全并行：把调研拆成互不重叠的研究问题 RQ-1..N，一次性派发 N 个 type: research worker",
