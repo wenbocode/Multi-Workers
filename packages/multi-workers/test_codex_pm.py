@@ -45,13 +45,27 @@ def card(proj):
     key = root / KEY
     (key / "tasks").mkdir(parents=True)
     for name in ("spec", "design"):
-        (key / f"{name}.md").write_text("AC-001 Increase the counter by one.\n" * 20, encoding="utf-8")
+        (key / f"{name}.md").write_text("AC-001: Increase the counter by one.\n" * 20, encoding="utf-8")
         notes = key / "evidence" / "research"
         notes.mkdir(parents=True, exist_ok=True)
         (notes / f"{name}-counter.md").write_text("Counter contract at counter.py:1", encoding="utf-8")
     with (key / "spec.md").open("a", encoding="utf-8") as stream:
         stream.write("\n### 可复用资产\nUse the MW queue and launcher.\n### 需规避坑点\nTest the code independently.\n")
-    (key / "plan.md").write_text("T-01 implement the counter, then check counter.py against its acceptance test.\n" * 5)
+    with (key / "design.md").open("a", encoding="utf-8") as stream:
+        stream.write(
+            "\n## Function Flow\n\n### 必要功能路径\n\n"
+            "| ID | Trigger | Result | VC |\n| --- | --- | --- | --- |\n"
+            "| FLOW-001 | Call increment | Return argument plus one | VC-001 |\n\n"
+            "## Verification Contract\n\nVC-001: increment(4) returns 5.\n"
+        )
+    (key / "plan.md").write_text(
+        "## 计划裁剪\n\nKeep implementation and its verification in one card.\n\n"
+        "## 保留任务\n\n| ID | Deliverable |\n| --- | --- |\n"
+        "| T-01-counter | Implement increment and verify the observable result |\n\n"
+        "## 闭环覆盖\n\n| ID | Source | VC |\n| --- | --- | --- |\n"
+        "| AC-001 | T-01-counter | VC-001 |\n| FLOW-001 | T-01-counter | VC-001 |\n",
+        encoding="utf-8",
+    )
     framework(proj, "advance_phase.py", KEY, "spec")
     framework(proj, "update_index.py", "claim", KEY)
     for phase in ("design", "plan", "tasks"):

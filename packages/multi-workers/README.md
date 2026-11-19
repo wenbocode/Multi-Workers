@@ -396,6 +396,10 @@ toolchain 模板不只是注入 task.md 的文档——PM 直执时用 `mw ue-to
 
 每次 block 与 mini 放行追加一行到 `.agenticdoc/_impl_gate.log`（best-effort，不影响判定）。bash 侧只判写结构的目标参数、声明非沙箱（`python -c` 内联写等已知漏过，见模块头注释）。生效条件：`mw setup --build` 重建 dist 并重启窗口；旧 bundle 进程重启前不受门禁。
 
+## MW PM 计划与执行
+
+MW PM 找到可行方向、准备建议下一步时，当轮构造并执行最小验证，再根据结果继续推进。交互式 PM、autopilot 和命令行共用 AgenticTask 原生的 `PLAN → TASKS` 计划裁剪与闭环检查。拆卡格式见 [MW 计划裁剪与闭环检查](docs/plan-closure.md)。
+
 ## Autopilot 配置与停滞处置（mw-autopilot-stall-feedback）
 
 `.agenticdoc/_autopilot/config.json`（缺失即默认；存在但非法会 fail-closed 报错）：

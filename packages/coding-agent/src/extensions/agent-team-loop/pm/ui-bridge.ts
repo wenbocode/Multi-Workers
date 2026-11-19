@@ -3763,7 +3763,7 @@ export function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: string, i
 			"Advance an AgenticTask key to the target phase by running the framework gate script (advance_phase.py): checks the phase-gate evidence (spec/design/plan/tasks/execute/done prerequisites), updates pm-state.md, and syncs _index.parallel. Runs the Python script directly without a shell — prefer this over `python .../advance_phase.py` via the bash tool. This is the only sanctioned way to change a key's phase; hand-editing pm-state.md's '- Phase:' line is blocked. " +
 			"Cross-key writes are refused: another window's live key is READ-ONLY here (read its phase with list_tasks, take it over with switch_key first).",
 		promptGuidelines: [
-			"Change phases only through this tool (or the equivalent python script when the shell works); when the result reports GATE BLOCKED, fix the listed evidence gaps before retrying.",
+			"For PLAN → TASKS, AgenticTask checks the plan review before task cards are created. When a phase reports GATE BLOCKED, fix the listed evidence gaps before retrying.",
 		],
 		parameters: Type.Object({
 			key: Type.String({ description: "AgenticTask key to advance (not _scratch)." }),

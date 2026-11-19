@@ -166,6 +166,40 @@ def invalidate_script_cache() -> None:
     _script_cache.clear()
 
 
+def inspect_plan(
+    project_root: pathlib.Path, key: str, *, roster_only: bool = False,
+) -> list[str] | None:
+    """Read native plan findings or the retained roster without advancing."""
+    try:
+        script = advance_script(project_root).with_name("plan_closure.py")
+    except AdvanceError:
+        if roster_only:
+            return None
+        raise
+    if not script.is_file():
+        # An existing TASKS key can predate the native roster contract.
+        if roster_only:
+            return None
+        raise AdvanceError("AgenticTask PLAN → TASKS gate missing. Update the installed AgenticTask scripts.")
+    action = "retained-tasks" if roster_only else "check"
+    key_dir = project_root.resolve() / ".agenticdoc" / key
+    try:
+        proc = subprocess.run(
+            [sys.executable, *_PYTHON_FLAGS, str(script), action, str(key_dir)],
+            cwd=project_root, capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+        if proc.returncode:
+            raise AdvanceError(proc.stderr.strip() or f"{script.name} exit {proc.returncode}")
+        result = json.loads(proc.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        raise AdvanceError(f"Could not read native plan inspection: {exc}") from exc
+    if roster_only and result is None:
+        return None
+    if not isinstance(result, list) or not all(isinstance(item, str) for item in result):
+        raise AdvanceError("Unexpected native plan inspection result")
+    return result
+
+
 def advance(
     key: str,
     phase: str,
@@ -179,6 +213,8 @@ def advance(
         script = advance_script(project_root)
     except AdvanceError as exc:
         return 1, "", f"[advance] {exc}"
+    if phase.lower() == "tasks" and not script.with_name("plan_closure.py").is_file():
+        return 1, "", "[advance] AgenticTask PLAN → TASKS gate missing. Update the installed AgenticTask scripts."
     cmd = [sys.executable, *_PYTHON_FLAGS, str(script), key, phase]
     if summary is not None:
         cmd += ["--summary", summary]

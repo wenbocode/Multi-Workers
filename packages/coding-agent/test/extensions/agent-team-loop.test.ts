@@ -874,6 +874,46 @@ describe("agentic-scripts", () => {
 		expect(r.output).toContain("gate-warn");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
+	it("requires upgraded AgenticTask scripts for PLAN → TASKS", () => {
+		const root = mkdtemp();
+		try {
+			const scripts = path.join(root, ".claude", "scripts");
+			fs.mkdirSync(scripts, { recursive: true });
+			fs.writeFileSync(path.join(scripts, "advance_phase.py"), "# old framework\n", "utf8");
+			const result = runAgenticScript(root, "advance_phase.py", ["sample", "tasks"]);
+			expect(result.ok).toBe(false);
+			expect(result.output).toContain("Update the installed AgenticTask scripts");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	const nativeScripts = path.resolve(import.meta.dirname, "../../../../.agents/skills/agentic-task/scripts");
+	it.skipIf(!pythonAvailable || !fs.existsSync(path.join(nativeScripts, "plan_closure.py")))(
+		"returns findings from the native PLAN → TASKS script",
+		() => {
+			const root = mkdtemp();
+			try {
+				const scripts = path.join(root, ".claude", "scripts");
+				fs.mkdirSync(scripts, { recursive: true });
+				for (const name of ["advance_phase.py", "plan_closure.py"]) {
+					fs.copyFileSync(path.join(nativeScripts, name), path.join(scripts, name));
+				}
+				const key = path.join(root, ".agenticdoc", "sample");
+				fs.mkdirSync(key, { recursive: true });
+				const state = path.join(key, "pm-state.md");
+				const original = "- Phase: PLAN\n- Updated: 2026-11-19 00:00\n";
+				fs.writeFileSync(state, original, "utf8");
+				const result = runAgenticScript(root, "advance_phase.py", ["sample", "tasks"]);
+				expect(result.ok).toBe(false);
+				expect(result.output).toContain("Current phase: plan");
+				expect(result.output).toContain("PLAN CLOSURE: plan.md");
+				expect(fs.readFileSync(state, "utf8")).toBe(original);
+			} finally {
+				fs.rmSync(root, { recursive: true, force: true });
+			}
+		},
+	);
 });
 
 describe("advance_phase tool", () => {
@@ -4815,6 +4855,10 @@ describe("pmActivate parallel protocol (mw-parallel-protocol)", () => {
 			const first = (await hooks[0]({ systemPrompt: "BASE" })) as { systemPrompt?: string } | undefined;
 			expect(first?.systemPrompt?.startsWith("BASE\n\n")).toBe(true);
 			expect(first?.systemPrompt?.endsWith(PARALLEL_PROTOCOL)).toBe(true);
+			expect(first?.systemPrompt).toContain("用构造最小验证后推进来代替建议");
+			expect(first?.systemPrompt).toContain("正准备建议下一步");
+			expect(first?.systemPrompt).toContain("当轮执行，并根据观察结果继续推进");
+			expect(first?.systemPrompt).toContain("PLAN → TASKS 门禁后按保留任务拆卡");
 
 			// AC-002: the four action classes are actually spelled out.
 			expect(first?.systemPrompt).toContain(PARALLEL_PROTOCOL_MARKER);

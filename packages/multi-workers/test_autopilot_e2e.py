@@ -130,6 +130,7 @@ def _make_project(
     )
     adoc = project / ".agenticdoc"
     adoc.mkdir(parents=True)
+    (adoc / "target.yml").write_text("active: single\n", encoding="utf-8")
     (adoc / "goal.md").write_text(
         "# Goal\n\nShip the autopilot e2e chain deterministically.\n", encoding="utf-8"
     )
@@ -259,7 +260,12 @@ elif loop.startswith("gen:") and loop.endswith(":spec"):
     output.write_text("spec written\n", encoding="utf-8")
 elif loop.startswith("gen:") and loop.endswith(":design"):
     (key_dir / "design.md").write_text(
-        "# Design (e2e stub)\n\n- D-201: stub 架构\n\n" + "设计填充内容。 " * 40 + "\n",
+        "# Design (e2e stub)\n\n- D-201: stub 架构\n\n"
+        "## Function Flow\n\n### 必要功能路径\n\n"
+        "| 路径 | 入口 | 结果 | VC |\n| --- | --- | --- | --- |\n"
+        "| FLOW-001 | stub 请求 | stub 实现完成 | VC-901 |\n\n"
+        "## Verification Contract\n\nVC-901: stub reports completion\n\n"
+        + "设计填充内容。 " * 40 + "\n",
         encoding="utf-8",
     )
     rdir = key_dir / "evidence" / "research"
@@ -270,7 +276,11 @@ elif loop.startswith("gen:") and loop.endswith(":design"):
     output.write_text("design written\n", encoding="utf-8")
 elif loop.startswith("gen:") and loop.endswith(":plan"):
     (key_dir / "plan.md").write_text(
-        "# Plan (e2e stub)\n\n1. T-01-impl 执行 stub 实现\n\n" + "计划填充内容。 " * 25 + "\n",
+        "# Plan (e2e stub)\n\n## 计划裁剪\n\n只保留 stub 实现与验收。\n\n"
+        "## 保留任务\n\n| 任务 | 产出 |\n| --- | --- |\n| T-01-impl | 执行 stub 实现 |\n\n"
+        "## 闭环覆盖\n\n| 条目 | 来源 | VC |\n| --- | --- | --- |\n"
+        "| AC-101 | T-01-impl | VC-901 |\n| FLOW-001 | T-01-impl | VC-901 |\n\n"
+        + "计划填充内容。 " * 25 + "\n",
         encoding="utf-8",
     )
     output.write_text("plan written\n", encoding="utf-8")

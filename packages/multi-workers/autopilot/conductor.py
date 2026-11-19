@@ -1699,6 +1699,16 @@ def _advance_failure_streak(
     return count, hist, snippet
 
 
+def _plan_advance_gaps(target: str, code: int, stderr: str) -> list[dict[str, str]]:
+    if target != "tasks" or code != 1:
+        return []
+    prefix = "PLAN CLOSURE: "
+    return [
+        {"item": line.removeprefix(prefix), "rule": "plan-closure", "severity": "blocking"}
+        for line in closure.failure_lines(stderr) if line.startswith(prefix)
+    ]
+
+
 def _timed_advance(
     key: str,
     phase: str,
@@ -1723,7 +1733,9 @@ def _timed_advance(
             return 1, "", reason, ms
     code, out, err = advance.advance(key, phase, project_root, summary=summary)
     ms = int(round((time.monotonic() - started) * 1000))
-    if enforced and code != 0:
+    if enforced and code != 0 and not _plan_advance_gaps(phase, code, err):
+        # Native plan findings already have an L2 repair path. Recording a hard
+        # failure here would lock out the retry after that repair succeeds.
         advance.record_failure(project_root, key, phase, code, out, err)
     return code, out, err, ms
 
@@ -1818,7 +1830,9 @@ def _advance_key(
         return result.ok
 
     # Artifact present → L1 audit (dossier).
-    dossier = audit_evidence.build_dossier(key, project_root)
+    # The real native transition supplies plan findings here. The standalone
+    # dossier can also inspect them read-only for operators and decision facts.
+    dossier = audit_evidence.build_dossier(key, project_root, include_plan_gate=False)
     blocking = [g for g in dossier["gaps"] if g["severity"] == "blocking"]
     if phase == "tasks":
         # D-111: plan-referenced task files missing from tasks/ are synthetic
@@ -1829,12 +1843,14 @@ def _advance_key(
         code, _out, err, ms = _timed_advance(
             key, nxt, project_root, summary=summary
         )
-        _record_advance_result(
-            project_root, st, key, f"{phase}->{nxt}", code, err, cfg, ms=ms
-        )
-        if code == 0 and nxt == "done":
-            _mark_key_done(project_root, st, key, rm_path)
-        return False
+        blocking = _plan_advance_gaps(nxt, code, err)
+        if not blocking:
+            _record_advance_result(
+                project_root, st, key, f"{phase}->{nxt}", code, err, cfg, ms=ms
+            )
+            if code == 0 and nxt == "done":
+                _mark_key_done(project_root, st, key, rm_path)
+            return False
 
     # Gaps → L2 adjudication round (D-111 round units).
     edge = f"{phase}-to-{nxt}"
@@ -3660,12 +3676,23 @@ def _missing_plan_tasks(key_dir: pathlib.Path) -> list[dict]:
     plan = _plan_text(key_dir)
     if not plan:
         return []
-    referenced = sorted(set(re.findall(r"\bT-\d{2,3}-[A-Za-z0-9][A-Za-z0-9-]*", plan)))
-    return [
+    try:
+        retained = advance.inspect_plan(key_dir.parents[1], key_dir.name, roster_only=True)
+    except advance.AdvanceError as exc:
+        return [{"item": f"无法读取保留任务表：{exc}", "rule": "execute-gate"}]
+    referenced = retained if retained is not None else sorted(set(re.findall(r"\bT-\d{2,3}-[A-Za-z0-9][A-Za-z0-9-]*", plan)))
+    gaps = [
         {"item": f"plan 任务 {stem} 在 tasks/ 缺失", "rule": "execute-gate"}
         for stem in referenced
         if not (present & set(_plan_task_file_stems(stem)))
     ]
+    if retained is not None:
+        allowed = {stem for task in retained for stem in _plan_task_file_stems(task)}
+        gaps.extend(
+            {"item": f"tasks/{stem}.md 不在已复核的保留任务表", "rule": "execute-gate"}
+            for stem in sorted(present - allowed)
+        )
+    return gaps
 
 
 def _phase_writer_prompt(key: str, phase: str, nxt: str) -> str:
@@ -3674,8 +3701,32 @@ def _phase_writer_prompt(key: str, phase: str, nxt: str) -> str:
         f"- 遵循 AgenticTask 框架的 {phase} 产出规范（.agents/skills/agentic-task）\n"
         f"- 产出到 .agenticdoc/{key}/ 下对应文件\n"
         f"- 需要的证据留底写入 .agenticdoc/{key}/evidence/\n"
+        + _plan_phase_instructions(phase)
         + _CONTRACT_CONSTRAINT
     )
+
+
+def _plan_phase_instructions(phase: str) -> str:
+    design_rule = (
+        "在 design.md 的 Function Flow 中添加“### 必要功能路径”表，逐行写"
+        " | FLOW-001 | 真实入口或触发 | 可观察结果 | 逗号分隔的 VC |。"
+        "列全必需的正常路径和异常路径，并引用已定义的验证断言。"
+    )
+    if phase == "design":
+        return design_rule + "\n"
+    if phase == "plan":
+        return (
+            design_rule + " 若旧设计缺此表，在原 Function Flow 补列必要路径，保持已锁定 AC/VC。\n"
+            "对照 goal.md、spec.md 的 AC 和 design.md 的功能流，在 plan.md 移除次要项并合并重复项。"
+            "用“## 计划裁剪”记录理由，用“## 保留任务”表逐行写 | T-001-slug | 产出 |。"
+            "在“## 闭环覆盖”表为每个 AC 和 FLOW 写一行"
+            " | AC-001 或 FLOW-001 | 逗号分隔的保留任务 ID，或 existing: evidence/文件 | 逗号分隔的 VC |。"
+            "引用已有能力前执行最小验证，将命令和结果写入引用文件。"
+            "通过原生 PLAN → TASKS 门禁后再拆卡。\n"
+        )
+    if phase == "tasks":
+        return "按 plan.md 的“保留任务”表生成任务卡，逐项承接其覆盖的 AC、FLOW 和 VC。\n"
+    return ""
 
 
 def _verifier_prompt(key: str, phase: str, nxt: str, blocking: list[dict]) -> str:
@@ -3687,6 +3738,7 @@ def _verifier_prompt(key: str, phase: str, nxt: str, blocking: list[dict]) -> st
         f"{gap_lines}\n"
         f"请逐项裁决：缺口是否真实、需要什么证据文件能闭合；"
         f"结论与证据指针写入你的 output.md。"
+        + ("核对目标、设计的主路径和必要失败路径，指出可裁剪任务与覆盖缺口。" if phase == "plan" else "")
     )
 
 
@@ -3705,6 +3757,7 @@ def _fix_writer_prompt(
         f"L1 缺口:\n{gap_lines}\n"
         f"verifier 裁决（如已产出）: {verifier_out}\n"
         f"生成/补齐证据文件使机械审计可闭合，不改动无关 artifact。\n"
+        + _plan_phase_instructions(phase)
         + _CONTRACT_CONSTRAINT
     )
 

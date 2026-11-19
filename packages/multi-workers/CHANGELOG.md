@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Interactive MW PM and autopilot now require a reviewed plan before entering `TASKS`. Existing keys in `PLAN` need a pruning record, a retained-task roster, and coverage for all ACs and required design paths. See the [plan closure guide](docs/plan-closure.md).
+
 ### Added
 
 - Added `mw thinking show|set|clear` to inspect and atomically update project worker thinking defaults and role overrides while preserving unrelated configuration. See the [worker thinking guide](docs/worker-thinking.md).

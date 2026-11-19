@@ -13,8 +13,7 @@ Exit codes: 0 = no gaps (evidence complete), 1 = gaps present.
 
 L1 is strictly mechanical — existence and reference-closure checks only, no
 semantic judgment (semantic verdicts belong to the L2 verifier). Standalone
-CLI: no conductor required, no other autopilot module imported; all paths come
-from explicit arguments.
+CLI: no conductor required, all paths come from explicit arguments.
 
 Inputs (under {project}/.agenticdoc/{key}/):
 - spec.md     AC checklist: `| AC-NNN | description |` table rows. Blockquote
@@ -41,6 +40,9 @@ Gap rules:
                                       evidence/research/design-*.md >= 1
                                       (mirrors advance_phase.py GATES); an
                                       empty glob = missing research 留底.
+- plan-closure (blocking)             at the PLAN edge, the native gate's
+                                      plan review or coverage has gaps.
+- plan-closure-unavailable (blocking) the native inspection could not run.
 - decision-without-evidence (non-blocking) a decision maps to no evidence
                                       file; whether it needs one is semantic
                                       and deferred to L2.
@@ -52,6 +54,11 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from autopilot import advance
 
 AGENTICDOC_DIR = ".agenticdoc"
 
@@ -212,7 +219,7 @@ def _extract_phase_edge(pm_state_path: Path) -> str | None:
     return match.group(1) if match else None
 
 
-def build_dossier(key: str, project: Path) -> dict[str, object]:
+def build_dossier(key: str, project: Path, *, include_plan_gate: bool = True) -> dict[str, object]:
     """Assemble the L1 audit dossier for {project}/.agenticdoc/{key}."""
     key_dir = project / AGENTICDOC_DIR / key
     spec_path = key_dir / "spec.md"
@@ -242,6 +249,17 @@ def build_dossier(key: str, project: Path) -> dict[str, object]:
         gaps.append(
             {"item": research_glob, "rule": "research-evidence-missing", "severity": "blocking"}
         )
+
+    if include_plan_gate and (phase_edge or "").strip().upper() == "PLAN":
+        try:
+            findings = advance.inspect_plan(project, key)
+        except advance.AdvanceError as exc:
+            gaps.append({"item": str(exc), "rule": "plan-closure-unavailable", "severity": "blocking"})
+        else:
+            gaps.extend(
+                {"item": problem, "rule": "plan-closure", "severity": "blocking"}
+                for problem in findings or []
+            )
 
     for entry in decision_map:
         if not entry["evidence_files"]:
