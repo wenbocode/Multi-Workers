@@ -1,3 +1,4 @@
+import { createHash as hashPmState } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -59,6 +60,7 @@ import {
 	initMw,
 	modelMw,
 	partitionMw,
+	pmStateMw,
 	RAG_SUBCOMMANDS,
 	ragMw,
 	restartMw,
@@ -4601,7 +4603,7 @@ export async function runMwModelCommand(
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
 export const MW_COMMAND_DESCRIPTION =
-	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / thinking / decide / rag / stats / run-detached / ack / trim [task] / replan [task]";
+	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / thinking / decide / rag / stats / pm-state compact / run-detached / ack / trim [task] / replan [task]";
 
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
@@ -5277,6 +5279,87 @@ export async function runMwDecideCommand(
 	return reportDecide(ctx, lines.join("\n"), "info");
 }
 
+function registerOwnedPmStateCompaction(
+	pi: ExtensionAPI,
+	projectDir: string,
+	agenticdocRoot: string,
+	indexStore: IndexStore,
+	watch: PmWatchState,
+): (ctx: ExtensionCommandContext) => void {
+	const toolName = "submit_pm_state_summary";
+	let pending: { id: string; key: string; claim: string; sha: string } | undefined;
+	let sequence = 0;
+	pi.registerTool({
+		name: toolName,
+		label: "Apply PM state compaction",
+		description: "Submit the Markdown summary for a pending user-initiated /mw pm-state compact request.",
+		parameters: Type.Object({ request: Type.String(), summary: Type.String() }),
+		execute: async (_id, params, signal) => {
+			if (!pending || params.request !== pending.id || signal?.aborted) {
+				throw new Error("No matching PM state compaction request");
+			}
+			const { key, claim, sha } = pending;
+			const result = pmStateMw(
+				projectDir,
+				["compact", "--key", key, "--summary", "-", "--apply", sha, "--window-claim-id", claim],
+				params.summary,
+			);
+			if (!result.ok) throw new Error(result.error);
+			pending = undefined;
+			return { content: [{ type: "text", text: result.output }], details: undefined };
+		},
+	});
+	pi.on("agent_end", (_event, ctx) => {
+		if (pending) ctx.ui.notify("PM 状态压缩未完成。可在窗口空闲后重新运行命令。", "warning");
+		pending = undefined;
+	});
+	return (ctx) => {
+		if (!ctx.isIdle() || pending) {
+			ctx.ui.notify("请在当前 pi PM 窗口空闲时运行压缩。", "warning");
+			return;
+		}
+		try {
+			const claim = windowClaimId();
+			const rows = indexStore.readAuthorityRows();
+			const own = rows.filter((row) => row.status === "active" && row.claimId === claim);
+			const watchedKey = watch.key?.trim();
+			const chosen = watchedKey
+				? own.find((row) => normalizeKey(row.key) === normalizeKey(watchedKey))
+				: own.length === 1
+					? own[0]
+					: undefined;
+			if (
+				!chosen ||
+				keyNameRefusal(chosen.key) ||
+				!PHASE_ORDER.some((phase) => phase === chosen.phase.toUpperCase()) ||
+				rows.filter((row) => normalizeKey(row.key) === normalizeKey(chosen.key)).length !== 1
+			) {
+				ctx.ui.notify("请先在当前窗口选中并认领一个完整 SDD key。", "warning");
+				return;
+			}
+			const state = path.join(agenticdocRoot, chosen.key, "pm-state.md");
+			const sha = hashPmState("sha256").update(fs.readFileSync(state)).digest("hex");
+			const id = String(++sequence);
+			pending = { id, key: chosen.key, claim, sha };
+			const activeTools = pi.getActiveTools();
+			if (!activeTools.includes(toolName)) pi.setActiveTools([...activeTools, toolName]);
+			pi.sendUserMessage(
+				[
+					`压缩当前 key ${chosen.key} 的 PM 接续状态。源文件是 ${JSON.stringify(state)}。`,
+					"只读核对当前 Snapshot、在途任务、最新计划与必要证据。按需分段读原文件，历史全文由工具归档。",
+					"生成 UTF-8 Markdown，最多 8 KiB。依次用四个二级标题 Notes、Task Status、Decisions、Evidence Ledger，每节至少一条。",
+					"保留当前目标、阻塞、下一步、在途任务、有效决定和证据引用，区分自验、独立复核与待验证。正文不要加机器字段、PASS 标记或外层代码围栏。",
+					`生成后直接调用 ${toolName}，request 传 ${JSON.stringify(id)}，summary 传 Markdown 正文。`,
+					"由工具归档并替换原文。不要自行改文件、切换或释放认领。根据工具结果报告压缩大小和归档路径。",
+				].join("\n"),
+			);
+		} catch (error) {
+			pending = undefined;
+			ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+		}
+	};
+}
+
 export function registerMwCommands(
 	pi: ExtensionAPI,
 	projectDir: string,
@@ -5286,6 +5369,9 @@ export function registerMwCommands(
 	agenticdocRoot: string,
 	indexStore?: IndexStore,
 ): void {
+	const startPmStateCompaction = indexStore
+		? registerOwnedPmStateCompaction(pi, projectDir, agenticdocRoot, indexStore, watch)
+		: undefined;
 	const startTrim = indexStore
 		? registerTrim(pi, projectDir, agenticdocRoot, indexStore, () => watch.key, windowClaimId)
 		: undefined;
@@ -5489,6 +5575,17 @@ export function registerMwCommands(
 				return;
 			}
 
+			if (sub === "pm-state") {
+				const args = splitCommandLine(trimmed.slice(sub.length));
+				if (args.length === 1 && args[0] === "compact" && startPmStateCompaction) {
+					startPmStateCompaction(ctx);
+					return;
+				}
+				const result = pmStateMw(projectDir, args);
+				ctx.ui.notify(result.ok ? result.output : result.error, result.ok ? "info" : "error");
+				return;
+			}
+
 			if (sub === "run-detached") {
 				// Background command dispatch (D-005/AC-008) — thin wrapper over
 				// shared/run-detached.ts; parsing stays here (usage-first), the
@@ -5524,7 +5621,7 @@ export function registerMwCommands(
 			}
 
 			ctx.ui.notify(
-				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | thinking show|set <default|role> <level>|clear <default|role|all> | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
+				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | thinking show|set <default|role> <level>|clear <default|role|all> | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | pm-state compact --key <k> --summary <file> [--apply <sha256>] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
 				"warning",
 			);
 		},

@@ -516,13 +516,17 @@ function runMwCliRaw(
 	args: string[],
 	timeoutMs = 30_000,
 	scopeProject = true,
+	input?: string,
+	standalone?: string,
 ): MwCliRawResult {
-	const mwPy = findMwPy();
+	const mwPy = standalone ?? findMwPy();
 	if (!mwPy) return { code: -1, output: "", spawnError: "Could not find mw.py — set MW_PY env var." };
-	const argv = scopeProject ? [mwPy, sub, ...args, `--project=${projectDir}`] : [mwPy, sub, ...args];
+	const argv = standalone ? [mwPy, ...args] : [mwPy, sub, ...args];
+	if (scopeProject) argv.push(`--project=${projectDir}`);
 	const result = spawnSync(PYTHON_EXE, argv, {
 		encoding: "utf8",
 		timeout: timeoutMs,
+		...(input === undefined ? {} : { input }),
 	});
 	if (result.error) {
 		return { code: -1, output: "", spawnError: `Failed to spawn mw.py: ${result.error.message}` };
@@ -546,8 +550,10 @@ function runMwCli(
 	args: string[],
 	timeoutMs = 30_000,
 	scopeProject = true,
+	input?: string,
+	standalone?: string,
 ): MwCliResult {
-	const raw = runMwCliRaw(sub, projectDir, args, timeoutMs, scopeProject);
+	const raw = runMwCliRaw(sub, projectDir, args, timeoutMs, scopeProject, input, standalone);
 	if (raw.spawnError !== undefined) return { ok: false, error: raw.spawnError };
 	if (raw.code !== 0) return { ok: false, error: raw.output || `mw ${sub} exited with code ${raw.code}` };
 	return { ok: true, output: raw.output };
@@ -556,6 +562,31 @@ function runMwCli(
 /** `mw.py target <args...>` — dual-workspace config (show / set / clear / on / off). */
 export function targetMw(projectDir: string, args: string[]): MwCliResult {
 	return runMwCli("target", projectDir, args);
+}
+
+export function pmStateMw(projectDir: string, args: string[], summary?: string): MwCliResult {
+	// The general MW pointer may follow a release that predates this command.
+	let compactor: string | undefined;
+	try {
+		const installed = fs.readFileSync(path.join(globalExtDir(), ".mw-pm-state-path"), "utf8").trim();
+		if (!path.isAbsolute(installed) || !fs.existsSync(installed)) {
+			return { ok: false, error: "The installed PM state compactor path is invalid." };
+		}
+		compactor = installed;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+			return { ok: false, error: `Could not read the installed PM state compactor path: ${String(error)}` };
+		}
+	}
+	if (!compactor) {
+		const mwPy = findMwPy();
+		const sibling = mwPy && path.join(path.dirname(mwPy), "pm_state.py");
+		if (!sibling || !fs.existsSync(sibling)) {
+			return { ok: false, error: "Could not locate pm_state.py for this pi install." };
+		}
+		compactor = sibling;
+	}
+	return runMwCli("pm-state", projectDir, args, undefined, true, summary, compactor);
 }
 
 /** `mw.py partition <args...>` — partition-workspace config (set / show / clear / on / off). */

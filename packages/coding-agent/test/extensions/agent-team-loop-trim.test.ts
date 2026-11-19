@@ -34,6 +34,7 @@ function fixture() {
 	const script = path.join(project, "pm_state.py");
 	vi.stubEnv("PI_CODING_AGENT_DIR", agent);
 	mkdirSync(path.join(agent, "extensions"), { recursive: true });
+	writeFileSync(script, "");
 	writeFileSync(path.join(agent, "extensions", ".mw-pm-state-path"), script);
 	mkdirSync(path.join(root, "sample"), { recursive: true });
 	writeFileSync(path.join(root, "sample", "pm-state.md"), "PM state source");

@@ -57,6 +57,7 @@ import decision_wire
 import mw_common
 import operator_authority
 import operator_host
+import pm_state
 import rag_templates
 import thinking_config
 import usage
@@ -14162,6 +14163,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Multi-Workers service manager")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
+    pm_state_p = sub.add_parser("pm-state", help="Manage complete-SDD PM handoff state")
+    pm_state_sub = pm_state_p.add_subparsers(required=True)
+    pm_state.add_compact_arguments(pm_state_sub.add_parser(
+        "compact", help="Preview or apply reversible PM handoff compaction",
+    ))
+
     _add_serve_args(sub.add_parser("serve", help="Run in foreground"))
     _add_serve_args(sub.add_parser("start", help="Run in background"))
 
@@ -15177,5 +15184,6 @@ if __name__ == "__main__":
         "worktree": cmd_worktree,
         "rag": cmd_rag,
         "run-detached": console_run.cmd_run_detached,
+        "pm-state": pm_state.cmd_compact,
     }
     sys.exit(dispatch[args.subcommand](args))
