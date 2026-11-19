@@ -7,6 +7,7 @@
 //   timi     -> pi provider "timi"          (direct)
 //   claude   -> pi provider "anthropic"     (direct, no mw proxy)
 //   codex    -> pi provider "openai-codex"  (codex' own config)
+//   openai   -> pi provider "openai"        (direct, API key)
 //   deepseek -> pi provider "deepseek"      (direct, no mw proxy)
 //   toa      -> pi provider "toa"           (direct to TokenLink)
 //   zhient   -> pi provider "zhient"        (direct to zhient.com)
@@ -29,6 +30,7 @@ export const PROVIDER_ID_TO_PREFIX = {
     timi: "timi",
     anthropic: "claude",
     "openai-codex": "codex",
+    openai: "openai",
     deepseek: "deepseek",
     toa: "toa",
     zhient: "zhient",

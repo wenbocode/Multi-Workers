@@ -76,6 +76,10 @@ _DEFAULT_CONFIG: dict = {
     "credentials": {
         "anthropic": {"sources": [{"env": "ANTHROPIC_API_KEY"}]},
         "anthropic-auth": {"sources": [{"env": "ANTHROPIC_AUTH_TOKEN"}]},
+        "openai": {"sources": [
+            {"env": "OPENAI_API_KEY"},
+            {"file": "~/.pi/agent/auth.json", "format": "json", "field": "openai.key"},
+        ]},
         "deepseek": {"sources": [
             {"env": "DEEPSEEK_API_KEY"},
             {"file": "~/.pi/agent/auth.json", "format": "json", "field": "deepseek.key"},
@@ -112,6 +116,7 @@ _DEFAULT_CONFIG: dict = {
             "api_key_env": "DEEPSEEK_API_KEY", "credential": "deepseek",
         },
         "timi": {"api_key_env": "TIMI_API_KEY", "credential": "timi"},
+        "openai": {"api_key_env": "OPENAI_API_KEY", "credential": "openai"},
         "toa": {"api_key_env": "TOA_API_KEY", "credential": "toa"},
         "zhient": {"api_key_env": "ZHIENT_API_KEY", "credential": "zhient"},
         "zai-coding-cn": {"api_key_env": "ZAI_CODING_CN_API_KEY", "credential": "zai-coding-cn"},
@@ -120,7 +125,7 @@ _DEFAULT_CONFIG: dict = {
 
 # Environment names read by the direct pi adapters, independent of the configured credential source.
 DIRECT_PI_KEY_ENVS = {
-    name: _DEFAULT_CONFIG["providers"][name]["api_key_env"] for name in ("toa", "zai-coding-cn", "zhient")
+    name: _DEFAULT_CONFIG["providers"][name]["api_key_env"] for name in ("openai", "toa", "zai-coding-cn", "zhient")
 }
 
 # CLI name -> default route key when a task leaves `provider` empty.
@@ -137,6 +142,7 @@ CLI_DEFAULT_PROVIDER: dict[str, str] = {"pi": "claude", "claude": "claude-cli"}
 #       timi -> pi provider "timi"
 #       claude -> pi provider "anthropic"        (direct, no mw proxy)
 #       codex -> pi provider "openai-codex"      (codex' own config)
+#       openai -> pi provider "openai"           (direct, API key)
 #       deepseek -> pi provider "deepseek"       (direct, no mw proxy)
 #       toa -> pi provider "toa"                 (direct to TokenLink)
 #       zhient -> pi provider "zhient"           (direct to zhient.com)
@@ -152,6 +158,7 @@ MODEL_PREFIX_TO_PI_PROVIDER: dict[str, str] = {
     "timi": "timi",
     "claude": "anthropic",
     "codex": "openai-codex",
+    "openai": "openai",
     "deepseek": "deepseek",
     "zai": "zai-coding-cn",
 }
@@ -384,6 +391,7 @@ FALLBACK_TASK_TYPES = tuple(TASK_TYPE_TO_ROLE)
 # route_precheck keys; these are the providers.json / codex-native names the
 # existing checker reports.
 FALLBACK_PREFIX_TO_ROUTE: dict[str, str] = {
+    "openai": "openai",
     "toa": "toa",
     "zhient": "zhient",
     "timi": "timi",

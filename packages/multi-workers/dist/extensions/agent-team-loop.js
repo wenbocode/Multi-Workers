@@ -42062,6 +42062,7 @@ var PROVIDER_ID_TO_PREFIX = {
   timi: "timi",
   anthropic: "claude",
   "openai-codex": "codex",
+  openai: "openai",
   deepseek: "deepseek",
   toa: "toa",
   zhient: "zhient",

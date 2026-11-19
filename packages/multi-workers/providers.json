@@ -6,6 +6,12 @@
     "anthropic-auth": {
       "sources": [{ "env": "ANTHROPIC_AUTH_TOKEN" }]
     },
+    "openai": {
+      "sources": [
+        { "env": "OPENAI_API_KEY" },
+        { "file": "~/.pi/agent/auth.json", "format": "json", "field": "openai.key" }
+      ]
+    },
     "deepseek": {
       "sources": [
         { "env": "DEEPSEEK_API_KEY" },
@@ -60,6 +66,10 @@
     "timi": {
       "api_key_env": "TIMI_API_KEY",
       "credential": "timi"
+    },
+    "openai": {
+      "api_key_env": "OPENAI_API_KEY",
+      "credential": "openai"
     },
     "toa": {
       "api_key_env": "TOA_API_KEY",
