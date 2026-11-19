@@ -134,6 +134,8 @@
 
 ### Fixed
 
+- Fixed unbounded memory growth when a shell command contains multiple PowerShell here-strings. Write-surface scanning now searches for each closing marker after its opener.
+
 - Fixed MW native compaction being suppressed after a retried or cancelled model response proposed tools that never executed. Failed attempts remain in session history without being mistaken for incomplete tool batches.
 
 - Fixed dual and partition worker write faces using different path bases at dispatch and runtime. Configured roots now share canonical file identities, control-workspace artifacts stay writable, and declared file limits still apply with `allow_foreign_write` enabled.

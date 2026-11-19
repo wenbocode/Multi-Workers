@@ -2447,7 +2447,7 @@ function stripHereStrings(command: string): string {
 			// PowerShell requires the closing marker at the start of a line; a
 			// mid-line `'@` inside the body is data and must NOT close the region
 			// early (that leak was re-measured on the rq3 8 KB command).
-			const closeRe = new RegExp(`\\n[ \\t]*${close}`);
+			const closeRe = new RegExp(`\\n[ \\t]*${close}`, "g");
 			closeRe.lastIndex = i + 2;
 			const match = closeRe.exec(command);
 			out += " ";
