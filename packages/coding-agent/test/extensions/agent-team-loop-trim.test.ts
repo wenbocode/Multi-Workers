@@ -140,6 +140,8 @@ it("scopes replan to the verified target and compacts the key at a native bounda
 	await f.submit("prepare_context");
 	await expect(f.submit("compact_context", { summary: "reviewed" })).rejects.toThrow("最小验证");
 	f.check(false);
+	await expect(f.submit("compact_context", { summary: "中".repeat(2731) })).rejects.toThrow("8193 字节");
+	expect(spawnSync).not.toHaveBeenCalled();
 	await expect(f.submit("compact_context", { summary: "reviewed" })).resolves.toMatchObject({
 		details: { state: "compacted", transcript: "queued" },
 	});

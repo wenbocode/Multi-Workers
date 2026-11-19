@@ -23,6 +23,7 @@ type TrimRequest = {
 };
 
 const taskName = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,159}$/;
+const summaryLimitBytes = 8 * 1024;
 
 function compactPmState(project: string, key: string, claim: string, sha: string, summary: string) {
 	const pointer = path.join(
@@ -198,6 +199,12 @@ export function registerTrim(
 					});
 					if (result.ok !== true) throw new Error(String(result.reason));
 				} else if (params.operation === "compact_context" && "sha" in basis && params.summary && !req.task) {
+					const bytes = Buffer.byteLength(params.summary, "utf8");
+					if (bytes > summaryLimitBytes) {
+						throw new Error(
+							`摘要是 ${bytes} 字节，超过 ${summaryLimitBytes} 字节。保留四个必需段落，删去重复背景和长证据原文后直接重试。`,
+						);
+					}
 					const compact = compactPmState(project, req.key, req.claim, basis.sha, params.summary);
 					const error = compact.error?.message ?? compact.stderr.trim();
 					if (
@@ -271,8 +278,8 @@ export function registerTrim(
 					...(req.task
 						? []
 						: [
-								"检查剩余工作，按必要交付收窄或合并可选项。工作收敛后用 trim_progress prepare_context，最小核对当前阶段、在途任务和证据，再调用 compact_context。",
-								"summary 最多 8 KiB，依次用二级标题 Notes、Task Status、Decisions、Evidence Ledger，每节至少一条。保留目标、已交付和待验证项、阻塞、取舍、在途任务、证据和下一步。区分自验、独立复核与待验证，省去机器字段、PASS 标记和外层代码围栏。",
+								"先从接续记录和上面的在途清单确定下一项必要交付。仅在发现具体改卡目标后 inspect 那项任务。按行读取所需计划或证据片段，沿用已确认的历史结论。工作收敛后用 trim_progress prepare_context，做最小核对并调用 compact_context。",
+								"摘要以 4 KiB 为目标，硬上限为 8192 UTF-8 字节，汉字通常占三个字节。依次用二级标题 Notes、Task Status、Decisions、Evidence Ledger，每节至少一条。记录剩余交付、有效取舍、在途任务、阻塞、下一步和证据路径，区分自验、独立复核与待验证。省去重复历史、证据原文、机器字段、PASS 标记和外层代码围栏。",
 							]),
 					"报告实际结果。已排队的 Worker 收窄消息和已被 Worker 消费的消息要区分。",
 				].join("\n"),

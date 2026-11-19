@@ -10,9 +10,13 @@
 
 在已认领 key 的 MW PM 窗口输入 `/mw replan` 检查剩余工作。输入 `/mw replan <任务 ID 或卡名>` 检查一张卡。PM 在 spec 阶段按可独立验收的结果划分 key，在 design 阶段核对接口、共享资源和集成验收的归属。执行中的重规划沿用该 key 已确认的目标和验收标准。
 
+正常接续、worker 成功和继续派发现有任务沿用当前计划，不例行调用重规划。剩余工作确需调整、重派被 `replan-required` 拒绝或用户要求重划时，优先检查具体 `task`。同一任务证据未变时复用已有 `issue` / `snapshot`；只有提出计划变更才调用 `preview`，来源变化或工具报告快照失效后重新检查。
+
+key 级 `inspect` 默认只返回 `issues` 的一页（需处理事项优先）和各列表的 `counts`。需要时指定 `section: issues | cards | workers | applied_plans`，以 `offset` / `limit` 翻页，默认 20 条，上限 50 条。`page` 返回总数与 `next_offset`。单任务检查使用 `evidence_refs` 提供项目相对路径，PM 只在需要时读取原卡、报告或其他证据。后端继续根据完整材料计算快照，preview 和派发校验仍检查全部在途任务。
+
 | PM 工具操作 | 输入 | 结果 |
 | --- | --- | --- |
-| `replan_tasks inspect` | 当前 key，可选任务 | key 的复盘事项、卡和在途任务。指定任务还会返回原卡、运行分类、AC/FLOW/VC 覆盖、报告和产物位置，以及本次检查的 `issue` 和 `snapshot`。 |
+| `replan_tasks inspect` | 当前 key，可选任务。清单用 section / offset / limit | 默认返回复盘摘要页和数量。指定任务返回任务 ID、状态、分类、AC/FLOW/VC 覆盖、`issue/snapshot` 和证据引用。 |
 | `preview` | 相同 key、issue、snapshot，以及 PM 提出的 plan | 校验 AC、必要 FLOW 和 VC 的去向，以及卡片、写入范围、资源和依赖。返回版本、裁决依据 ID、可先派发的卡及等待原因。 |
 | `apply` | 相同 key、issue、snapshot、version，涉及编排变化时附匹配的 decision_id | 发布后继任务卡并持久化依赖。恢复时使用相同版本重试。正常派发入口仍负责投递队列和执行时检查。 |
 

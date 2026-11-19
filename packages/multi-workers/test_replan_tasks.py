@@ -271,6 +271,85 @@ def test_windows_case_variation_cannot_bypass_source_or_successor(fixture):
     assert "already-dispatched" in rp.admission(project, "demo", "new", "tasks/ONE.md")
 
 
+def test_inventory_is_bounded_and_all_sections_remain_pageable(fixture):
+    project, key, _, row = fixture
+    for i in range(75):
+        stem = f"history-{i:03}"
+        put(key / f"tasks/{stem}.md", card(stem))
+        source = {"task": stem, "category": "wall-timeout"}
+        rp.save(key / f"evidence/replan/{stem}.json", {
+            "id": stem, "state": "applied" if i % 2 else "open", "source": source,
+            "version": stem, "plan": {"action": "split", "units": [unit(stem, "AC-001")]}})
+        mw_common.upsert_worker_row(mw_common.workers_path(project), {
+            **row, "task_key": stem, "task_path": str(key / "workers" / stem / "task.md"), "status": "done"})
+    first = tool(project, "inspect")
+    assert set(first) == {"issues", "counts", "page", "plan_path"}
+    assert len(first["issues"]) == 20
+    assert all(item["needs_attention"] for item in first["issues"])
+    assert first["counts"] == {"issues": 76, "cards": 76, "workers": 76, "applied_plans": 37,
+                                "needs_attention": 39}
+    assert len(json.dumps(first)) < 10000
+    for section in ("issues", "cards", "workers", "applied_plans"):
+        offset, values = 0, []
+        while offset is not None:
+            page = tool(project, "inspect", section=section, offset=offset, limit=17)
+            assert len(page[section]) <= 17
+            assert page["page"]["total"] == first["counts"][section]
+            values.extend(page[section])
+            offset = page["page"]["next_offset"]
+        assert len(values) == first["counts"][section]
+        assert len({json.dumps(item, sort_keys=True) for item in values}) == len(values)
+        empty = tool(project, "inspect", section=section, offset=1000)
+        assert empty[section] == [] and empty["page"]["next_offset"] is None
+
+
+@pytest.mark.parametrize("args", [
+    {"limit": 0}, {"limit": 51}, {"limit": -1}, {"limit": True}, {"limit": 1.5}, {"limit": "20"},
+    {"offset": -1}, {"offset": False}, {"offset": 0.5}, {"offset": None}, {"section": "all"},
+])
+def test_invalid_inventory_bounds_are_refused(fixture, args):
+    project, _, _, _ = fixture
+    with pytest.raises(ValueError):
+        tool(project, "inspect", **args)
+
+
+def test_task_output_is_bounded_but_preview_checks_every_live_worker(fixture):
+    project, key, _, row = fixture
+    for i in range(60):
+        stem = f"live-{i:02}"
+        folder = key / "workers" / stem
+        face = dispatch.render_write_face_line(["src/one.py" if i == 59 else f"src/{stem}.py"])
+        put(folder / "task.md", f"type: coding\ncard_path: tasks/{stem}.md\n{face}\n")
+        mw_common.upsert_worker_row(mw_common.workers_path(project), {
+            **row, "task_key": stem, "task_path": str(folder / "task.md"), "status": "running"})
+    current = tool(project, "inspect", task="base")
+    assert set(current) == {"issue", "snapshot", "state", "facts", "acceptance", "coverage", "evidence_refs"}
+    assert current["facts"] == {"task": "old", "status": "failed", "category": "wall-timeout"}
+    assert current["evidence_refs"]["card"] == ".agenticdoc/demo/tasks/base.md"
+    assert current["evidence_refs"]["task.md"] == ".agenticdoc/demo/workers/old/task.md"
+    assert "report.md" not in current["evidence_refs"]
+    assert current["acceptance"] == ["AC-001", "AC-002"]
+    verdict = tool(project, "preview", issue=current["issue"], snapshot=current["snapshot"], plan={
+        "action": "split", "reason": "isolate results", "units": [unit("one", "AC-001"), unit("two", "AC-002")]})
+    assert "live:live-59" in verdict["waiting"]["one"]
+    assert "one" not in verdict["initial_batch"]
+    assert "two" in verdict["initial_batch"]
+
+
+@pytest.mark.parametrize("artifact", ["report.md", "output.md"])
+def test_evidence_reference_preserves_full_snapshot_validation(fixture, artifact):
+    project, key, folder, _ = fixture
+    long_text = "evidence-" * 1000
+    put(folder / artifact, long_text)
+    current = tool(project, "inspect", task="old")
+    assert long_text[:100] not in json.dumps(current)
+    assert rp.body(project / current["evidence_refs"][artifact]) == long_text
+    args, prepared = prepare(project)
+    put(folder / artifact, long_text + "changed after the old excerpt boundary")
+    with pytest.raises(ValueError, match="source changed"):
+        tool(project, "apply", **args, version=prepared["version"])
+
+
 def write_closure(key):
     put(key / "plan.md", "## 闭环覆盖\n| AC-001 | `T-base` | VC-001 |\n"
         "| FLOW-001 | `T-base` | VC-001 |\n\n## Later\n| FLOW-003 | base | VC-999 |\n")
@@ -345,3 +424,13 @@ def test_manual_steer_requires_current_run_and_publishes_only_once(fixture):
     mw_common.update_status(project, "old", "done")
     with pytest.raises(ValueError, match="no longer running"):
         tool(project, "trim_steer", **args)
+
+
+def test_trim_inventory_only_surfaces_active_workers(fixture):
+    project, _, _, row = fixture
+    assert tool(project, "trim_inventory")["workers"] == []
+    mw_common.upsert_worker_row(mw_common.workers_path(project), {**row, "task_key": "live", "status": "running"})
+    result = tool(project, "trim_inventory")
+    assert result["workers"] == [{"task": "live", "status": "running"}]
+    assert result["active_workers"] == 1
+    assert result["total_workers"] == 2

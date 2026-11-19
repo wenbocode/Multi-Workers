@@ -61,13 +61,24 @@ export function registerReplanTool(pi: ExtensionAPI, project: string, claim: () 
 		name: "replan_tasks",
 		label: "Replan remaining tasks",
 		description:
-			"Inspect an owned key or run, preview the remaining acceptance and safe parallel batch, then apply the frozen plan. For split/narrow/direct-exec/escalate include preview.basis_id in the applicable prepared basis for ask_decision(dp-pm-steer); apply its matching decision_id. For an unstarted card omit DP task_key; otherwise use facts.task. For direct-exec/escalate first perform the action and pass its executed decision_receipt event_id as action_evidence. Apply records the actual publication and settlement. Schedule reorders existing independent work.",
+			"Replan when remaining work must change, a retry is refused by replan-required, or the user requests replanning. Inspect the specific task; reuse issue/snapshot until source evidence changes. Routine resume and successful completion follow the existing plan. Key inventory defaults to a bounded issues page and counts; request section/offset only as needed. Preview only a proposed plan change, then apply the frozen plan. For split/narrow/direct-exec/escalate include preview.basis_id in the applicable prepared basis for ask_decision(dp-pm-steer); apply its matching decision_id. For an unstarted card omit DP task_key; otherwise use facts.task. For direct-exec/escalate first perform the action and pass its executed decision_receipt event_id as action_evidence. Apply records the actual publication and settlement. Schedule reorders existing independent work.",
 		parameters: Type.Object({
 			operation: Type.Union([Type.Literal("inspect"), Type.Literal("preview"), Type.Literal("apply")]),
 			key: Type.String(),
 			task: Type.Optional(
-				Type.String({ description: "Queue task key or original card stem; omit for key inventory" }),
+				Type.String({
+					description:
+						"Queue task key or original card stem; omit for key inventory. Inspect returns status, acceptance, issue/snapshot and project-relative evidence_refs. Use read on those paths only when needed.",
+				}),
 			),
+			section: Type.Optional(
+				Type.Union(
+					[Type.Literal("issues"), Type.Literal("cards"), Type.Literal("workers"), Type.Literal("applied_plans")],
+					{ description: "Key inventory list to page; default issues. Counts cover all lists." },
+				),
+			),
+			offset: Type.Optional(Type.Integer({ minimum: 0, description: "Inspect page offset; default 0" })),
+			limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, description: "Inspect page size; default 20" })),
 			issue: Type.Optional(Type.String()),
 			snapshot: Type.Optional(Type.String()),
 			version: Type.Optional(Type.String()),

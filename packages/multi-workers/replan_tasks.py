@@ -229,21 +229,34 @@ def worker_rows(project: Path, key: str) -> list[dict]:
             if mw_common.worker_owner_key(r) == key]
 
 
-def inspect(project: Path, key_dir: Path, task: str | None) -> dict:
+def inspect(project: Path, key_dir: Path, task: str | None, *, section: str = "issues",
+            offset: int = 0, limit: int = 20) -> dict:
+    if section not in {"issues", "cards", "workers", "applied_plans"}:
+        raise ValueError("unknown inventory section")
+    if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 50:
+        raise ValueError("offset must be a nonnegative integer; limit must be an integer from 1 to 50")
     rows = worker_rows(project, key_dir.name)
     if not task:
         items = records(key_dir)
-        return {"issues": [{"issue": r["id"], "task": r["source"]["task"], "state": r["state"],
+        inventory = {"issues": [{"issue": r["id"], "task": r["source"]["task"], "state": r["state"],
                             "category": r["source"]["category"], "action": r.get("plan", {}).get("action"),
                             "needs_attention": r["state"] != "applied" or r["plan"]["action"] in {"schedule", "escalate"}}
                            for r in items],
                 "cards": [p.stem for p in sorted((key_dir / "tasks").glob("*.md")) if p.stem.lower() != "readme"],
-                "plan_path": str(key_dir / "plan.md"),
                 "applied_plans": [{"version": r["version"], "source": r["source"]["task"],
                                    "dependencies": {u["id"]: u["depends_on"] for u in r["plan"]["units"]},
                                    "ready_existing": r["plan"].get("ready_existing", [])}
                                   for r in items if r["state"] == "applied"],
                 "workers": [{"task": r["task_key"], "status": r["status"]} for r in rows]}
+        inventory["issues"].sort(key=lambda item: not item["needs_attention"])
+        inventory["workers"].sort(key=lambda item: item["status"] not in {"pending", "running"})
+        total = len(inventory[section])
+        return {section: inventory[section][offset:offset + limit],
+                "counts": {**{name: len(values) for name, values in inventory.items()},
+                           "needs_attention": sum(item["needs_attention"] for item in inventory["issues"])},
+                "page": {"section": section, "offset": offset, "limit": limit, "total": total,
+                         "next_offset": offset + limit if offset + limit < total else None},
+                "plan_path": str(key_dir / "plan.md")}
     identifier(task)
     row = next((r for r in rows if r["task_key"] == task), None)
     if row:
@@ -264,7 +277,6 @@ def inspect(project: Path, key_dir: Path, task: str | None) -> dict:
     envelope = body(key_dir / "workers" / task / "task.md")
     snapshot = digest([facts, original, envelope])
     report = key_dir / "workers" / task / "report.md"
-    result = key_dir / "workers" / task / "output.md"
     plan, design = body(key_dir / "plan.md"), body(key_dir / "design.md")
     closure = closure_coverage(plan, design)
     coverage = sorted(card_coverage(closure, facts["card"], original or envelope))
@@ -274,11 +286,8 @@ def inspect(project: Path, key_dir: Path, task: str | None) -> dict:
     snapshot = digest(snapshot_fields)
     acceptance = [item for item in coverage if item.startswith("AC-")]
     return {"issue": record["id"], "snapshot": snapshot, "state": record["state"], "facts": facts,
-            "original": original or envelope, "acceptance": acceptance, "coverage": coverage, "closure": closure,
-            "delivery_evidence": {"report": body(report)[:4000], "output": body(result)[:2400]},
-            "existing_plan": str(key_dir / "plan.md"),
-            "live_workers": [r["task_key"] for r in rows if r["status"] in {"pending", "running"}],
-            "artifacts_root": str(key_dir / "workers" / task)}
+            "acceptance": acceptance, "coverage": coverage, "closure": closure,
+            "live_workers": [r["task_key"] for r in rows if r["status"] in {"pending", "running"}]}
 
 
 def retained_proof(project: Path, key_dir: Path, current: dict, retained: dict) -> dict:
@@ -514,9 +523,10 @@ def execute(project: Path, req: dict) -> dict:
             raise ValueError("current window does not own the active key")
         if op == "trim_inventory":
             rows = worker_rows(project, key)
-            rows.sort(key=lambda row: row["status"] not in {"pending", "running"})
-            return {"workers": [{"task": row["task_key"], "status": row["status"]} for row in rows[:20]],
-                    "total_workers": len(rows), "plan": str(key_dir / "plan.md")}
+            active = [{"task": row["task_key"], "status": row["status"]} for row in rows
+                      if row["status"] in {"pending", "running"}]
+            return {"workers": active[:20], "active_workers": len(active), "total_workers": len(rows),
+                    "plan": str(key_dir / "plan.md")}
         if op == "trim_steer":
             if owners[0]["phase"].upper() != "EXECUTE":
                 raise ValueError("a running Worker can only be trimmed in EXECUTE")
@@ -547,14 +557,27 @@ def execute(project: Path, req: dict) -> dict:
             for row in worker_rows(project, key):
                 if row["status"] == "failed":
                     capture(project, row, row["status"])
-            result = inspect(project, key_dir, req.get("task"))
-            if req.get("task") and result["facts"]["category"] in {"model-unavailable", "spawn-failed"}:
+            offset, limit = req.get("offset", 0), req.get("limit", 20)
+            result = inspect(project, key_dir, req.get("task"), section=req.get("section", "issues"),
+                             offset=offset, limit=limit)
+            if not req.get("task"):
+                return result
+            facts = result["facts"]
+            if facts["category"] in {"model-unavailable", "spawn-failed"}:
                 target = key_dir / "evidence" / "replan" / (result["issue"] + ".json")
                 record = json.loads(body(target))
-                record["reviewed_infrastructure"] = result["facts"]
+                record["reviewed_infrastructure"] = facts
                 save(target, record)
-            result.pop("closure", None)
-            return result
+            # Project-relative locators keep evidence on disk while the snapshot
+            # above and preview/apply still use full source files and live rows.
+            worker = key_dir / "workers" / facts["task"]
+            references = {name: worker / name for name in facts.get("artifacts", [])}
+            references.update({"card": key_dir / facts["card"], "task.md": worker / "task.md"})
+            return {"issue": result["issue"], "snapshot": result["snapshot"], "state": result["state"],
+                    "facts": {field: facts[field] for field in ("task", "status", "category")},
+                    "acceptance": result["acceptance"], "coverage": result["coverage"],
+                    "evidence_refs": {name: file.relative_to(project).as_posix()
+                                      for name, file in references.items() if file.is_file() and file.resolve() == file}}
         if op not in ("preview", "apply"):
             raise ValueError("unknown replan operation")
         target = local(key_dir / "evidence" / "replan" / (identifier(req["issue"]) + ".json"))
