@@ -343,34 +343,134 @@ export interface IndexEntry {
 
 const INDEX_COLS = 7;
 
-function parseIndexLine(line: string): IndexEntry | undefined {
-	const trimmed = line.trim();
-	if (!trimmed || trimmed.startsWith("#")) return undefined;
+/** Raised when the ORIGINAL `_index.parallel` cannot be interpreted without
+ * dropping data. Callers holding the index lock refuse with ZERO writes: there
+ * is no legacy 5-column migration and no "parse what we can, rewrite the rest"
+ * path (T-07 / F-01). */
+export class IndexAuthorityError extends Error {
+	readonly code: string;
 
-	let parts: string[];
-	// AgenticTask format: "| key | status | ... | updated |" — 9 split-by-| parts (empty outer)
-	// Bare format: "key | status | ... | updated" — 7 parts
-	if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
-		parts = trimmed
-			.slice(1, -1)
-			.split("|")
-			.map((s) => s.trim());
-	} else {
-		parts = trimmed.split("|").map((s) => s.trim());
+	constructor(code: string, message: string) {
+		super(message);
+		this.name = "IndexAuthorityError";
+		this.code = code;
 	}
+}
 
-	if (parts.length !== INDEX_COLS) return undefined;
+type ParsedIndexLine =
+	| { kind: "ignore" }
+	| { kind: "row"; entry: IndexEntry }
+	| { kind: "unsupported"; columns: number };
+
+function splitIndexParts(trimmed: string): string[] {
+	// AgenticTask format: "| key | status | ... | updated |" — empty outer cells.
+	// Bare format: "key | status | ... | updated" — exactly INDEX_COLS parts.
+	const body = trimmed.startsWith("|") && trimmed.endsWith("|") ? trimmed.slice(1, -1) : trimmed;
+	return body.split("|").map((s) => s.trim());
+}
+
+/** A Markdown table separator cell: dashes with optional alignment colons
+ * (`---`, `:---`, `---:`, `:---:`). Empty cells are tolerated. */
+const MD_SEPARATOR_CELL_RE = /^:?-{1,}:?$/;
+
+/** Canonical `_index.parallel` header labels, compared in a normalized form
+ * (lower-cased, non-alphanumerics stripped) so `ClaimId` / `Claim-Id` /
+ * `claim_id` and case variants all name the same column. */
+const INDEX_HEADER_LABELS: readonly string[] = ["key", "status", "phase", "claimid", "deps", "desc", "updated"];
+
+function headerLabel(cell: string): string {
+	return cell
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]/g, "");
+}
+
+/** Is this the REAL, COMPLETE 7-column table header (all canonical labels)? A
+ * data row whose key is literally `Key` carries a status/value in cell 2, not
+ * the `Status` label, so it is never confused with the header. */
+function isTableHeader(parts: readonly string[]): boolean {
+	return parts.length === INDEX_COLS && parts.every((cell, i) => headerLabel(cell) === INDEX_HEADER_LABELS[i]);
+}
+
+/** Is this a REAL Markdown separator row (every cell dash-like or empty)? */
+function isTableSeparator(parts: readonly string[]): boolean {
+	return parts.length > 0 && parts.every((cell) => cell === "" || MD_SEPARATOR_CELL_RE.test(cell));
+}
+
+/** Only blank lines, standalone whole-line comments, and the REAL complete
+ * table header / Markdown separator are decorations. A pipe data row is always
+ * interpreted (as a row, or as an unsupported row), never hidden as a comment
+ * or header: `-bad`, `#bad`, an empty key, or the legal key `Key` are data. */
+function isHeaderish(trimmed: string, parts: readonly string[]): boolean {
+	if (!trimmed) return true;
+	if (trimmed.startsWith("#") && !trimmed.includes("|")) return true;
+	return isTableHeader(parts) || isTableSeparator(parts);
+}
+
+function classifyIndexLine(line: string): ParsedIndexLine {
+	const trimmed = line.trim();
+	const parts = splitIndexParts(trimmed);
+	if (isHeaderish(trimmed, parts)) return { kind: "ignore" };
+	if (parts.length !== INDEX_COLS) return { kind: "unsupported", columns: parts.length };
 	const [key, status, phase, claimId, deps, desc, updated] = parts;
-	if (!key || key.startsWith("#") || key.startsWith("-") || key === "Key" || key.startsWith("---")) return undefined;
 	return {
-		key,
-		status: (status ?? "idle") as IndexStatus,
-		phase: phase ?? "",
-		claimId: claimId ?? "",
-		deps: deps ?? "",
-		desc: desc ?? "",
-		updated: updated ?? "",
+		kind: "row",
+		entry: {
+			key: key ?? "",
+			status: (status ?? "idle") as IndexStatus,
+			phase: phase ?? "",
+			claimId: claimId ?? "",
+			deps: deps ?? "",
+			desc: desc ?? "",
+			updated: updated ?? "",
+		},
 	};
+}
+
+/** Set-level tolerant parse (diagnostics / display): unsupported lines are
+ * ignored, never migrated. Identity, guard and mutation paths use
+ * {@link strictAuthorityRows} instead — D-002's projection dedupe stays a SET
+ * operation, while identity decisions fail closed on corrupt authority. */
+function parseIndexLine(line: string): IndexEntry | undefined {
+	const parsed = classifyIndexLine(line);
+	return parsed.kind === "row" ? parsed.entry : undefined;
+}
+
+/** Identity-level strict parse of the ORIGINAL bytes: any non-header line that
+ * is not a 7-column row (legacy 5 columns, truncated, extra columns) is a
+ * corrupt authority and must be refused BEFORE any file is written. */
+function strictAuthorityRows(raw: string): IndexEntry[] {
+	const rows: IndexEntry[] = [];
+	const lines = raw.split("\n");
+	for (let i = 0; i < lines.length; i++) {
+		const parsed = classifyIndexLine(lines[i] ?? "");
+		if (parsed.kind === "unsupported") {
+			throw new IndexAuthorityError(
+				"unsupported-authority-row",
+				`_index.parallel line ${i + 1} has ${parsed.columns} columns (expected ${INDEX_COLS}); ` +
+					"unsupported legacy/malformed rows are not migrated or dropped — refusing the index mutation with zero writes",
+			);
+		}
+		if (parsed.kind === "row") rows.push(parsed.entry);
+	}
+	return rows;
+}
+
+/** All header/comment/blank lines of a SUPPORTED table, in order, so a
+ * successful write never drops the '# Index Parallel' header, the blank line
+ * after it, or the '| Key | ...' / '| --- | ...' decorations (F-01). */
+function headerLinesFromRaw(raw: string): string {
+	if (!raw) return "";
+	const headerLines: string[] = [];
+	for (const line of raw.split("\n")) {
+		if (classifyIndexLine(line).kind === "ignore") headerLines.push(line);
+	}
+	while (headerLines.length > 0 && (headerLines[headerLines.length - 1] ?? "").trim() === "") headerLines.pop();
+	return headerLines.length > 0 ? `${headerLines.join("\n")}\n` : "";
+}
+
+function emptyEntry(key: string): IndexEntry {
+	return { key, status: "idle", phase: "", claimId: "", deps: "", desc: "", updated: "" };
 }
 
 function serializeIndexLine(entry: IndexEntry): string {
@@ -378,25 +478,117 @@ function serializeIndexLine(entry: IndexEntry): string {
 	return `| ${[entry.key, entry.status, entry.phase, entry.claimId, entry.deps, entry.desc, entry.updated].join(" | ")} |`;
 }
 
+/** Exact UTF-8/LF projection of the complete authoritative active-key set. */
+function renderIndexMd(keys: readonly string[]): string {
+	const json = `[${keys.map((key) => JSON.stringify(key)).join(", ")}]`;
+	return `# AgenticTask Index\n\nactive_keys: ${json}\n`;
+}
+
+/** Validate the ORIGINAL active rows of the authority BEFORE any mutation or
+ * self-demotion: an active row whose key is empty/reserved/illegal is corrupt
+ * authority. This runs on the freshly-parsed INPUT (not the post-demote output)
+ * so a self-owned illegal active row cannot escape validation by being demoted
+ * to `idle` before the projection is built. Refuses with ZERO writes. */
+function validateOriginalActiveInput(rows: readonly IndexEntry[]): void {
+	for (const row of rows) {
+		if (row.status !== "active") continue;
+		const refusal = keyNameRefusal(row.key);
+		if (refusal) {
+			throw new IndexAuthorityError(
+				"invalid-active-authority-key",
+				`_index.parallel has an active row with an invalid key (${refusal.code}); ` +
+					"refusing the index mutation with zero writes",
+			);
+		}
+	}
+}
+
+/** Active rows in authority order, de-duplicated by normalizeKey with the
+ * first spelling preserved. Invalid active names are refused before any file
+ * is written, so an out-of-bounds key can never reach the projection. */
+function activeKeysFromRows(rows: readonly IndexEntry[]): string[] {
+	const seen = new Set<string>();
+	const keys: string[] = [];
+	for (const row of rows) {
+		if (row.status !== "active") continue;
+		const refusal = keyNameRefusal(row.key);
+		if (refusal) throw new Error(`_index.parallel has an invalid active key (${refusal.code})`);
+		const normalized = normalizeKey(row.key);
+		if (seen.has(normalized)) continue;
+		seen.add(normalized);
+		keys.push(row.key);
+	}
+	return keys;
+}
+
 export class IndexStore {
 	private readonly filePath: string;
+	private readonly mdPath: string;
 	private readonly lockPath: string;
 
 	constructor(agenticdocRoot: string) {
 		this.filePath = path.join(agenticdocRoot, "_index.parallel");
+		this.mdPath = path.join(agenticdocRoot, "_index.md");
 		this.lockPath = path.join(agenticdocRoot, "..", ".mw", "index.lock");
 	}
 
+	/** Set-level tolerant read: unsupported legacy/malformed lines are ignored,
+	 * never migrated. It is NOT an identity/permission source — see
+	 * {@link readAuthorityRows} and {@link authorityRefusalFor}. */
 	readAll(): IndexEntry[] {
 		if (!fs.existsSync(this.filePath)) return [];
 		const lines = fs.readFileSync(this.filePath, "utf8").split("\n");
 		return lines.map(parseIndexLine).filter((e): e is IndexEntry => e !== undefined);
 	}
 
+	/** Strict identity read of the ORIGINAL authority. For a mutation this MUST
+	 * run inside the shared lock and BEFORE the first write: an unsupported row
+	 * then refuses with zero writes instead of being discovered after the
+	 * authority rename. */
+	readAuthorityRows(): IndexEntry[] {
+		return strictAuthorityRows(this.readRawAuthority());
+	}
+
+	private readRawAuthority(): string {
+		try {
+			return fs.readFileSync(this.filePath, "utf8");
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
+			throw new IndexAuthorityError(
+				"authority-unreadable",
+				"_index.parallel is unreadable; refusing the index mutation with zero writes",
+			);
+		}
+	}
+
+	/** Identity-level verdict for ONE target key, used by the cross-key write
+	 * guard before it may look at a claim. A duplicate normalized target is
+	 * ambiguous and corrupt authority is unusable: both refuse (stable code),
+	 * so no caller can act on an arbitrary first matching row. */
+	authorityRefusalFor(key: string): string | null {
+		try {
+			this.readAuthorityRows();
+		} catch (err) {
+			return err instanceof IndexAuthorityError ? err.code : "authority-unreadable";
+		}
+		const normalized = normalizeKey(key);
+		const matches = this.readAll().filter((row) => normalizeKey(row.key) === normalized);
+		return matches.length > 1 ? "duplicate-target-key" : null;
+	}
+
 	async upsert(entry: IndexEntry): Promise<void> {
 		const release = await acquireLock(this.lockPath);
 		try {
-			const existing = this.readAll();
+			const existing = this.readAuthorityRows();
+			validateOriginalActiveInput(existing);
+			const matches = existing.filter((e) => normalizeKey(e.key) === normalizeKey(entry.key));
+			if (matches.length > 1) {
+				throw new IndexAuthorityError(
+					"duplicate-target-key",
+					`_index.parallel has ${matches.length} duplicate rows for the normalized target key; ` +
+						"refusing the ambiguous target with zero writes",
+				);
+			}
 			const idx = existing.findIndex((e) => normalizeKey(e.key) === normalizeKey(entry.key));
 			if (idx >= 0) {
 				// Keep the first-seen casing of the stored row: reads are
@@ -432,14 +624,35 @@ export class IndexStore {
 			// an owner key, never claimable.
 			const nameRefusal = keyNameRefusal(key);
 			if (nameRefusal) {
+				return { ok: false, entry: emptyEntry(key), created: false, refusal: nameRefusal.code };
+			}
+			// Validate the ORIGINAL authority inside the lock before any mutation.
+			// Corrupt/legacy structures are an explicit zero-write refusal, never a
+			// silent "drop the bad row, rewrite the remaining table".
+			let rows: IndexEntry[];
+			try {
+				rows = this.readAuthorityRows();
+				// Validate the ORIGINAL active input before any self-demotion:
+				// an illegal active row must not be able to hide by being demoted.
+				validateOriginalActiveInput(rows);
+			} catch (err) {
+				if (err instanceof IndexAuthorityError) {
+					return { ok: false, entry: emptyEntry(key), created: false, refusal: err.code };
+				}
+				throw err;
+			}
+			// Identity gate: duplicate normalized target rows are ambiguous. force
+			// may stomp a foreign LIVE claim, but must never auto-select a first row
+			// (idle/self first + foreign-live second included).
+			const matches = rows.filter((e) => normalizeKey(e.key) === normalizeKey(key));
+			if (matches.length > 1) {
 				return {
 					ok: false,
-					entry: { key, status: "idle", phase: "", claimId: "", deps: "", desc: "", updated: "" },
+					entry: matches[0] ?? emptyEntry(key),
 					created: false,
-					refusal: nameRefusal.code,
+					refusal: "duplicate-target-key",
 				};
 			}
-			const rows = this.readAll();
 			const idx = rows.findIndex((e) => normalizeKey(e.key) === normalizeKey(key));
 			const existing = rows[idx];
 			if (existing && existing.claimId !== self && heldLive(existing.claimId) && !force) {
@@ -448,7 +661,13 @@ export class IndexStore {
 			const now = new Date().toISOString();
 			if (demoteOthers) {
 				for (let i = 0; i < rows.length; i++) {
-					if (rows[i].status === "active" && normalizeKey(rows[i].key) !== normalizeKey(key)) {
+					// Only an EXACT current-window claim is ours to release. Other
+					// windows, legacy claims and empty claims stay untouched.
+					if (
+						rows[i].status === "active" &&
+						rows[i].claimId === self &&
+						normalizeKey(rows[i].key) !== normalizeKey(key)
+					) {
 						rows[i] = { ...rows[i], status: "idle", updated: now };
 					}
 				}
@@ -487,45 +706,55 @@ export class IndexStore {
 		}
 	}
 
-	/** Serialize rows back to _index.parallel, preserving AgenticTask header
-	 * lines. Callers must hold the index lock. */
+	/** Serialize rows back to _index.parallel and project EVERY active key to
+	 * _index.md. Callers must hold the index lock: both replacements share one
+	 * locked mutation. The ORIGINAL bytes are re-validated here (defence in
+	 * depth) BEFORE the authority rename, so an unsupported row can never be
+	 * discovered after a write. The projection is prepared first so bad
+	 * authority data also fails with zero writes; a filesystem failure after the
+	 * authority rename is reported as a partial write rather than a success. */
 	private writeRows(rows: IndexEntry[]): void {
-		// Preserve AgenticTask header lines: "# Index Parallel", "| Key | ... |", "| --- | ... |"
-		let header = "";
-		if (fs.existsSync(this.filePath)) {
-			const raw = fs.readFileSync(this.filePath, "utf8");
-			const headerLines: string[] = [];
-			for (const l of raw.split("\n")) {
-				const t = l.trim();
-				if (t.startsWith("#") || t.startsWith("| Key") || t.startsWith("| ---") || t.startsWith("|---")) {
-					headerLines.push(l);
-				} else {
-					break;
-				}
-			}
-			if (headerLines.length > 0) {
-				header = `${headerLines.join("\n")}\n`;
-			}
-		}
-		const content = `${header}${rows.map(serializeIndexLine).join("\n")}\n`;
+		const raw = this.readRawAuthority();
+		validateOriginalActiveInput(strictAuthorityRows(raw));
+		const projection = renderIndexMd(activeKeysFromRows(rows));
+		const header = headerLinesFromRaw(raw);
+		const body = rows.map(serializeIndexLine).join("\n");
+		const content = body ? `${header}${body}\n` : header || "\n";
 		const tmpPath = `${this.filePath}.tmp`;
 		fs.writeFileSync(tmpPath, content, "utf8");
 		fs.renameSync(tmpPath, this.filePath);
+		const mdTmpPath = `${this.mdPath}.${process.pid}.tmp`;
+		try {
+			fs.writeFileSync(mdTmpPath, projection, "utf8");
+			fs.renameSync(mdTmpPath, this.mdPath);
+		} catch (err) {
+			try {
+				fs.rmSync(mdTmpPath, { force: true });
+			} catch {
+				// The partial-write report below is the actionable result.
+			}
+			const code = err instanceof Error && "code" in err ? String(err.code) : "unknown-error";
+			throw new Error(
+				`_index.parallel was written, but _index.md active_keys projection failed (${code}); ` +
+					"the authoritative index may have changed. Rerun a successful index mutation or sync to recover.",
+			);
+		}
 	}
 
 	findByKey(key: string): IndexEntry | undefined {
-		// Case-insensitive (A6): the first stored row with the same normalized key
-		// wins; a caller passing a case variant gets the row the guard sees too.
+		// Case-insensitive DISPLAY lookup (A6): the first stored row with the same
+		// normalized key wins. Not an identity/permission source: claim, the
+		// cross-key guard and owner resolution must reject a duplicate normalized
+		// target via authorityRefusalFor()/strict reads before using any row.
 		return this.readAll().find((e) => normalizeKey(e.key) === normalizeKey(key));
 	}
 
-	/** The currently active row, if any (single-active discipline).
-	 * Legacy divergence can leave several active rows; the most recently
-	 * updated one wins (ties: the later row in file order). TS rows carry
-	 * ISO-UTC `updated` while update_index.py writes local "YYYY-MM-DD HH:MM",
-	 * so compare via Date.parse rather than lexicographic order. Exposes the
-	 * full row so callers can also read its claimId (owner resolution must
-	 * distinguish "our" active row from another live window's). */
+	/** Legacy global display helper: the most recently updated active row wins
+	 * (ties: the later row in file order). It is NOT an owner/permission source.
+	 * Multi-window owner resolution must filter authoritative active rows by the
+	 * exact current-window ClaimId instead. TS rows carry ISO-UTC `updated`
+	 * while update_index.py writes local "YYYY-MM-DD HH:MM", so compare via
+	 * Date.parse rather than lexicographic order. */
 	activeEntry(): IndexEntry | undefined {
 		let best: IndexEntry | undefined;
 		let bestTs = Number.NEGATIVE_INFINITY;
@@ -550,9 +779,10 @@ export interface ClaimOutcome {
 	ok: boolean;
 	/** Present when ok=false: the claim that blocked or beat us. */
 	blockedBy?: string;
-	/** Present when ok=false and the refusal was the key NAME itself (AC-006):
-	 * stable {@link keyNameRefusal} code (`reserved-key-name`,
-	 * `key-illegal-shape`, `key-path-escape`, `empty-key`). */
+	/** Present when ok=false and the refusal happened before any write: a stable
+	 * {@link keyNameRefusal} code (`reserved-key-name`, `key-illegal-shape`,
+	 * `key-path-escape`, `empty-key`), or T-07's `unsupported-authority-row` /
+	 * `authority-unreadable` / `duplicate-target-key` authority codes. */
 	refusal?: string;
 	/** Present when ok=true and the request hit an existing row that differs
 	 * from it only by case (A6): the stored, first-written spelling. The claim
@@ -575,15 +805,43 @@ export interface ClaimOptions {
 	activate?: boolean;
 }
 
-/** Read the degraded-mode `active:` pointer from `_index.md`. Fallback for
- * owner-key resolution when `_index.parallel` has no active row. Returns
- * undefined when the file or the line is missing. */
-export function readIndexMdActive(agenticdocRoot: string): string | undefined {
+/** Read the complete `_index.md` active_keys collection. The Markdown file is
+ * a projection, never an identity/authorization source. Missing files, the old
+ * `active:` scalar, bad/non-canonical JSON, reserved/illegal names and duplicate
+ * normalized keys all fail closed. */
+export function readIndexMdActiveKeys(agenticdocRoot: string): string[] {
 	const mdPath = path.join(agenticdocRoot, "_index.md");
-	if (!fs.existsSync(mdPath)) return undefined;
-	for (const line of fs.readFileSync(mdPath, "utf8").split("\n")) {
-		const m = /^active:\s*(\S+)/u.exec(line.trim());
-		if (m) return m[1];
+	let content: string;
+	try {
+		content = fs.readFileSync(mdPath, "utf8");
+	} catch {
+		throw new Error("_index.md is missing or unreadable; active_keys collection is unavailable");
 	}
-	return undefined;
+	if (content.includes("\r")) {
+		throw new Error("_index.md must be the UTF-8/LF active_keys JSON projection");
+	}
+	const match = /^# AgenticTask Index\n\nactive_keys: (.+)\n$/.exec(content);
+	if (!match) throw new Error("_index.md must be the UTF-8/LF active_keys JSON projection");
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(match[1] ?? "");
+	} catch {
+		throw new Error("_index.md active_keys is not valid JSON");
+	}
+	if (!Array.isArray(parsed) || parsed.some((key) => typeof key !== "string")) {
+		throw new Error("_index.md active_keys must be a JSON array of strings");
+	}
+	const keys = parsed as string[];
+	const seen = new Set<string>();
+	for (const key of keys) {
+		const refusal = keyNameRefusal(key);
+		if (refusal) throw new Error(`_index.md active_keys has an invalid key (${refusal.code})`);
+		const normalized = normalizeKey(key);
+		if (seen.has(normalized)) throw new Error("_index.md active_keys contains a duplicate key");
+		seen.add(normalized);
+	}
+	if (renderIndexMd(keys) !== content) {
+		throw new Error("_index.md active_keys is not in canonical form");
+	}
+	return [...keys];
 }

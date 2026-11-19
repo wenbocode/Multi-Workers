@@ -403,7 +403,7 @@ export function selectedDecisionBasis(
 export function claimedPmKey(projectDir: string, requested?: string): string | undefined {
 	try {
 		const self = currentClaimId();
-		const rows = new IndexStore(agenticdocRoot(projectDir)).readAll();
+		const rows = new IndexStore(agenticdocRoot(projectDir)).readAuthorityRows();
 		const eligible = rows.filter(
 			(row) =>
 				row.status === "active" &&

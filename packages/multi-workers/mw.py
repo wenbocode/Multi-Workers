@@ -65,6 +65,7 @@ from mw_common import (
     check_pid as _check_pid,
     port_is_bound as _port_is_bound,
 )
+from autopilot import active_projection as _ap_projection
 from autopilot import dispatch as dispatch_module
 from autopilot import config as _ap_config
 from autopilot import conductor as _ap_conductor
@@ -12335,14 +12336,50 @@ def cmd_init(args: argparse.Namespace) -> int:
     (project_dir / ".mw").mkdir(parents=True, exist_ok=True)
     (project_dir / ".pi" / "extensions").mkdir(parents=True, exist_ok=True)
 
-    # Create placeholder files
-    index_md = project_dir / ".agenticdoc" / "_index.md"
-    if not index_md.exists():
-        index_md.write_text("# AgenticTask Index\n\nactive: \n", encoding="utf-8")
-
+    # `_index.parallel` is the sole authority; `_index.md` is only its derived
+    # complete-active projection (design D-002/D-006):
+    # `active_keys: ["a", "b"]`, `[]` when nothing is active. The missing-table
+    # creation is done INSIDE the shared lock below with a re-check, so a
+    # concurrent claim writer can never have a freshly written active row
+    # truncated by an init that observed the table as missing (VC-004/T-09).
     index_parallel = project_dir / ".agenticdoc" / "_index.parallel"
-    if not index_parallel.exists():
-        index_parallel.write_text("", encoding="utf-8")
+
+    # Hold the SAME shared `.mw/index.lock` every claim writer takes while
+    # creating/rechecking the authority and correcting the projection from the
+    # CURRENT parallel rows. On a fresh root this writes the empty collection;
+    # on an existing root it never writes an empty list over live active keys.
+    # The helper takes no lock of its own, so there is no deadlock.
+    index_lock = project_dir / ".mw" / "index.lock"
+    try:
+        mw_common.acquire_lock(index_lock, retries=4, base_delay=0.02, deadline_s=5)
+    except (OSError, RuntimeError) as exc:
+        print(f"[mw init] Error acquiring index.lock: {exc}", file=sys.stderr)
+        return 1
+    projection_incomplete = False
+    try:
+        if not index_parallel.exists():
+            index_parallel.write_bytes(b"")
+        projection_state = _ap_projection.sync_init_projection(project_dir)
+    except (OSError, _ap_projection.ActiveProjectionError) as exc:
+        print(f"[mw init] Error syncing active-key projection: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        mw_common.release_lock(index_lock)
+    if projection_state == "migrated":
+        print(
+            "[mw init] Migrated a safely recognized legacy _index.md scalar "
+            "to the canonical active_keys projection",
+            file=sys.stderr,
+        )
+    if projection_state == "incomplete-user-content":
+        projection_incomplete = True
+        print(
+            "[mw init] INCOMPLETE: existing _index.md is not a safely migratable "
+            "program/legacy projection; left untouched. The active projection is "
+            "incomplete; preserve the user content or replace the file explicitly, "
+            "then rerun mw init.",
+            file=sys.stderr,
+        )
 
     # Project goal is the north-star that every key/spec derives from. Seed a
     # `status: draft` skeleton so the goal brainstorm workflow (/goal) — or the
@@ -12403,6 +12440,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"[mw init] Error installing project agent guide: {exc}", file=sys.stderr)
         return 1
     print(f"[mw init] Project agent guide: {guide}")
+    if projection_incomplete:
+        return 1
     print(f"[mw init] Project initialized: {project_dir}")
     return 0
 

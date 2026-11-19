@@ -39,6 +39,7 @@ import {
 import { acquireLock } from "../shared/file-lock.ts";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.ts";
 import {
+	type IndexEntry,
 	type IndexStore,
 	isScratchKey,
 	type KeyNameRefusal,
@@ -46,7 +47,6 @@ import {
 	normalizeKey,
 	parseSyntheticClaim,
 	RESERVED_INDEX_NAMES,
-	readIndexMdActive,
 	syntheticClaimLive,
 } from "../shared/index-store.ts";
 import { runConcurrencyCommand } from "../shared/model-concurrency-extension.ts";
@@ -124,63 +124,93 @@ import {
 
 export { captureDecisionTaskState };
 
-/** Owner key for a worker task — this window's own claim first, the shared
- * active pointer second. Explicit key wins (deliberate choice — no warning).
- * Otherwise, when this window watches a key whose _index.parallel row it
- * holds (claimId === this window's host:pid), dispatches land under that key
- * even when another window's later takeover made a different row the
- * globally-latest active one: single-active demote flips the shared pointer
- * between windows, but ownership does not move. A stale or foreign watch
- * (no claim held) falls back to the global active row — but never one held
- * live by another window (injecting work into another window's key is the
- * cross-window dispatch bug this guards); that case degrades to _scratch
- * with a warning. Then the degraded _index.md `active:` pointer, then
- * _scratch. */
+/** Owner key for a worker task. Explicit key wins (deliberate choice — the
+ * caller's `foreignLiveClaimRefusal` remains the real write-permission check);
+ * _scratch stays an owner-only namespace. Every implicit decision reads the
+ * authoritative `_index.parallel` STRICTLY: unsupported legacy/malformed rows,
+ * an unreadable authority and duplicate normalized identity rows fail closed to
+ * _scratch, and a reserved/illegal active name can never become a namespace.
+ * A valid watch (its own UNIQUE active row claimed by this exact window) is an
+ * explicit choice even with several own active rows (D-003); without one,
+ * multiple own active rows are ambiguous. The old `active:` scalar and the
+ * `_index.md` active_keys array are never authorization. Pure projection
+ * (D-002) still normalizes duplicate SET rows — this path decides IDENTITY,
+ * not the active_keys collection. */
 export function resolveOwnerKeyWithSync(
 	pi: ExtensionAPI,
 	indexStore: IndexStore,
 	watch: PmWatchState,
 	explicit: string | undefined,
-	agenticdocRoot: string,
+	_agenticdocRoot: string,
 ): string {
 	const explicitKey = (explicit ?? "").trim();
 	if (explicitKey) return explicitKey;
 	const self = windowClaimId();
-	if (watch.key) {
-		// _scratch is watchable but never indexed; a window watching it means
-		// its ad-hoc dispatches belong there.
-		if (isScratchKey(watch.key)) return SCRATCH_WORKERS_KEY;
-		if (indexStore.findByKey(watch.key)?.claimId === self) return watch.key;
-	}
-	const active = indexStore.activeEntry();
-	if (active && claimHeldByAnotherWriter(claimState(active.claimId, self))) {
-		warnForeignActiveOnce(pi, active.key);
+	const watchKey = (watch.key ?? "").trim();
+	if (watchKey && isScratchKey(watchKey)) return SCRATCH_WORKERS_KEY;
+	let rows: IndexEntry[];
+	try {
+		rows = indexStore.readAuthorityRows();
+	} catch {
+		// Corrupt authority must not bubble an unhandled UI exception and must
+		// never fall through to a permissive owner guess.
+		warnOwnerSelection(pi, "authoritative index is unreadable or unsupported");
 		return SCRATCH_WORKERS_KEY;
 	}
-	// `_index.md active:` is a degraded pointer that carries NO claim column, so
-	// it cannot be trusted by itself (A7): resolve it back to the
-	// `_index.parallel` row and apply the SAME name + liveness gate as the
-	// active-row branch. A foreign live value and a reserved/illegal name both
-	// degrade to _scratch with a warning instead of silently becoming an owner
-	// key in another window's namespace.
-	const fallbackKey = active?.key ?? readIndexMdActive(agenticdocRoot);
-	if (fallbackKey) {
-		if (keyNameRefusal(fallbackKey)) {
-			warnForeignActiveOnce(pi, fallbackKey);
-			return SCRATCH_WORKERS_KEY;
-		}
-		const row = indexStore.findByKey(fallbackKey);
-		if (row && claimHeldByAnotherWriter(claimState(row.claimId, self))) {
-			warnForeignActiveOnce(pi, fallbackKey);
-			return SCRATCH_WORKERS_KEY;
-		}
-		if (watch.key && normalizeKey(watch.key) !== normalizeKey(fallbackKey)) {
-			warnOwnerMismatchOnce(pi, watch.key, fallbackKey);
-		}
-		return fallbackKey;
+	// Name gate before ANY watched/candidate value can be returned as a namespace.
+	if (watchKey && keyNameRefusal(watchKey)) {
+		warnOwnerSelection(pi, "watched key is not a usable namespace");
+		return SCRATCH_WORKERS_KEY;
 	}
-	if (watch.key) warnOwnerMismatchOnce(pi, watch.key, SCRATCH_WORKERS_KEY);
-	return SCRATCH_WORKERS_KEY;
+	const activeRows = rows.filter((row) => row.status === "active");
+	if (activeRows.some((row) => keyNameRefusal(row.key))) {
+		warnOwnerSelection(pi, "authoritative active key is not a usable namespace");
+		return SCRATCH_WORKERS_KEY;
+	}
+	const duplicateTarget = (key: string): boolean =>
+		rows.filter((row) => normalizeKey(row.key) === normalizeKey(key)).length > 1;
+	if (watchKey && duplicateTarget(watchKey)) {
+		warnOwnerSelection(pi, "duplicate authoritative rows for the watched key");
+		return SCRATCH_WORKERS_KEY;
+	}
+	const watched = watchKey ? rows.find((row) => normalizeKey(row.key) === normalizeKey(watchKey)) : undefined;
+	if (watchKey && watched?.status === "active" && watched.claimId === self) return watchKey;
+	const ownActive = activeRows.filter((row) => row.claimId === self);
+	if (ownActive.length > 1) {
+		warnOwnerSelection(pi, "multiple active keys with this window's claim");
+		return SCRATCH_WORKERS_KEY;
+	}
+	let owner: string | undefined;
+	if (ownActive.length === 1) {
+		owner = ownActive[0]?.key;
+	} else {
+		// A watched row that failed the authoritative active + exact-self check
+		// cannot become the legacy fallback owner by another route.
+		const candidates = activeRows.filter((row) => !watchKey || normalizeKey(row.key) !== normalizeKey(watchKey));
+		const candidate = candidates.length === 1 ? candidates[0] : undefined;
+		if (candidate && claimHeldByAnotherWriter(claimState(candidate.claimId, self))) {
+			warnForeignActiveOnce(pi, candidate.key);
+			return SCRATCH_WORKERS_KEY;
+		}
+		if (candidate) {
+			owner = candidate.key;
+		} else {
+			warnOwnerSelection(
+				pi,
+				candidates.length > 1 ? "multiple active keys without this window's claim" : "no authoritative active key",
+			);
+			if (watchKey) warnOwnerMismatchOnce(pi, watchKey, SCRATCH_WORKERS_KEY);
+			return SCRATCH_WORKERS_KEY;
+		}
+	}
+	if (!owner || keyNameRefusal(owner) || duplicateTarget(owner)) {
+		warnOwnerSelection(pi, "ambiguous or unusable authoritative owner key");
+		return SCRATCH_WORKERS_KEY;
+	}
+	if (watchKey && normalizeKey(watchKey) !== normalizeKey(owner)) {
+		warnOwnerMismatchOnce(pi, watchKey, owner);
+	}
+	return owner;
 }
 
 /** Warned (watch -> owner) pairs this session. displaySummary persists the
@@ -209,6 +239,16 @@ function warnForeignActiveOnce(pi: ExtensionAPI, activeKey: string): void {
 		pi,
 		`[mw] active key '${activeKey}' is claimed by another live window — not dispatching under it; ` +
 			`using '${SCRATCH_WORKERS_KEY}' instead. Pass an explicit key, or switch_key in this window first.`,
+	);
+}
+
+/** Generic owner-selection warning. Reasons are closed labels: stale watch,
+ * scalar/Markdown pointers and unrelated rows are never quoted into it. */
+function warnOwnerSelection(pi: ExtensionAPI, reason: string): void {
+	displaySummary(
+		pi,
+		`[mw] owner key is unavailable or ambiguous (${reason}); using '${SCRATCH_WORKERS_KEY}'. ` +
+			"Pass an explicit key, or switch_key in this window first.",
 	);
 }
 
@@ -867,6 +907,18 @@ export function foreignLiveClaimRefusal(indexStore: IndexStore, key: string): st
 	// be used as key namespaces — there is no such bypass left.
 	const nameRefusal = keyNameRefusal(trimmed);
 	if (nameRefusal) return reservedKeyRefusal(trimmed, nameRefusal);
+	// Identity gate (T-07): a duplicate normalized target or a corrupt /
+	// unsupported authority must not be resolved by findByKey's first row.
+	const authorityRefusal = indexStore.authorityRefusalFor(trimmed);
+	if (authorityRefusal) {
+		return (
+			`[${CROSS_KEY_READ_ONLY}] key '${trimmed}' cannot be resolved from the authoritative _index.parallel ` +
+			`(${authorityRefusal}); this window's view of it is read-only.\n` +
+			`Allowed: list_tasks { scope: "all" } or { scope: "key", key: "${trimmed}" }, mw_status, mw doctor.\n` +
+			`Refused: ${CROSS_KEY_READ_ONLY_SURFACES.join(", ")}, ${CROSS_KEY_READ_ONLY_ACK_NOTE}.\n` +
+			"Repair the index (one unambiguous row per key, 7-column rows only), then retry."
+		);
+	}
 	const claim = indexStore.findByKey(trimmed)?.claimId.trim() ?? "";
 	if (!claim) return null;
 	const state = claimState(claim, windowClaimId());
@@ -1533,6 +1585,23 @@ export function registerPmKeyCommands(
 				// Route through the atomic claim: auto-create + demote other active
 				// rows (single-active discipline) in one locked step.
 				const result = await takeOverKey(indexStore, keyName, false, agenticdocRoot);
+				// Honor the REAL atomic claim result (AC-003/004): a refusal or a
+				// foreign-live conflict is never a success. On failure: NO watch,
+				// NO claimed session entry, NO success notification.
+				if (!result.ok) {
+					if (result.refusal) {
+						ctx.ui.notify(
+							`Key '${keyName}' could not be created (${result.refusal}): the authoritative index refused the claim; nothing was claimed or watched.`,
+							"warning",
+						);
+						return;
+					}
+					ctx.ui.notify(
+						`Key '${keyName}' could not be created — claimed by another live window (${result.blockedBy}); nothing was claimed or watched.`,
+						"warning",
+					);
+					return;
+				}
 				// Executing a key in this window also watches it (bottom progress widget).
 				setWindowWatch(pi, watch, refreshWatch, ctx, keyName, true);
 				ctx.ui.notify(`Created and claimed key: ${keyName} (${result.claimId})`, "info");
@@ -3735,7 +3804,7 @@ export function registerSwitchKeyTool(
 						text:
 							`Took over key '${trimmed}' (claim ${result.claimId})` +
 							`${result.created ? " — new key registered in _index.parallel" : ""}. ` +
-							"This window now watches it; the bottom widget shows its live progress. Previously active keys were marked idle." +
+							"This window now watches it; the bottom widget shows its live progress. Only this window's previous active keys were marked idle." +
 							auditNote +
 							(syncNote === "" ? "" : `\n\n${syncNote}`),
 					},

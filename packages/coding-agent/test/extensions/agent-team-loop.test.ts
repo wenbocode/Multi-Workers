@@ -94,7 +94,7 @@ import {
 	readHeartbeatInfo,
 	readTaskProgress,
 } from "../../src/extensions/agent-team-loop/shared/heartbeat.ts";
-import { IndexStore, readIndexMdActive } from "../../src/extensions/agent-team-loop/shared/index-store.ts";
+import { IndexStore, readIndexMdActiveKeys } from "../../src/extensions/agent-team-loop/shared/index-store.ts";
 import type { DoctorJson, MwCliResult } from "../../src/extensions/agent-team-loop/shared/mw-runner.ts";
 import {
 	mwCodeNewestMtimeMs,
@@ -1352,36 +1352,71 @@ describe("IndexStore.activeKey", () => {
 	});
 });
 
-describe("readIndexMdActive", () => {
-	it("VC-002: reads the degraded-mode active pointer from _index.md", () => {
+describe("readIndexMdActiveKeys", () => {
+	it("VC-006: reads the complete canonical active_keys collection", () => {
 		const root = mkdtemp();
-		fs.writeFileSync(path.join(root, "_index.md"), "active: my-feature-key\n", "utf8");
-		expect(readIndexMdActive(root)).toBe("my-feature-key");
+		const mdPath = path.join(root, "_index.md");
+		const cases: Array<{ keys: string[]; content: string }> = [
+			{ keys: [], content: "# AgenticTask Index\n\nactive_keys: []\n" },
+			{ keys: ["key-a"], content: '# AgenticTask Index\n\nactive_keys: ["key-a"]\n' },
+			{
+				keys: ["key-a", "key-b"],
+				content: '# AgenticTask Index\n\nactive_keys: ["key-a", "key-b"]\n',
+			},
+		];
+		for (const testCase of cases) {
+			fs.writeFileSync(mdPath, testCase.content, "utf8");
+			expect(readIndexMdActiveKeys(root)).toEqual(testCase.keys);
+			expect(fs.readFileSync(mdPath, "utf8")).toBe(testCase.content);
+		}
+		console.log("[VERIFY] VC-006: active_keys=0/1/N exact_utf8_lf=true");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
-	it("VC-002: returns undefined when the file or the active line is missing", () => {
+	it("VC-007: missing, old scalar, bad, duplicate and reserved projections fail closed", () => {
 		const root = mkdtemp();
-		expect(readIndexMdActive(root)).toBeUndefined();
-		fs.writeFileSync(path.join(root, "_index.md"), "# no active pointer\n", "utf8");
-		expect(readIndexMdActive(root)).toBeUndefined();
+		const mdPath = path.join(root, "_index.md");
+		expect(() => readIndexMdActiveKeys(root)).toThrow(/missing or unreadable/);
+		fs.writeFileSync(mdPath, "active: my-feature-key\n", "utf8");
+		expect(() => readIndexMdActiveKeys(root)).toThrow(/UTF-8\/LF active_keys/);
+		fs.writeFileSync(mdPath, '# AgenticTask Index\n\nactive_keys: ["a",]\n', "utf8");
+		expect(() => readIndexMdActiveKeys(root)).toThrow(/not valid JSON/);
+		fs.writeFileSync(mdPath, '# AgenticTask Index\n\nactive_keys: ["a", "a"]\n', "utf8");
+		expect(() => readIndexMdActiveKeys(root)).toThrow(/duplicate key/);
+		fs.writeFileSync(mdPath, '# AgenticTask Index\n\nactive_keys: ["a", "A"]\n', "utf8");
+		expect(() => readIndexMdActiveKeys(root)).toThrow(/duplicate key/);
+		fs.writeFileSync(mdPath, '# AgenticTask Index\n\nactive_keys: ["_index.parallel"]\n', "utf8");
+		expect(() => readIndexMdActiveKeys(root)).toThrow(/invalid key/);
+		fs.writeFileSync(mdPath, "# AgenticTask Index\n\nactive_keys: []\nextra\n", "utf8");
+		expect(() => readIndexMdActiveKeys(root)).toThrow(/UTF-8\/LF active_keys/);
+		console.log("[VERIFY] VC-007: collection_fail_closed=true scalar_fallback=false");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 });
 
 describe("IndexStore.claim (M1: atomic claim primitive)", () => {
-	it("demotes other active rows, verifies the write, and refuses held-live targets without force", async () => {
+	it("demotes only exact-self active rows, verifies the write, and refuses held-live targets without force", async () => {
 		const root = mkdtemp();
 		const is = new IndexStore(root);
-		// key-a held by a foreign live claim (predicate says held), key-b idle.
+		// key-a is another window's active row; key-self is this window's old
+		// active row; key-b is the idle takeover target.
 		await is.upsert({
 			key: "key-a",
 			status: "active",
 			phase: "EXECUTE",
 			claimId: "other-window:1",
-			deps: "",
-			desc: "",
-			updated: new Date().toISOString(),
+			deps: "dep-a",
+			desc: "foreign window",
+			updated: "2026-10-10T00:00:00Z",
+		});
+		await is.upsert({
+			key: "key-self",
+			status: "active",
+			phase: "EXECUTE",
+			claimId: "self-1",
+			deps: "dep-self",
+			desc: "own old row",
+			updated: "2026-10-10T01:00:00Z",
 		});
 		await is.upsert({
 			key: "key-b",
@@ -1392,14 +1427,26 @@ describe("IndexStore.claim (M1: atomic claim primitive)", () => {
 			desc: "",
 			updated: new Date().toISOString(),
 		});
+		const foreignBefore = is.findByKey("key-a");
+		const foreignLineBefore = fs
+			.readFileSync(path.join(root, "_index.parallel"), "utf8")
+			.split("\n")
+			.find((line) => line.includes("| key-a |"));
 
-		// Take key-b for self-1: ok, key-a demoted (single-active discipline).
+		// Take key-b for self-1: exact-self old row demoted, foreign row untouched.
 		const r1 = await is.claim("key-b", "self-1", () => false);
 		expect(r1.ok).toBe(true);
 		expect(r1.created).toBe(false);
 		expect(is.findByKey("key-b")?.claimId).toBe("self-1");
 		expect(is.findByKey("key-b")?.status).toBe("active");
-		expect(is.findByKey("key-a")?.status).toBe("idle");
+		expect(is.findByKey("key-self")?.status).toBe("idle");
+		expect(is.findByKey("key-a")).toEqual(foreignBefore);
+		expect(
+			fs
+				.readFileSync(path.join(root, "_index.parallel"), "utf8")
+				.split("\n")
+				.find((line) => line.includes("| key-a |")),
+		).toBe(foreignLineBefore);
 
 		// self-2 cannot take key-b while the predicate reports the holder live.
 		const r2 = await is.claim("key-b", "self-2", () => true);
@@ -1418,6 +1465,8 @@ describe("IndexStore.claim (M1: atomic claim primitive)", () => {
 		expect(r4.created).toBe(true);
 		expect(is.findByKey("key-new")?.status).toBe("active");
 		expect(is.findByKey("key-new")?.phase).toBe("SPEC");
+		expect(is.findByKey("key-a")).toEqual(foreignBefore);
+		console.log("[VERIFY] VC-002: demote_scope=self foreign_untouched=true");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
@@ -3486,7 +3535,7 @@ describe("pm-key takeover claims", () => {
 		await handler("switch key-a --force", forced.ctx);
 		expect(is.findByKey("key-a")?.claimId).toBe(windowClaimId());
 		expect(is.findByKey("key-a")?.status).toBe("active");
-		expect(is.findByKey("key-b")?.status).toBe("idle"); // others marked idle
+		expect(is.findByKey("key-b")?.status).toBe("active"); // other window's unclaimed active row is untouched
 		expect(watch.key).toBe("key-a");
 		expect(entries.at(-1)?.data).toEqual({ key: "key-a", claimed: true });
 
@@ -3727,14 +3776,14 @@ describe("pm-key takeover claims", () => {
 		const refresh = (_ctx: ExtensionContext): void => {};
 		await seedKey(root, "key-other", "", "active");
 
-		// Fresh key: row auto-created + claimed + watched; other active keys idle.
+		// Fresh key: row auto-created + claimed + watched; other windows' active rows stay active.
 		const c1 = fakeCmdCtx();
 		await autoTakeOverFromDoc(pi, is, watch, refresh, "key-new", "spec.md", root, c1.ctx);
 		const row = is.findByKey("key-new");
 		expect(row?.claimId).toBe(windowClaimId());
 		expect(row?.status).toBe("active");
 		expect(row?.phase).toBe("SPEC");
-		expect(is.findByKey("key-other")?.status).toBe("idle");
+		expect(is.findByKey("key-other")?.status).toBe("active");
 		expect(watch.key).toBe("key-new");
 		expect(entries.at(-1)?.data).toEqual({ key: "key-new", claimed: true });
 		expect(c1.notifications.some((n) => n.includes("claimed key 'key-new'"))).toBe(true);
@@ -3850,6 +3899,9 @@ describe("pm-key takeover claims", () => {
 		);
 		expect(r2.content[0]?.text).toContain("Dispatched worker 't2'");
 		expect(ws.findByKey("t2")?.status).toBe("pending");
+		const scratchTask = ws.findByKey("t2");
+		if (!scratchTask) throw new Error("t2 missing from queue");
+		await ws.upsert({ ...scratchTask, status: "done" });
 
 		// Fully documented key: dispatches.
 		writePhaseDocs(root, "doc-key");
