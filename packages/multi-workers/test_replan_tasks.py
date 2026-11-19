@@ -1,7 +1,6 @@
 """Per-run offline recovery, real lifecycle reader/receipts and both producer identities."""
 import copy
 import json
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 from uuid import uuid4
@@ -139,12 +138,12 @@ def test_interrupted_publish_is_inadmissible_and_resumable(fixture):
     project, key, _, _ = fixture
     args, prepared = prepare(project)
     ref = answer(project, prepared)
-    link = rp.os.link
-    def interrupt(src, dst):
-        if Path(dst).name == "two.md":
+    publish = rp.publish_new
+    def interrupt(path, markdown):
+        if path.name == "two.md":
             raise OSError("simulated interruption")
-        link(src, dst)
-    with patch.object(rp.os, "link", interrupt), pytest.raises(OSError, match="interruption"):
+        publish(path, markdown)
+    with patch.object(rp, "publish_new", interrupt), pytest.raises(OSError, match="interruption"):
         tool(project, "apply", **args, version=prepared["version"], decision_id=ref)
     assert (key / "tasks/one.md").is_file()
     assert rp.admission(project, "demo", "manual-one", "tasks/one.md") == "replan-plan-not-published"
@@ -270,3 +269,79 @@ def test_windows_case_variation_cannot_bypass_source_or_successor(fixture):
     first = dispatch.dispatch(project, "demo", "one", "phase-writer", "check", loop="execute", attempt=1)
     assert first.ok
     assert "already-dispatched" in rp.admission(project, "demo", "new", "tasks/ONE.md")
+
+
+def write_closure(key):
+    put(key / "plan.md", "## 闭环覆盖\n| AC-001 | `T-base` | VC-001 |\n"
+        "| FLOW-001 | `T-base` | VC-001 |\n\n## Later\n| FLOW-003 | base | VC-999 |\n")
+    put(key / "design.md", "### 必要功能路径\n| FLOW-001 | command | result | VC-001, VC-002 |\n")
+
+
+@pytest.mark.parametrize("missing", ["AC-002", "FLOW-001", "VC-001", "VC-002"])
+def test_replan_requires_each_source_obligation(fixture, missing):
+    project, key, *_ = fixture
+    write_closure(key)
+    current = tool(project, "inspect", task="old")
+    assert current["coverage"] == ["AC-001", "AC-002", "FLOW-001", "VC-001", "VC-002"]
+    child = unit("child", "AC-001")
+    child["covers"] = [item for item in current["coverage"] if item != missing]
+    with pytest.raises(ValueError, match=missing):
+        tool(project, "preview", issue=current["issue"], snapshot=current["snapshot"],
+             plan={"action": "narrow", "reason": "Focused remaining work", "units": [child]})
+
+
+def test_replan_binds_retained_proof_and_refuses_unrelated_owners(fixture):
+    project, key, *_ = fixture
+    write_closure(key)
+    current = tool(project, "inspect", task="old")
+    args = {field: current[field] for field in ("issue", "snapshot")}
+    child = unit("child", "AC-001")
+    child["covers"] = ["AC-001", "AC-002", "VC-001"]
+    put(key / "tasks/other.md", card("other"))
+    plan = {"action": "narrow", "reason": "reuse a working path", "units": [child],
+            "retained": {"FLOW-001": "tasks/other.md", "VC-002": "evidence/flow.md"}}
+    with pytest.raises(ValueError, match="FLOW-001"):
+        tool(project, "preview", **args, plan=plan)
+    put(key / "tasks/other.md", card("other", "FLOW-001"))
+    with pytest.raises(ValueError, match="VC-002"):
+        tool(project, "preview", **args, plan=plan)
+    evidence = key / "evidence/flow.md"
+    put(evidence, "VC-002 PASS · ran the command and verified stdout\n")
+    verdict = tool(project, "preview", **args, plan=plan)
+    ref = answer(project, verdict, choice="narrow")
+    put(evidence, "VC-002 PASS · observed a different run\n")
+    with pytest.raises(ValueError, match="stale plan version"):
+        tool(project, "apply", **args, version=verdict["version"], decision_id=ref)
+    verdict = tool(project, "preview", **args, plan=plan)
+    applied = tool(project, "apply", **args, version=verdict["version"],
+                   decision_id=answer(project, verdict, choice="narrow"))
+    assert applied["state"] == "applied"
+    assert rp.admission(project, "demo", "child", "tasks/child.md") is None
+
+
+def test_manual_steer_requires_current_run_and_publishes_only_once(fixture):
+    project, key, folder, _ = fixture
+    write_closure(key)
+    before = rp.body(folder / "task.md")
+    mw_common.update_status(project, "old", "running")
+    run = json.loads(rp.body(folder / "run.json"))
+    put(folder / "run.json", json.dumps({**run, "status": "running", "ended_at": None}))
+    inspected = tool(project, "inspect", task="old")
+    args = {"task": "old", "snapshot": inspected["snapshot"], "verification": "call_7",
+            "remaining": "Complete both required cases", "stop": "Extra benchmarking"}
+    with pytest.raises(ValueError, match="own"):
+        tool(project, "trim_steer", **args, claim="foreign")
+    with pytest.raises(ValueError, match="changed"):
+        tool(project, "trim_steer", **dict(args, snapshot="stale"))
+    assert tool(project, "trim_steer", **args)["state"] == "queued"
+    target = folder / "steer-dp2.md"
+    message = rp.body(target)
+    assert message.startswith("[dp2-narrow-request]\n")
+    assert "FLOW-001, VC-001, VC-002" in message and "call_7" in message
+    assert rp.body(folder / "task.md") == before
+    with pytest.raises(ValueError, match="already has a steer"):
+        tool(project, "trim_steer", **args)
+    assert rp.body(target) == message
+    mw_common.update_status(project, "old", "done")
+    with pytest.raises(ValueError, match="no longer running"):
+        tool(project, "trim_steer", **args)

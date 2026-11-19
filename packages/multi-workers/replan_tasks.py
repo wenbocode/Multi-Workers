@@ -54,6 +54,24 @@ def save(path: Path, record: dict) -> None:
         Path(tmp).unlink(missing_ok=True)
 
 
+def publish_new(path: Path, text: str) -> None:
+    """Publish a complete file without replacing another writer's file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
+            out.write(text)
+            out.flush()
+            os.fsync(out.fileno())
+        # Windows rename is atomic and refuses an existing destination.
+        if os.name == "nt":
+            os.rename(tmp, path)
+        else:
+            os.link(tmp, path)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
 @contextlib.contextmanager
 def locked(path: Path):
     mw_common.acquire_lock(path, deadline_s=8)
@@ -76,6 +94,41 @@ def source_card(key_dir: Path, ref: str) -> Path:
 
 def card_identity(ref: str) -> str:
     return ref.casefold() if os.name == "nt" else ref
+
+
+OBLIGATION = re.compile(r"(?<![\w-])(?:AC|FLOW|VC)-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*(?![\w-])")
+
+
+def table_rows(markdown: str, heading: str):
+    section = re.search(r"^(#{2,6})[ \t]+" + re.escape(heading) + r"[ \t]*$", markdown, re.M)
+    if section:
+        following = markdown[section.end():]
+        end = re.search(r"^#{1," + str(len(section[1])) + r"}[ \t]+", following, re.M)
+        for line in following[:end.start() if end else len(following)].splitlines():
+            if line.strip().startswith("|"):
+                yield [part.strip().strip("`") for part in line.strip().strip("|").split("|")]
+
+
+def card_coverage(closure: dict, ref: str, markdown: str) -> set[str]:
+    required = set(OBLIGATION.findall(markdown))
+    if ref:
+        stem = Path(ref).stem.casefold()
+        aliases = {stem, stem.removeprefix("t-")}
+        for obligation, (owners, _) in closure.items():
+            if aliases & owners:
+                required.add(obligation)
+    return required | {vc for obligation in required for vc in closure.get(obligation, ((), ()))[1]}
+
+
+def closure_coverage(plan: str, design: str) -> dict:
+    flows = {row[0]: set(OBLIGATION.findall(row[3])) for row in table_rows(design, "必要功能路径")
+             if len(row) >= 4 and row[0].startswith("FLOW-")}
+    closure = {flow: (set(), checks) for flow, checks in flows.items()}
+    for row in table_rows(plan, "闭环覆盖"):
+        if len(row) >= 3 and OBLIGATION.fullmatch(row[0]):
+            owners = {part.strip().strip("`").casefold().removeprefix("t-") for part in row[1].split(",")}
+            closure[row[0]] = owners, set(OBLIGATION.findall(row[2])) | flows.get(row[0], set())
+    return closure
 
 
 def timestamp(value: object) -> datetime | None:
@@ -212,14 +265,45 @@ def inspect(project: Path, key_dir: Path, task: str | None) -> dict:
     snapshot = digest([facts, original, envelope])
     report = key_dir / "workers" / task / "report.md"
     result = key_dir / "workers" / task / "output.md"
-    snapshot = digest([snapshot, digest(body(report)), body(key_dir / "plan.md"), body(key_dir / "spec.md")])
-    acceptance = sorted(set(re.findall(r"(?<![A-Za-z0-9_-])AC-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", original or envelope)))
+    plan, design = body(key_dir / "plan.md"), body(key_dir / "design.md")
+    closure = closure_coverage(plan, design)
+    coverage = sorted(card_coverage(closure, facts["card"], original or envelope))
+    snapshot_fields = [snapshot, digest(body(report)), plan, body(key_dir / "spec.md")]
+    if closure or any(not item.startswith("AC-") for item in coverage):
+        snapshot_fields.append(design)
+    snapshot = digest(snapshot_fields)
+    acceptance = [item for item in coverage if item.startswith("AC-")]
     return {"issue": record["id"], "snapshot": snapshot, "state": record["state"], "facts": facts,
-            "original": original or envelope, "acceptance": acceptance,
+            "original": original or envelope, "acceptance": acceptance, "coverage": coverage, "closure": closure,
             "delivery_evidence": {"report": body(report)[:4000], "output": body(result)[:2400]},
             "existing_plan": str(key_dir / "plan.md"),
             "live_workers": [r["task_key"] for r in rows if r["status"] in {"pending", "running"}],
             "artifacts_root": str(key_dir / "workers" / task)}
+
+
+def retained_proof(project: Path, key_dir: Path, current: dict, retained: dict) -> dict:
+    proofs = {}
+    for obligation, ref in retained.items():
+        if obligation not in current["coverage"]:
+            raise ValueError(f"retained obligation is outside the source scope: {obligation}")
+        if re.fullmatch(r"evidence/(?:[\w.-]+/)*[\w.-]+\.md", ref) and not {
+                ".", ".."}.intersection(ref.split("/")):
+            evidence = body(key_dir / ref)
+            if any(obligation in OBLIGATION.findall(line) and re.search(r"\bPASS\b", line) and
+                   not re.search(r"\b(?:FAIL|PENDING)\b", line) for line in evidence.splitlines()):
+                proofs[obligation] = digest(evidence)
+                continue
+        elif re.fullmatch(r"tasks/[\w.-]+\.md", ref) and card_identity(ref) != current["facts"]["card"]:
+            markdown = body(source_card(key_dir, ref))
+            dispatched = any(card_identity(mw_common.read_task_header_scalar(
+                body(key_dir / "workers" / identifier(row["task_key"]) / "task.md"), "card_path") or "")
+                == card_identity(ref) for row in worker_rows(project, key_dir.name))
+            if (markdown and obligation in card_coverage(current["closure"], ref, markdown)
+                    and not dispatched and not admission(project, key_dir.name, Path(ref).stem, ref)):
+                proofs[obligation] = digest(markdown)
+                continue
+        raise ValueError(f"{obligation}: expected a remaining card that owns it or key evidence recording its PASS")
+    return proofs
 
 
 def text_list(value: object) -> bool:
@@ -246,7 +330,17 @@ def preview(project: Path, key_dir: Path, current: dict, plan: dict) -> dict:
         raise ValueError("split requires multiple units; narrow requires one; other actions publish no cards")
     retained = plan.get("retained", {})
     if not isinstance(retained, dict) or not all(isinstance(v, str) and v.strip() for v in retained.values()):
-        raise ValueError("retained acceptance criteria require evidence or a named remaining owner")
+        raise ValueError("retained obligations require evidence or a named remaining owner")
+    proofs = retained_proof(project, key_dir, current, retained)
+    if units and any(ref.startswith("tasks/") for ref in retained.values()):
+        source = current["facts"]["card"]
+        plans = [r for r in records(key_dir) if r["state"] == "applied"]
+        for record in plans:
+            for unit in record["plan"]["units"]:
+                ref = card_identity(f"tasks/{unit['id']}.md")
+                if ref == source and any(unit["id"] in other["depends_on"] for plan in plans
+                                         for other in plan["plan"]["units"]):
+                    raise ValueError("a predecessor with dependents requires PASS evidence or successor coverage")
     coverage = set(retained)
     graph, faces, resources = {}, {}, {}
     for unit in units:
@@ -275,8 +369,9 @@ def preview(project: Path, key_dir: Path, current: dict, plan: dict) -> dict:
             raise ValueError(f"{stem}: invalid write face")
         resources[stem] = unit.get("resources")
         coverage.update(unit["covers"])
-    if units and set(current["acceptance"]) - coverage:
-        raise ValueError(f"unassigned acceptance: {sorted(set(current['acceptance']) - coverage)}")
+    structured = current["closure"] or any(not item.startswith("AC-") for item in current["coverage"])
+    if (units or choice == "direct-exec" and structured) and (missing := set(current["coverage"]) - coverage):
+        raise ValueError(f"unassigned acceptance or required coverage: {sorted(missing)}")
     existing = plan.get("ready_existing", [])
     if choice == "schedule":
         if not text_list(existing) or not existing or len(set(existing)) != len(existing):
@@ -334,7 +429,10 @@ def preview(project: Path, key_dir: Path, current: dict, plan: dict) -> dict:
                     or resources[stem] is None or (resources[stem] and held is None)
                     or (held and set(resources[stem]).intersection(held))):
                 waiting[stem].append("live:" + live)
-    version = digest([current["issue"], current["snapshot"], plan])
+    version_fields = [current["issue"], current["snapshot"], plan]
+    if proofs:
+        version_fields.append(proofs)
+    version = digest(version_fields)
     return {"version": version, "basis_id": "replan-" + version[:24], "action": choice,
             "initial_batch": existing[:1] or [s for s in ordered if not waiting[s]],
             "ready_existing": existing, "waiting": waiting}
@@ -410,10 +508,41 @@ def execute(project: Path, req: dict) -> dict:
     key_dir = local(project / ".agenticdoc" / key)
     op = req["operation"]
     with locked(project / ".mw" / "index.lock"), locked(mw_common.lock_path(project)):
-        owners = [r for r in state.read_index(project) if r["key"] == key]
+        owners = [r for r in state.read_index(project) if r["key"].casefold() == key.casefold()]
         if (not req.get("claim") or req["claim"] in {"—", "-"} or len(owners) != 1
-                or owners[0]["status"] != "active" or owners[0]["claim_id"] != req["claim"]):
+                or owners[0]["key"] != key or owners[0]["status"] != "active" or owners[0]["claim_id"] != req["claim"]):
             raise ValueError("current window does not own the active key")
+        if op == "trim_inventory":
+            rows = worker_rows(project, key)
+            rows.sort(key=lambda row: row["status"] not in {"pending", "running"})
+            return {"workers": [{"task": row["task_key"], "status": row["status"]} for row in rows[:20]],
+                    "total_workers": len(rows), "plan": str(key_dir / "plan.md")}
+        if op == "trim_steer":
+            if owners[0]["phase"].upper() != "EXECUTE":
+                raise ValueError("a running Worker can only be trimmed in EXECUTE")
+            current = inspect(project, key_dir, identifier(req["task"]))
+            facts = current["facts"]
+            if req["snapshot"] != current["snapshot"] or facts["status"] != "running" or not facts["run_id"]:
+                raise ValueError("source run changed or is no longer running; inspect again")
+            folder = key_dir / "workers" / facts["task"]
+            run = json.loads(body(folder / "run.json"))
+            if run.get("status") != "running" or run.get("run_id") != facts["run_id"]:
+                raise ValueError("source run is no longer running")
+            verification = req["verification"]
+            if not isinstance(verification, str) or not re.fullmatch(r"[\w.:-]+(?:\|[\w.:-]+)*", verification) or len(verification) > 256:
+                raise ValueError("missing minimum verification tool call ID")
+            remaining, stop = (req[name].strip() for name in ("remaining", "stop"))
+            if not remaining or not stop or len(remaining) + len(stop) > 4000 or "[dp2-" in remaining + stop:
+                raise ValueError("name the remaining work and optional exploration to stop within 4000 characters")
+            target = local(folder / "steer-dp2.md")
+            if target.exists():
+                raise ValueError("this Worker already has a steer; preserve it and check delivery")
+            publish_new(target, "[dp2-narrow-request]\n"
+                        f"手动 trim，最小验证 tool call {verification}。\n"
+                        f"继续完成：{remaining}\n停止可选探索：{stop}\n"
+                        "继续遵守原卡范围、必要交付、依赖及证据要求。\n"
+                        f"必须保留：{', '.join(current['coverage']) or '原卡的必要验收项'}\n")
+            return {"state": "queued", "task": facts["task"], "path": target.relative_to(project).as_posix()}
         if op == "inspect":
             for row in worker_rows(project, key):
                 if row["status"] == "failed":
@@ -424,6 +553,7 @@ def execute(project: Path, req: dict) -> dict:
                 record = json.loads(body(target))
                 record["reviewed_infrastructure"] = result["facts"]
                 save(target, record)
+            result.pop("closure", None)
             return result
         if op not in ("preview", "apply"):
             raise ValueError("unknown replan operation")
@@ -482,17 +612,7 @@ def execute(project: Path, req: dict) -> dict:
         for unit in plan["units"]:
             path = source_card(key_dir, f"tasks/{unit['id']}.md")
             if not path.exists():
-                path.parent.mkdir(parents=True, exist_ok=True)
-                # Publish a whole file without overwriting an independently created card.
-                fd, tmp = tempfile.mkstemp(dir=path.parent)
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
-                        out.write(card_text(record, unit))
-                        out.flush()
-                        os.fsync(out.fileno())
-                    os.link(tmp, path)
-                finally:
-                    Path(tmp).unlink(missing_ok=True)
+                publish_new(path, card_text(record, unit))
         record["state"] = "applied"
         save(target, record)
         receipt(project, record, req["claim"])
@@ -565,7 +685,8 @@ def admission(project: Path, owner: str, task: str, ref: str, *, attempt: int = 
     # A dependent keeps its original edge when an upstream card is split again.
     replacements = {by_card[r["source"]["card"]][1]["id"]: {u["id"] for u in r["plan"]["units"]}
                     for r in known if r["state"] == "applied" and r["plan"]["action"] in {"split", "narrow"}
-                    and r["source"]["card"] in by_card and not r["plan"].get("retained")}
+                    and r["source"]["card"] in by_card
+                    and all(str(ref).startswith("evidence/") for ref in r["plan"].get("retained", {}).values())}
     while newly_done := {stem for stem, children in replacements.items() if children <= done} - done:
         done.update(newly_done)
     dependencies = set(unit["depends_on"])

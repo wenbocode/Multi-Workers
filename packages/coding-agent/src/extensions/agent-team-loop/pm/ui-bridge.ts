@@ -86,6 +86,7 @@ import {
 import { RECOVERY_CONTRACT_HEADING, recoveryContractSection } from "../worker/output-sections.ts";
 import { isSameOrUnder } from "../worker/read-scope.ts";
 import { registerReplanTool } from "./replan.ts";
+import { registerTrim } from "./trim.ts";
 
 // W1 (mw-worker-output-contract): shape classification and the basename
 // whitelist moved to the write-surface single source; these re-exports keep the
@@ -4531,7 +4532,7 @@ export async function runMwModelCommand(
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
 export const MW_COMMAND_DESCRIPTION =
-	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / thinking / decide / rag / stats / run-detached / ack / replan [task]";
+	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / thinking / decide / rag / stats / run-detached / ack / trim [task] / replan [task]";
 
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
@@ -5214,13 +5215,22 @@ export function registerMwCommands(
 	ackStore: AckStore,
 	watch: PmWatchState,
 	agenticdocRoot: string,
+	indexStore?: IndexStore,
 ): void {
+	const startTrim = indexStore
+		? registerTrim(pi, projectDir, agenticdocRoot, indexStore, () => watch.key, windowClaimId)
+		: undefined;
 	pi.registerCommand("mw", {
 		description: MW_COMMAND_DESCRIPTION,
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const trimmed = _args.trim();
 			const sub = trimmed.split(/\s+/)[0] ?? "status";
 
+			if (sub === "trim") {
+				if (!startTrim) ctx.ui.notify("当前窗口没有 MW PM 的 key 索引。", "warning");
+				else startTrim(trimmed.slice(sub.length).trim(), ctx);
+				return;
+			}
 			if (sub === "replan") {
 				if (!watch.key) {
 					ctx.ui.notify("请先选择当前 PM 认领的 key。", "warning");

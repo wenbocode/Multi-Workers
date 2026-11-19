@@ -2764,7 +2764,7 @@ export function pmActivate(pi: ExtensionAPI, projectDir = process.cwd()): void {
 	// Register commands and tools during loading (safe — not action methods)
 	registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agenticdocRoot);
 	registerPmSaveCommand(pi, indexStore, workerStore, watch, agenticdocRoot);
-	registerMwCommands(pi, projectDir, workerStore, ackStore, watch, agenticdocRoot);
+	registerMwCommands(pi, projectDir, workerStore, ackStore, watch, agenticdocRoot, indexStore);
 	registerMwTools(pi, projectDir);
 	registerAdvancePhaseTool(pi, projectDir, indexStore);
 	registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, projectDir);

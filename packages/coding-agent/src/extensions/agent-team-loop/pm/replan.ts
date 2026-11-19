@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.ts";
 
-function request(project: string, args: Record<string, unknown>): Record<string, unknown> {
+export function requestReplan(project: string, args: Record<string, unknown>): Record<string, unknown> {
 	const mw = findMwPy();
 	if (!mw) return { ok: false, reason: "MW Python installation is unavailable" };
 	const child = spawnSync(PYTHON_EXE, ["-B", "-X", "utf8", path.join(path.dirname(mw), "replan_tasks.py")], {
@@ -35,7 +35,7 @@ export function replanAdmission(
 	supersedes?: string,
 ) {
 	if (!hasFailure && !fs.existsSync(path.join(project, ".agenticdoc", key, "evidence", "replan"))) return;
-	const result = request(project, { operation: "admission", key, task, card, card_hash: hash, supersedes });
+	const result = requestReplan(project, { operation: "admission", key, task, card, card_hash: hash, supersedes });
 	return result.ok === true ? undefined : String(result.reason ?? "replan admission unavailable");
 }
 
@@ -50,7 +50,7 @@ const unit = Type.Object({
 			description: "Exclusive resources; [] explicitly declares none; omitted is unknown",
 		}),
 	),
-	covers: Type.Array(Type.String()),
+	covers: Type.Array(Type.String({ description: "Required AC, FLOW or VC ID carried by this unit" })),
 	reuse: Type.String(),
 	first_check: Type.String(),
 	expected: Type.String(),
@@ -83,7 +83,14 @@ export function registerReplanTool(pi: ExtensionAPI, project: string, claim: () 
 						Type.Literal("schedule"),
 					]),
 					reason: Type.String(),
-					retained: Type.Optional(Type.Record(Type.String(), Type.String())),
+					retained: Type.Optional(
+						Type.Record(
+							Type.String(),
+							Type.String({
+								description: "Existing tasks/<card>.md owning the ID, or evidence/<file>.md recording its PASS",
+							}),
+						),
+					),
 					ready_existing: Type.Optional(Type.Array(Type.String())),
 					units: Type.Array(unit),
 				}),
@@ -91,7 +98,7 @@ export function registerReplanTool(pi: ExtensionAPI, project: string, claim: () 
 		}),
 		executionMode: "sequential",
 		async execute(_id, params) {
-			const result = request(project, { ...params, claim: claim() });
+			const result = requestReplan(project, { ...params, claim: claim() });
 			return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
 		},
 	});
