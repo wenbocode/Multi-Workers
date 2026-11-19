@@ -70,4 +70,5 @@ context-autosave-*.md
 .agenticdoc/**/_workers*
 .agenticdoc/.mw/
 .agenticdoc/**/*.lock
+.agenticdoc/_autopilot/dp-blocked/
 .agenticdoc/**/.mw-achieved-baddraft.json

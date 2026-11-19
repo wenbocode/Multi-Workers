@@ -230,6 +230,7 @@ export type AskDecisionPayload = AskDecisionAvailable | AskDecisionUnavailable;
 
 /** Result of one tool attempt: the payload plus the exact text handed back. */
 export interface AskDecisionOutcome {
+	blockedEventId?: unknown;
 	payload: AskDecisionPayload;
 	/** Single-line JSON, plus the fixed directive line when unavailable. */
 	text: string;
@@ -1070,7 +1071,13 @@ async function callDecideChild(
 			typeof response.escalated_reason === "string" && response.escalated_reason !== ""
 				? response.escalated_reason
 				: undefined;
-		return { ok: false, outcome: unavailable(reason, dp, true, { escalated_reason: escalated }) };
+		return {
+			ok: false,
+			outcome: {
+				...unavailable(reason, dp, true, { escalated_reason: escalated }),
+				blockedEventId: response.blocked_event_id,
+			},
+		};
 	}
 	return { ok: true, response };
 }
@@ -1210,17 +1217,17 @@ async function runSignoffAskDecision(
 		// caller can tell an over-budget refusal from a transport failure.
 		const refusedOversize = problems.some((item) => item.includes(ASK_DECISION_REASON_INPUT_OVERSIZE));
 		const refusedIncomplete = problems.some((item) => item.includes(ASK_DECISION_REASON_INPUT_INCOMPLETE));
+		const signoffRefusal = (reason: string, escalated_reason?: string): AskDecisionOutcome => ({
+			...unavailable(reason, dp, true, { escalated_reason }),
+			blockedEventId: receipt.blocked_event_id,
+		});
 		if (refusedOversize) {
-			return unavailable(ASK_DECISION_REASON_INPUT_OVERSIZE, dp, true, {
-				escalated_reason: ASK_DECISION_REASON_INPUT_OVERSIZE,
-			});
+			return signoffRefusal(ASK_DECISION_REASON_INPUT_OVERSIZE, ASK_DECISION_REASON_INPUT_OVERSIZE);
 		}
 		if (refusedIncomplete) {
-			return unavailable(ASK_DECISION_REASON_INPUT_INCOMPLETE, dp, true, {
-				escalated_reason: ASK_DECISION_REASON_INPUT_INCOMPLETE,
-			});
+			return signoffRefusal(ASK_DECISION_REASON_INPUT_INCOMPLETE, ASK_DECISION_REASON_INPUT_INCOMPLETE);
 		}
-		return unavailable("upstream-error", dp, true);
+		return signoffRefusal("upstream-error");
 	}
 	const decisionId = typeof receipt.decision_id === "string" ? receipt.decision_id : "";
 	const basis = selectedDecisionBasis(dp, material, preparation, conclusion, receipt.basis_id);
@@ -1627,10 +1634,68 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 	/** The decisions this window asked (receipt lookup + the join meta). */
 	const asked = new Map<string, { meta: DecisionToolMeta; dp: string }>();
 
+	function blockedResult(
+		dp: string,
+		outcome: AskDecisionOutcome,
+		stage: string,
+		key = ownerKey,
+		taskKey = workerTaskKey,
+	): { content: Array<{ type: "text"; text: string }>; details: AskDecisionPayload & { blocked_event_id?: string } } {
+		const { payload } = outcome;
+		if (payload.available) return { content: [{ type: "text", text: outcome.text }], details: payload };
+		const serviceId = outcome.blockedEventId;
+		let blockedEventId: string | undefined;
+		if (typeof serviceId === "string" && /^[0-9a-f-]{36}$/.test(serviceId)) {
+			blockedEventId = serviceId;
+		} else {
+			const eventId = randomUUID();
+			const directory = path.join(projectDir, ".agenticdoc", "_autopilot", "dp-blocked");
+			const temporary = path.join(directory, `.${eventId}.tmp`);
+			const identifier = (value: unknown): string | undefined =>
+				typeof value === "string" && /^[a-zA-Z0-9_.:[\]/-]{1,160}$/.test(value) && !/^sk-/i.test(value)
+					? value
+					: undefined;
+			const issues = (payload.missing_fields ?? []).slice(0, 8).flatMap((field) => {
+				const name = identifier(field);
+				return name === undefined ? [] : [{ field: name, issue: "required or invalid" }];
+			});
+			const event = {
+				schema_version: 1,
+				event_id: eventId,
+				ts: new Date().toISOString(),
+				source: "ask_decision",
+				stage,
+				dp: identifier(dp),
+				key: identifier(key),
+				task_key: identifier(taskKey),
+				reason: payload.unavailable,
+				escalated_reason: identifier(payload.escalated_reason),
+				issues,
+			};
+			try {
+				fs.mkdirSync(directory, { recursive: true });
+				fs.writeFileSync(temporary, `${JSON.stringify(event)}\n`, { flag: "wx", flush: true });
+				fs.renameSync(temporary, path.join(directory, `${eventId}.json`));
+				blockedEventId = eventId;
+			} catch {
+				try {
+					fs.rmSync(temporary, { force: true });
+				} catch {
+					// A failed receipt must not replace the actual decision result.
+				}
+				appendDecisionTrace(tracePath, `[DECISION_BLOCK_AUDIT_FAILED] ${event.ts} reason=${event.reason}`);
+			}
+		}
+		return {
+			content: [{ type: "text", text: outcome.text }],
+			details: { ...payload, ...(blockedEventId === undefined ? {} : { blocked_event_id: blockedEventId }) },
+		};
+	}
+
 	// One turn = one retry window: the same dp gets a fresh budget per turn.
 	pi.on("turn_start", () => counter.reset());
 
-	pi.registerTool<typeof ASK_DECISION_PARAMETERS, AskDecisionPayload>({
+	pi.registerTool<typeof ASK_DECISION_PARAMETERS, AskDecisionPayload & { blocked_event_id?: string }>({
 		name: ASK_DECISION_TOOL,
 		label: ASK_DECISION_TOOL,
 		description:
@@ -1673,12 +1738,12 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 		execute: async (_toolCallId, params, signal) => {
 			if (Object.hasOwn(params, "parentDecisionRef") || Object.hasOwn(params, "parent_decision_ref")) {
 				const refused = refusalOutcome("input-incomplete", params.dp, ["parent_decision_ref"]);
-				return { content: [{ type: "text", text: refused.text }], details: refused.payload };
+				return blockedResult(params.dp, refused, "parameter-check");
 			}
 			const invalidDp = decisionIdRefusal(params.dp);
 			if (invalidDp) {
 				const refused = refusalOutcome(invalidDp, params.dp);
-				return { content: [{ type: "text", text: refused.text }], details: refused.payload };
+				return blockedResult(params.dp, refused, "registry-check");
 			}
 			const requestedKey = boundKey(params.key);
 			if (requestedKey === undefined) {
@@ -1691,12 +1756,12 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 						"reason=input-incomplete field=meta.key count=1 max=" +
 						`${ASK_DECISION_MAX_BLOCKED_PER_TURN} role=${initiatorRole}`,
 				);
-				return { content: [{ type: "text", text: refused.text }], details: refused.payload };
+				return blockedResult(params.dp, refused, "identity-check");
 			}
 			const requestedTask = params.task_key ?? workerTaskKey ?? null;
 			if (workerTaskKey !== null && params.task_key !== undefined && params.task_key.trim() !== workerTaskKey) {
 				const refused = refusalOutcome("input-incomplete", params.dp, ["meta.task_key"]);
-				return { content: [{ type: "text", text: refused.text }], details: refused.payload };
+				return blockedResult(params.dp, refused, "identity-check");
 			}
 			const outcome = await runAskDecision({
 				projectDir,
@@ -1749,8 +1814,10 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				`[DECISION_UNAVAILABLE] ${iso} dp=${params.dp} trigger=${params.trigger} reason=${reason}` +
 					`${escalated} count=${blocks} max=${ASK_DECISION_MAX_BLOCKED_PER_TURN} role=${initiatorRole}`,
 			);
+			const stage = outcome.spawned ? (reason === "timeout" ? "child-timeout" : "request") : "preflight";
+			const blocked = blockedResult(params.dp, outcome, stage, requestedKey, requestedTask);
 			if (blocks < ASK_DECISION_MAX_BLOCKED_PER_TURN) {
-				return { content: [{ type: "text", text: outcome.text }], details: outcome.payload };
+				return blocked;
 			}
 			appendDecisionTrace(
 				tracePath,
@@ -1762,7 +1829,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			// sequential, so a batch that contains it stops here.
 			return {
 				content: [{ type: "text", text: `${outcome.text}\n${terminalDirective(params.dp, blocks)}` }],
-				details: outcome.payload,
+				details: blocked.details,
 				terminate: true,
 			};
 		},

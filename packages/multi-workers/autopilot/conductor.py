@@ -57,6 +57,7 @@ import mw_common  # noqa: E402  (path bootstrapped above)
 import codex_pm
 import decision_lifecycle as lifecycle
 import decision
+import decision_blocked
 import decision_points
 import decision_policy
 import decision_validity as validity
@@ -5495,6 +5496,9 @@ def request_prepared_gate(
     if result.get("available") is not True or result.get("business_decisions") != 1 \
             or not isinstance(choice, str) or not choice or not isinstance(basis_text, str) \
             or not basis_text.strip():
+        reason = result.get("reason")
+        if isinstance(reason, str) and reason in decision.REASON_CODES:
+            raise blocked(f"the prepared request has no business answer to deposit ({reason})")
         raise blocked("the prepared request has no business answer to deposit")
     claim = _pm_owner(project, owner_key)
     from . import decision_recovery
@@ -5523,9 +5527,33 @@ def request_prepared_gate(
             "basis_id": result.get("basis_id")}
 
 
-def _prepared_tick_blocked(
-    project: pathlib.Path, st: ConductorState, gate: gates.Gate, detail: str
+def record_gate_block(
+    project: pathlib.Path, *, source: str, stage: str, key: str | None,
+    gate_id: str | None, detail: str, decision_ref: str | None = None,
 ) -> None:
+    dp = "dp-gate-approve"
+    prefix = f"{dp}:"
+    decision_blocked.record(
+        project, source=source, stage=stage, key=key, gate_id=gate_id,
+        result={
+            "dp": dp,
+            "reason": "gate-blocked",
+            "detail": detail,
+            "decision_id": decision_ref,
+            "logical_id": decision_ref[len(prefix):]
+            if decision_ref and decision_ref.startswith(prefix) else None,
+        },
+    )
+
+
+def _prepared_tick_blocked(
+    project: pathlib.Path, st: ConductorState, gate: gates.Gate, detail: str,
+    *, stage: str = "preflight",
+) -> None:
+    record_gate_block(
+        project, source="autopilot-tick", stage=stage, key=gate.key, gate_id=gate.id,
+        decision_ref=gate.decision_ref, detail=detail,
+    )
     text = f"prepared gate {gate.id} not evaluated: {detail}"
     if _timeline_has_event(project, "config", gate.key, text):
         return
@@ -5633,18 +5661,20 @@ def evaluate_prepared_gates(
         if reason:
             _prepared_tick_blocked(project_root, st, gate, reason)
             continue
+        stage = "request"
         try:
             request_prepared_gate(
                 project_root, gate, owner_key=owner_key,
                 material=dict(material), preparation=dict(preparation), meta=meta)
+            stage = "consume"
             result = consume_pm_gate(project_root, gate.id, owner_key=owner_key)
             if result.state == "blocked":
-                _prepared_tick_blocked(project_root, st, gate, result.reason)
+                _prepared_tick_blocked(project_root, st, gate, result.reason, stage=stage)
         except gate_effects.GateBlocked as exc:
-            _prepared_tick_blocked(project_root, st, gate, str(exc))
+            _prepared_tick_blocked(project_root, st, gate, str(exc), stage=stage)
         except Exception as exc:  # noqa: BLE001 - one gate never kills the tick
             _prepared_tick_blocked(
-                project_root, st, gate, f"prepared tick error: {type(exc).__name__}")
+                project_root, st, gate, f"prepared tick error: {type(exc).__name__}", stage=stage)
 
 
 # ── T26 normal consumers: H06/H07/H08 family entry ───────────────────────────

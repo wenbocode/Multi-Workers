@@ -969,7 +969,13 @@ def test_book_run_schema_diagnostics_redact_configured_secret(
     assert fake.prepared == [] and fake.decide == []
     assert backend_calls == []
     after = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
-    assert after == before, "schema refusal must not write receipts or business state"
+    added = set(after) - set(before)
+    audit, = added
+    assert audit.parent == pathlib.Path(".agenticdoc/_autopilot/dp-blocked")
+    audit_body = after.pop(audit)
+    assert secret.encode() not in audit_body
+    assert json.loads(audit_body)["stage"] == "book-validation"
+    assert after == before, "schema refusal must only write its blocked-attempt receipt"
     receipts = tmp_path / ".agenticdoc" / "_autopilot" / "book-receipts.jsonl"
     if receipts.exists():
         assert secret not in receipts.read_text(encoding="utf-8")
@@ -1913,6 +1919,17 @@ def _sign_tree_bytes(project: pathlib.Path) -> dict[str, bytes]:
     }
 
 
+def _assert_only_sign_block_written(project: pathlib.Path, before: dict[str, bytes], stdout: str) -> None:
+    event_id = _payload(stdout)["blocked_event_id"]
+    after = _sign_tree_bytes(project)
+    audit = pathlib.Path(".agenticdoc/_autopilot/dp-blocked") / f"{event_id}.json"
+    event = json.loads(after.pop(str(audit)))
+    assert event["source"] == "mw-decide-sign"
+    assert event["dp"] == "dp-sign-key"
+    assert event["detail"]
+    assert after == before
+
+
 @pytest.mark.parametrize("legacy_shape", [False, True])
 @pytest.mark.parametrize("actor", ["worker", "self-pm", "unbound", "no-preparation"])
 def test_sign_refuses_unproven_producers_without_model_or_writes(
@@ -1938,7 +1955,7 @@ def test_sign_refuses_unproven_producers_without_model_or_writes(
     )
     assert rc == 2, out or err
     assert backend_calls == []
-    assert _sign_tree_bytes(project) == before
+    _assert_only_sign_block_written(project, before, out)
 
 
 @pytest.mark.parametrize("conclusion", ["finalize", "continue", "user-confirm"])
@@ -2039,7 +2056,7 @@ def test_sign_retry_checks_actual_actor_and_current_basis_before_writing(
     )
     assert rc == 2, out or err
     assert backend_calls == []
-    assert _sign_tree_bytes(project) == before
+    _assert_only_sign_block_written(project, before, out)
 
 
 # T26 pm gate entry: the real PM CLI entries (prepare / stage-close material).

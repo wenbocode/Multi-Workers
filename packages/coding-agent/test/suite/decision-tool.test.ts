@@ -681,6 +681,28 @@ describe("ask_decision unregistered dp", () => {
 // ── 7. anti-retry breaker + registration wiring ─────────────────────────────
 
 describe("ask_decision anti-retry breaker", () => {
+	it("records each local decision refusal under a distinct receipt ID", async () => {
+		const projectDir = makeTempDir("mw-ask-block-receipt-");
+		const { capture, pi } = api();
+		registerAskDecisionTool(pi, { projectDir });
+		const tool = toolOf(capture, ASK_DECISION_TOOL);
+		const params = { dp: "dp-unregistered-example", trigger: "local-audit" };
+		const first = await tool.execute("local-first", params);
+		const second = await tool.execute("local-second", params);
+		const directory = path.join(projectDir, ".agenticdoc", "_autopilot", "dp-blocked");
+		const firstId = (first.details as { blocked_event_id: string }).blocked_event_id;
+		const secondId = (second.details as { blocked_event_id: string }).blocked_event_id;
+		expect(firstId).not.toBe(secondId);
+		expect(fs.readdirSync(directory).sort()).toEqual([`${firstId}.json`, `${secondId}.json`].sort());
+		for (const eventId of [firstId, secondId]) {
+			expect(JSON.parse(fs.readFileSync(path.join(directory, `${eventId}.json`), "utf8"))).toMatchObject({
+				event_id: eventId,
+				dp: params.dp,
+				stage: "registry-check",
+			});
+		}
+	});
+
 	it("terminates the tool loop on the second blocked ask for the same dp and traces it", async () => {
 		const projectDir = makeTempDir("mw-ask-breaker-");
 		const tracePath = path.join(projectDir, "trace.log");

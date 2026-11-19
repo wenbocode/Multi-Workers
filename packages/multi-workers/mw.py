@@ -47,6 +47,7 @@ import decide_signoff
 import decision_book
 import decision
 import decision_backends
+import decision_blocked
 import decision_context
 import decision_lifecycle
 import decision_monitor
@@ -1375,7 +1376,7 @@ def _decide_meta_from_book_local(
 
 
 def _decide_request_failure(
-    dp: str,
+    dp: str | None,
     logical_id: str | None,
     reason: str,
     *,
@@ -1670,9 +1671,21 @@ def _decide_run_prepared(
     """
     as_json = bool(getattr(args, "json", False))
     logical_id = getattr(meta, "logical_id", None)
+    control_root = _decide_control_root(project_dir)
+    stage = "registry-check"
+    cfg = book_cfg
+    credential_snapshot = book_credential_snapshot
+
+    def emit(result: dict) -> None:
+        if result.get("available") is False:
+            _decide_audit_block(
+                control_root, stage, result, meta=meta,
+                config=cfg, snapshot=credential_snapshot,
+            )
+        _decide_print(result, as_json)
 
     def refuse(reason: str, *, issues=(), detail: str = "", escalated: str | None = None) -> int:
-        _decide_print(
+        emit(
             _decide_request_failure(
                 dp,
                 logical_id,
@@ -1681,7 +1694,6 @@ def _decide_run_prepared(
                 issues=tuple(issues),
                 detail=detail,
             ),
-            as_json,
         )
         return 2
 
@@ -1693,6 +1705,7 @@ def _decide_run_prepared(
     # 2. Real process identity before authorization, contract, replay, ledger
     #    write, credential read or send. The meta declaration is only compared
     #    with this independently identified role; it is never a permission source.
+    stage = "identity-check"
     verified_role, actor_reason, actor_detail = _decide_actor_binding(project_dir, meta)
     if verified_role is None:
         return refuse(
@@ -1700,21 +1713,26 @@ def _decide_run_prepared(
             detail=actor_detail or "the caller has no provable role for this request",
         )
     # 3. Current authorization row (read only): disabled/P0 makes no request.
+    stage = "authorization"
     mode, blocked_reason, blocked_escalated = _decide_entry_mode(project_dir, point)
     if blocked_reason is not None:
-        _decide_print(
+        emit(
             _decide_request_failure(
                 dp,
                 logical_id,
                 blocked_reason,
                 escalated_reason=blocked_escalated,
-                detail="the decision point is not callable in the current authorization row",
+                detail=(
+                    "P0 requires a usable policy granting the decision action scope"
+                    if blocked_escalated == "p0"
+                    else "the current decision-point configuration disables this entry or could not be read"
+                ),
             ),
-            as_json,
         )
         return 0
     # 4. Complete contract (material, preparation, role, context) before any
     #    ledger write or model call. The registry is the single authority.
+    stage = "input-validation"
     try:
         issues = tuple(
             decision_points.prepared_request_issues(
@@ -1747,7 +1765,7 @@ def _decide_run_prepared(
     else:
         cfg = _decide_config_snapshot(project_dir)
         credential_snapshot = decision.credential_snapshot(cfg)
-    control_root = _decide_control_root(project_dir)
+    stage = "lifecycle"
     try:
         store = _decide_lifecycle_store(control_root, cfg, credential_snapshot)
         read = decision_lifecycle.read_lifecycle(store)
@@ -1766,17 +1784,20 @@ def _decide_run_prepared(
         and isinstance(event.get("decision_id"), str)
     ]
     # 5. The parent reference is a host claim, never stdin authority.
+    stage = "parent-reference"
     parent_issue = _decide_parent_ref_issue(events, meta, parent_ref)
     if parent_issue is not None:
         return refuse("input-incomplete", issues=(("parent_decision_ref", parent_issue),), detail=parent_issue)
 
     if start is not None:
         # Same logical id: answer from the recorded fact, never a new send.
-        _decide_print(
-            _decide_replayed_payload(dp, str(logical_id), linked, mode=mode), as_json
+        stage = "replay"
+        emit(
+            _decide_replayed_payload(dp, str(logical_id), linked, mode=mode)
         )
         return 0
 
+    stage = "record-start"
     decision_id = f"{point.id}:{logical_id}"
     try:
         start_result = decision_lifecycle.record_start(store, meta, decision_id=decision_id)
@@ -1787,8 +1808,9 @@ def _decide_run_prepared(
             linked = _decide_lifecycle_facts(store, str(logical_id))["linked"]
         except OSError:
             linked = []
-        _decide_print(
-            _decide_replayed_payload(dp, str(logical_id), linked, mode=mode), as_json
+        stage = "replay"
+        emit(
+            _decide_replayed_payload(dp, str(logical_id), linked, mode=mode)
         )
         return 0
     if not start_result.recorded:
@@ -1807,12 +1829,13 @@ def _decide_run_prepared(
                 "error_recorded": start_result.error_recorded,
             }
         )
-        _decide_print(result, as_json)
+        emit(result)
         return 2
 
     client = decision.DecisionClient(
         cfg, project_root=project_dir, credential_snapshot=credential_snapshot
     )
+    stage = "request"
     try:
         request_result = client.request_prepared(
             dp,
@@ -1908,7 +1931,7 @@ def _decide_run_prepared(
         result.update(feedback_error)
     else:
         result.update(_decide_feedback_fields(feedback))
-    _decide_print(result, as_json)
+    emit(result)
     if book_meta is not None and book_state is not None:
         _book_receipt(
             project_dir,
@@ -1922,6 +1945,26 @@ def _decide_run_prepared(
             transport=result["transport"],
         )
     return 0
+
+
+def _decide_audit_block(
+    project: pathlib.Path, stage: str, result: dict, *, meta: object = None,
+    config: object = None, snapshot: decision.CredentialSnapshot | None = None,
+) -> None:
+    event_id = decision_blocked.record(
+        project, source="mw-decide-run", stage=stage, result=result,
+        key=getattr(meta, "key", None), task_key=getattr(meta, "task_key", None),
+        config=config, snapshot=snapshot,
+    )
+    if event_id is not None:
+        result["blocked_event_id"] = event_id
+
+
+def _decide_print_refusal(
+    project: pathlib.Path, result: dict, as_json: bool, *, stage: str = "input-validation",
+) -> None:
+    _decide_audit_block(_decide_control_root(project), stage, result)
+    _decide_print(result, as_json)
 
 
 def _decide_run_versioned(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
@@ -1956,19 +1999,26 @@ def _decide_run_versioned(args: argparse.Namespace, project_dir: pathlib.Path) -
     try:
         decision_points.require_active_dp(dp)
     except decision.DecisionInputError as exc:
-        _decide_print(
+        _decide_print_refusal(
+            project_dir,
             _decide_request_failure(dp, None, "entry-unavailable", detail=str(exc)),
             as_json,
+            stage="registry-check",
         )
         return 2
     payload, err = _decide_read_envelope_json(args)
     if err:
+        _decide_audit_block(
+            _decide_control_root(project_dir), "input-validation",
+            _decide_request_failure(dp, None, "input-incomplete", detail=err),
+        )
         print(f"[mw decide run] {err}", file=sys.stderr)
         return 2
     assert payload is not None
     material, preparation, meta, context, parent_ref, err = _decide_prepared_envelope(payload)
     if err:
-        _decide_print(
+        _decide_print_refusal(
+            project_dir,
             _decide_request_failure(dp, None, "input-incomplete", detail=err), as_json
         )
         return 2
@@ -2049,6 +2099,14 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
             credential_snapshot=credential_snapshot,
         )
         if err:
+            _decide_audit_block(
+                _decide_control_root(project_dir), "book-validation",
+                _decide_request_failure(
+                    getattr(args, "dp", None), None, "input-incomplete",
+                    detail=err,
+                ),
+                config=cfg, snapshot=credential_snapshot,
+            )
             return 2
         assert book_meta is not None and book_state_obj is not None
         assert book_preparation is not None
@@ -2063,6 +2121,11 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
             return 2
         meta, meta_err = _decide_meta_from_book_local(book_local_meta)
         if meta_err:
+            _decide_audit_block(
+                _decide_control_root(project_dir), "book-validation",
+                _decide_request_failure(book_dp, None, "input-incomplete", detail=meta_err),
+                config=cfg, snapshot=credential_snapshot,
+            )
             print(f"[mw decide run] {meta_err}", file=sys.stderr)
             return 2
         assert meta is not None
@@ -2101,7 +2164,8 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         # questions replace the registered contract) and it may not name a
         # retired id (old ids are read-only history, never an alias).
         if decision_points.is_retired_dp(dp):
-            _decide_print(
+            _decide_print_refusal(
+                project_dir,
                 _decide_request_failure(
                     dp,
                     None,
@@ -2112,6 +2176,7 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
                     ),
                 ),
                 getattr(args, "json", False),
+                stage="registry-check",
             )
             return 2
         try:
@@ -2119,7 +2184,8 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         except decision.DecisionInputError:
             pass  # a non-DP label (the legacy default `dp1`)
         else:
-            _decide_print(
+            _decide_print_refusal(
+                project_dir,
                 _decide_request_failure(
                     dp,
                     None,
@@ -2216,17 +2282,25 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
     try:
         point = decision_points.require_active_dp(dp)
     except decision.DecisionInputError as exc:
-        _decide_print(
+        _decide_print_refusal(
+            project_dir,
             _decide_request_failure(dp, None, "entry-unavailable", detail=str(exc)),
             getattr(args, "json", False),
+            stage="registry-check",
         )
         return 2
     if not isinstance(state, dict):
-        print("[mw decide run] request state must be a JSON object", file=sys.stderr)
+        detail = "request state must be a JSON object"
+        _decide_audit_block(
+            _decide_control_root(project_dir), "input-validation",
+            _decide_request_failure(dp, None, "input-incomplete", detail=detail),
+        )
+        print(f"[mw decide run] {detail}", file=sys.stderr)
         return 2
     material_issues = decision_points.entry_material_issues(dp, state)
     if material_issues:
-        _decide_print(
+        _decide_print_refusal(
+            project_dir,
             _decide_request_failure(
                 dp,
                 None,
@@ -2246,9 +2320,18 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
             point.id, trigger, project_dir, client=client, intent="answer"
         )
     except decision.DecisionInputError as exc:
+        _decide_audit_block(
+            _decide_control_root(project_dir), "request",
+            _decide_request_failure(dp, None, "input-incomplete", detail=str(exc)),
+        )
         print(f"[mw decide run] {exc}", file=sys.stderr)
         return 2
     result = _decide_run_payload(outcome)
+    if result.get("available") is False:
+        _decide_audit_block(
+            _decide_control_root(project_dir), "request", result,
+            config=cfg, snapshot=credential_snapshot,
+        )
     if getattr(args, "json", False):
         print(json.dumps(result, ensure_ascii=False))
     else:
@@ -3229,7 +3312,8 @@ def _book_gate(
         )
     if issues:
         _book_print_issues(issues, flag=flag, source=source)
-        return None, None, None, None, f"book {source} rejected ({len(issues)} issue(s))"
+        summary = ", ".join(f"{issue.code} at {issue.path}" for issue in issues[:4])
+        return None, None, None, None, f"book rejected ({len(issues)} issue(s)): {summary}"
     meta = decision_book.book_meta(
         book, source, root=decision_book.resolve_repo_root(project_dir)
     )
@@ -6024,21 +6108,22 @@ def _decide_sign_finalize(
     cfg, _cfg_error = decision.DecisionConfig.from_project(control_dir)
     if cfg.signoff_error:
         return _decide_sign_refusal(
-            as_json,
+            key_dir_path, as_json,
             [f".mw/decide.json: {cfg.signoff_error}"],
             logical_id=None,
         )
     if cfg.signoff == decision.SIGNOFF_DISABLE:
-        _decide_print(
-            {
-                "conclusion": None,
-                "signoff_status": "disabled",
-                "feedback_status": "not-recorded",
-                "signoff_path": None,
-                "second_approval": 0,
-            },
-            as_json,
+        payload = {
+            "conclusion": None,
+            "signoff_status": "disabled",
+            "feedback_status": "not-recorded",
+            "signoff_path": None,
+            "second_approval": 0,
+        }
+        _decide_sign_audit_block(
+            key_dir_path, payload, ["signoff is disabled in .mw/decide.json"],
         )
+        _decide_print(payload, as_json)
         return 0
     retry_id = getattr(args, "retry_write", None)
     payload = None
@@ -6046,19 +6131,19 @@ def _decide_sign_finalize(
     if getattr(args, "stdin", False):
         payload, err = _decide_read_envelope_json(args)
         if err:
-            return _decide_sign_refusal(as_json, [err], logical_id=retry_id)
+            return _decide_sign_refusal(key_dir_path, as_json, [err], logical_id=retry_id)
         assert payload is not None
         material, preparation, admission_meta, context, parent_ref, err = (
             _decide_prepared_envelope(payload)
         )
         if err:
-            return _decide_sign_refusal(as_json, [err], logical_id=retry_id)
+            return _decide_sign_refusal(key_dir_path, as_json, [err], logical_id=retry_id)
         assert admission_meta is not None
         if admission_meta.key != key or (
             retry_id and admission_meta.logical_id != retry_id
         ):
             return _decide_sign_refusal(
-                as_json, ["envelope identity does not match the command"],
+                key_dir_path, as_json, ["envelope identity does not match the command"],
                 logical_id=retry_id,
             )
     else:
@@ -6070,7 +6155,7 @@ def _decide_sign_finalize(
     )
     if verified_role != "pm":
         return _decide_sign_refusal(
-            as_json,
+            key_dir_path, as_json,
             [actor_reason or "role-forbidden", actor_detail or "sign requires the live PM"],
             logical_id=retry_id or getattr(admission_meta, "logical_id", None),
         )
@@ -6087,14 +6172,14 @@ def _decide_sign_finalize(
             )
         if issues:
             return _decide_sign_refusal(
-                as_json, [f"{field}: {problem}" for field, problem in issues],
+                key_dir_path, as_json, [f"{field}: {problem}" for field, problem in issues],
                 logical_id=admission_meta.logical_id,
             )
     point = decision_points.require_active_dp(decision_signoff_result.DP_ID)
     mode, blocked_reason, _blocked_escalated = _decide_entry_mode(control_dir, point)
     if blocked_reason is not None:
         return _decide_sign_refusal(
-            as_json, [f"dp-sign-key is unavailable ({blocked_reason})"],
+            key_dir_path, as_json, [f"dp-sign-key is unavailable ({blocked_reason})"],
             logical_id=admission_meta.logical_id,
         )
     points_view = decision_points.load_points_config(control_dir)
@@ -6121,7 +6206,7 @@ def _decide_sign_finalize(
         for problem in decision_signoff_result.basis_usable_now(requested_basis)
     )
     if problems:
-        return _decide_sign_refusal(as_json, problems, logical_id=None)
+        return _decide_sign_refusal(key_dir_path, as_json, problems, logical_id=None)
 
     try:
         store = _decide_lifecycle_store(
@@ -6129,12 +6214,12 @@ def _decide_sign_finalize(
         )
     except (decision_lifecycle.LifecycleInputError, OSError) as exc:
         return _decide_sign_refusal(
-            as_json, [f"the lifecycle ledger is not usable: {exc}"], logical_id=None
+            key_dir_path, as_json, [f"the lifecycle ledger is not usable: {exc}"], logical_id=None
         )
     retry_id = getattr(args, "retry_write", None)
     if not retry_id and not getattr(args, "stdin", False):
         return _decide_sign_refusal(
-            as_json, ["the versioned sign path requires --stdin"], logical_id=None
+            key_dir_path, as_json, ["the versioned sign path requires --stdin"], logical_id=None
         )
 
     meta = admission_meta
@@ -6147,25 +6232,25 @@ def _decide_sign_finalize(
             record = decision_signoff_result.read_result(key_dir_path, retry_id)
         except decision_signoff_result.SignoffResultError as exc:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 [f"the persisted result is not usable: {exc}"],
                 logical_id=retry_id,
             )
         if record is None:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 ["no persisted result for this logical_id; issue a new judgment"],
                 logical_id=retry_id,
             )
         if record.key != key:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 ["the persisted result belongs to a different key"],
                 logical_id=record.logical_id,
             )
         if record.rows_sha256 != facts.sha256:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 ["archive evidence changed since the recorded conclusion; issue a new judgment"],
                 logical_id=record.logical_id,
             )
@@ -6174,7 +6259,7 @@ def _decide_sign_finalize(
         )
         if stale_basis:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 [
                     "native contract/goal basis changed since the recorded conclusion: "
                     + "; ".join(stale_basis)
@@ -6185,7 +6270,7 @@ def _decide_sign_finalize(
             digest, evidence = decision_signoff_result.digest_material(material)
             if digest != record.material_sha256 or evidence != record.evidence_sha256:
                 return _decide_sign_refusal(
-                    as_json,
+                    key_dir_path, as_json,
                     ["material/evidence changed since the recorded conclusion; issue a new judgment"],
                     logical_id=record.logical_id,
                 )
@@ -6201,7 +6286,7 @@ def _decide_sign_finalize(
             )
         except decision_lifecycle.LifecycleInputError as exc:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 [f"the persisted result meta is not usable: {exc}"],
                 logical_id=record.logical_id,
             )
@@ -6211,7 +6296,7 @@ def _decide_sign_finalize(
             record = decision_signoff_result.read_result(key_dir_path, meta.logical_id)
         except decision_signoff_result.SignoffResultError as exc:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 [f"the persisted result is not usable: {exc}"],
                 logical_id=meta.logical_id,
             )
@@ -6219,13 +6304,13 @@ def _decide_sign_finalize(
             digest, evidence = decision_signoff_result.digest_material(material)
             if digest != record.material_sha256 or evidence != record.evidence_sha256:
                 return _decide_sign_refusal(
-                    as_json,
+                    key_dir_path, as_json,
                     ["material/evidence changed since the recorded conclusion; issue a new judgment"],
                     logical_id=meta.logical_id,
                 )
             if record.rows_sha256 != facts.sha256:
                 return _decide_sign_refusal(
-                    as_json,
+                    key_dir_path, as_json,
                     ["archive evidence changed since the recorded conclusion; issue a new judgment"],
                     logical_id=meta.logical_id,
                 )
@@ -6234,7 +6319,7 @@ def _decide_sign_finalize(
             )
             if stale_basis:
                 return _decide_sign_refusal(
-                    as_json,
+                    key_dir_path, as_json,
                     [
                         "native contract/goal basis changed since the recorded conclusion: "
                         + "; ".join(stale_basis)
@@ -6258,7 +6343,7 @@ def _decide_sign_finalize(
         existing = _decide_lifecycle_facts(store, meta.logical_id)
         if existing["start"] is not None:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 [
                     "this logical_id was started but has no recoverable result; "
                     "issue a new logical_id with retry_of"
@@ -6271,11 +6356,11 @@ def _decide_sign_finalize(
             point = decision_points.get_decision_point(decision_signoff_result.DP_ID)
         except decision.DecisionInputError as exc:
             return _decide_sign_refusal(
-                as_json, [str(exc)], logical_id=meta.logical_id
+                key_dir_path, as_json, [str(exc)], logical_id=meta.logical_id
             )
         if point.id != decision_signoff_result.DP_ID:
             return _decide_sign_refusal(
-                as_json, ["the dp-sign-key point is not registered"], logical_id=meta.logical_id
+                key_dir_path, as_json, ["the dp-sign-key point is not registered"], logical_id=meta.logical_id
             )
         try:
             start = decision_lifecycle.record_start(
@@ -6283,13 +6368,13 @@ def _decide_sign_finalize(
             )
         except decision_lifecycle.LifecycleInputError as exc:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 [f"the creation fact was refused: {exc}"],
                 logical_id=meta.logical_id,
             )
         if start.duplicate:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 [
                     "this logical_id was started concurrently; issue a new "
                     "logical_id with retry_of instead of re-sending the model"
@@ -6298,7 +6383,7 @@ def _decide_sign_finalize(
             )
         if not start.recorded:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 ["the creation fact could not be recorded; zero model call"],
                 logical_id=meta.logical_id,
             )
@@ -6322,7 +6407,7 @@ def _decide_sign_finalize(
             )
         except decision.DecisionInputError as exc:
             return _decide_sign_refusal(
-                as_json, [str(exc)], logical_id=meta.logical_id
+                key_dir_path, as_json, [str(exc)], logical_id=meta.logical_id
             )
         decision_points._maybe_archive(
             True, dp_point=point, trigger=trigger, project_dir=control_dir,
@@ -6339,12 +6424,12 @@ def _decide_sign_finalize(
             if detail:
                 problems.append(detail.splitlines()[0][:240])
             return _decide_sign_refusal(
-                as_json, problems, logical_id=meta.logical_id
+                key_dir_path, as_json, problems, logical_id=meta.logical_id
             )
         conclusion = response.get("choice")
         if conclusion not in decision_signoff_result.CONCLUSIONS:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 ["dp-sign-key answer is not in the finalize|continue|user-confirm set"],
                 logical_id=meta.logical_id,
             )
@@ -6356,7 +6441,7 @@ def _decide_sign_finalize(
         )
         if transport == "none" or not model:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 ["the conclusion has no verifiable transport/model provenance"],
                 logical_id=meta.logical_id,
             )
@@ -6366,7 +6451,7 @@ def _decide_sign_finalize(
             confidence is None or confidence < threshold
         ):
             return _decide_sign_refusal(
-                as_json, ["dp-sign-key answer is below the configured confidence threshold"],
+                key_dir_path, as_json, ["dp-sign-key answer is below the configured confidence threshold"],
                 logical_id=meta.logical_id,
             )
         # The answer is only applicable to the basis captured before the call.
@@ -6377,7 +6462,7 @@ def _decide_sign_finalize(
         )
         if changed_basis:
             return _decide_sign_refusal(
-                as_json,
+                key_dir_path, as_json,
                 [
                     "native contract/goal basis changed during the model request: "
                     + "; ".join(changed_basis)
@@ -6456,24 +6541,41 @@ def _decide_sign_payload_base(record, facts, key: str) -> dict:
 
 
 def _decide_sign_refusal(
-    as_json: bool, problems: list[str], *, logical_id: str | None
+    key_dir_path: pathlib.Path, as_json: bool, problems: list[str], *, logical_id: str | None,
 ) -> int:
     for problem in problems:
         print(f"[mw decide sign] {problem}", file=sys.stderr)
-    _decide_print(
-        {
-            "dp": decision_signoff_result.DP_ID,
-            "logical_id": logical_id,
-            "conclusion": None,
-            "signoff_status": "failed",
-            "feedback_status": "not-recorded",
-            "signoff_path": None,
-            "second_approval": 0,
-            "problems": list(problems),
-        },
-        as_json,
-    )
+    payload = {
+        "dp": decision_signoff_result.DP_ID,
+        "logical_id": logical_id,
+        "conclusion": None,
+        "signoff_status": "failed",
+        "feedback_status": "not-recorded",
+        "signoff_path": None,
+        "second_approval": 0,
+        "problems": list(problems),
+    }
+    _decide_sign_audit_block(key_dir_path, payload, problems)
+    _decide_print(payload, as_json)
     return 2
+
+
+def _decide_sign_audit_block(
+    key_dir_path: pathlib.Path, payload: dict, problems: list[str],
+) -> None:
+    event_id = decision_blocked.record(
+        key_dir_path.parent.parent, source="mw-decide-sign", stage="signoff",
+        key=key_dir_path.name,
+        result={
+            "dp": decision_signoff_result.DP_ID,
+            "logical_id": payload.get("logical_id"),
+            "decision_id": payload.get("decision_id"),
+            "reason": payload["signoff_status"],
+            "detail": " | ".join(problems),
+        },
+    )
+    if event_id is not None:
+        payload["blocked_event_id"] = event_id
 
 
 def _decide_sign_finish(
@@ -6494,14 +6596,14 @@ def _decide_sign_finish(
     proof = record.prepared_proof
     if not isinstance(proof, Mapping):
         return _decide_sign_refusal(
-            as_json, ["the result has no prepared producer proof; issue a new judgment"],
+            key_dir_path, as_json, ["the result has no prepared producer proof; issue a new judgment"],
             logical_id=record.logical_id,
         )
     response = proof.get("response")
     preparation = proof.get("preparation")
     if not isinstance(response, Mapping) or not isinstance(preparation, Mapping):
         return _decide_sign_refusal(
-            as_json, ["the prepared producer proof is incomplete"],
+            key_dir_path, as_json, ["the prepared producer proof is incomplete"],
             logical_id=record.logical_id,
         )
     issues = decision_points.prepared_request_issues(
@@ -6510,7 +6612,7 @@ def _decide_sign_finish(
     )
     if issues:
         return _decide_sign_refusal(
-            as_json, ["the persisted preparation does not satisfy the current contract"],
+            key_dir_path, as_json, ["the persisted preparation does not satisfy the current contract"],
             logical_id=record.logical_id,
         )
     selected_basis = next(
@@ -6545,7 +6647,7 @@ def _decide_sign_finish(
         or response.get("model") != record.model
     ):
         return _decide_sign_refusal(
-            as_json, ["the prepared producer proof does not match the recorded judgment"],
+            key_dir_path, as_json, ["the prepared producer proof does not match the recorded judgment"],
             logical_id=record.logical_id,
         )
     payload = _decide_sign_payload_base(record, facts, key)
@@ -6573,6 +6675,7 @@ def _decide_sign_finish(
             "native contract/goal basis changed since the recorded conclusion: "
             + "; ".join(stale_basis)
         ]
+        _decide_sign_audit_block(key_dir_path, payload, payload["problems"])
         _decide_print(payload, as_json)
         return 2
     feedback: list = []
@@ -6607,6 +6710,7 @@ def _decide_sign_finish(
                 ]
                 payload["signoff_status"] = "invalid-existing"
                 payload["feedback_status"] = "not-recorded"
+                _decide_sign_audit_block(key_dir_path, payload, payload["problems"])
                 _decide_print(payload, as_json)
                 return 2
             try:
@@ -6627,6 +6731,9 @@ def _decide_sign_finish(
                 payload["signoff_status"] = "failed"
                 payload["write_error_class"] = type(exc).__name__
                 payload["feedback_status"] = "not-recorded"
+                _decide_sign_audit_block(
+                    key_dir_path, payload, [f"could not write sign-off ({type(exc).__name__})"],
+                )
                 _decide_print(payload, as_json)
                 return 2
             file_hash = hashlib.sha256(written.read_bytes()).hexdigest()
@@ -11220,6 +11327,22 @@ def _ap_pm_gate_request(project_dir: pathlib.Path, prepared: _ap_conductor.gates
         project_dir, prepared, owner_key=owner_key, book=book, client=client)
 
 
+def _ap_audit_gate_block(
+    project: pathlib.Path, args: argparse.Namespace, stage: str, *,
+    prepared: object = None, result: object = None, error: str | None = None,
+) -> None:
+    if error is None and getattr(result, "state", None) != "blocked":
+        return
+    _ap_conductor.record_gate_block(
+        project, source="mw-autopilot-family" if hasattr(args, "family") else "mw-autopilot-gate",
+        stage=stage, key=args.key,
+        gate_id=getattr(prepared, "id", None) or getattr(args, "gate_id", None)
+        or getattr(args, "trigger", None),
+        decision_ref=getattr(result, "parent_ref", None) or getattr(prepared, "decision_ref", None),
+        detail=error or getattr(result, "reason", None) or "gate is blocked",
+    )
+
+
 def _ap_gate_run(args: argparse.Namespace, project_dir: pathlib.Path, *,
                  client: object | None = None) -> int:
     """`mw autopilot gate run`: the normal PM request/answer/consume chain.
@@ -11231,17 +11354,26 @@ def _ap_gate_run(args: argparse.Namespace, project_dir: pathlib.Path, *,
     try:
         book = json.loads(pathlib.Path(args.book).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
+        _ap_audit_gate_block(
+            project_dir, args, "book-validation", error=f"unreadable prepared book ({type(exc).__name__})",
+        )
         print(f"[mw autopilot gate] Error: unreadable prepared book ({exc})", file=sys.stderr)
         return 1
+    prepared = None
+    stage = "prepare"
     try:
         prepared = _ap_prepared_for_trigger(project_dir, args.trigger, args.key, book)
+        stage = "request"
         request = _ap_pm_gate_request(
             project_dir, prepared, args.key, book, client=client)
+        stage = "consume"
         result = _ap_conductor.consume_pm_gate(
             project_dir, prepared.id, owner_key=args.key, book=book)
     except _ap_conductor.gate_effects.GateBlocked as exc:
+        _ap_audit_gate_block(project_dir, args, stage, prepared=prepared, error=str(exc))
         print(f"[mw autopilot gate] Error: {exc}", file=sys.stderr)
         return 2
+    _ap_audit_gate_block(project_dir, args, stage, prepared=prepared, result=result)
     print(json.dumps({
         "status": result.state,
         "gate_id": prepared.id,
@@ -11267,6 +11399,9 @@ def _ap_gate(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         try:
             book = json.loads(pathlib.Path(args.book).read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
+            _ap_audit_gate_block(
+                project_dir, args, "book-validation", error=f"unreadable prepared book ({type(exc).__name__})",
+            )
             print(f"[mw autopilot gate] Error: unreadable prepared book ({exc})", file=sys.stderr)
             return 1
     try:
@@ -11289,8 +11424,10 @@ def _ap_gate(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         result = _ap_conductor.consume_pm_gate(
             project_dir, args.gate_id, owner_key=args.key, book=book)
     except _ap_conductor.gate_effects.GateBlocked as exc:
+        _ap_audit_gate_block(project_dir, args, args.gate_action, error=str(exc))
         print(f"[mw autopilot gate] Error: {exc}", file=sys.stderr)
         return 2
+    _ap_audit_gate_block(project_dir, args, "consume", result=result)
     print(json.dumps({
         "state": result.state,
         "reason": result.reason,
@@ -11307,18 +11444,27 @@ def _ap_family_run(args: argparse.Namespace, project_dir: pathlib.Path, *,
     try:
         book = json.loads(pathlib.Path(args.book).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
+        _ap_audit_gate_block(
+            project_dir, args, "book-validation", error=f"unreadable prepared book ({type(exc).__name__})",
+        )
         print(f"[mw autopilot family] Error: unreadable prepared book ({exc})", file=sys.stderr)
         return 1
+    prepared = None
+    stage = "prepare"
     try:
         prepared = _ap_conductor.prepare_pm_family_gate(
             project_dir, args.family, owner_key=args.key, book=book)
+        stage = "request"
         request = _ap_pm_gate_request(
             project_dir, prepared, args.key, book, client=client)
+        stage = "consume"
         result = _ap_conductor.consume_pm_family_gate(
             project_dir, prepared.id, owner_key=args.key, book=book)
     except _ap_conductor.gate_effects.GateBlocked as exc:
+        _ap_audit_gate_block(project_dir, args, stage, prepared=prepared, error=str(exc))
         print(f"[mw autopilot family] Error: {exc}", file=sys.stderr)
         return 2
+    _ap_audit_gate_block(project_dir, args, stage, prepared=prepared, result=result)
     print(json.dumps({
         "status": result.state,
         "family": args.family,
@@ -11339,6 +11485,9 @@ def _ap_family(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         try:
             book = json.loads(pathlib.Path(args.book).read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
+            _ap_audit_gate_block(
+                project_dir, args, "book-validation", error=f"unreadable prepared book ({type(exc).__name__})",
+            )
             print(f"[mw autopilot family] Error: unreadable prepared book ({exc})",
                   file=sys.stderr)
             return 1
@@ -11359,8 +11508,10 @@ def _ap_family(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         result = _ap_conductor.consume_pm_family_gate(
             project_dir, args.gate_id, owner_key=args.key, book=book)
     except _ap_conductor.gate_effects.GateBlocked as exc:
+        _ap_audit_gate_block(project_dir, args, args.family_action, error=str(exc))
         print(f"[mw autopilot family] Error: {exc}", file=sys.stderr)
         return 2
+    _ap_audit_gate_block(project_dir, args, "consume", result=result)
     print(json.dumps({
         "status": result.state, "family": args.family,
         "reason": result.reason, "decision_ref": result.parent_ref,
