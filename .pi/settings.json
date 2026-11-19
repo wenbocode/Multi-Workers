@@ -1,0 +1,3 @@
+{
+	"extensions": ["../packages/multi-workers/window_duty_extension.ts"]
+}

@@ -1,0 +1,171 @@
+{
+	"shift": "night-20261116",
+	"start": "2026-11-16T23:00:00+08:00",
+	"end": "2026-11-17T08:00:00+08:00",
+	"cards": {
+		"mw-pm-dp-continuity": {
+			"minutes": 150,
+			"rules": [
+				{
+					"name": "archive-repair",
+					"scope": "local-selection-store.ts, runtime-host-adapter.ts, K4 appended tests and current evidence only",
+					"direction": "Repair only bookkeeping of already executed authorized actions, preserve stop/revoke/identity checks; verify and obtain independent review.",
+					"limit": 60
+				}
+			]
+		},
+		"gaze-integration-spike": {
+			"minutes": 150,
+			"rules": [
+				{
+					"name": "module-build",
+					"scope": "Pinned H-03YGK-B1 five sources in CL3064387 and one module build",
+					"direction": "Apply the pinned B1 card once, fresh preflight <=5m, observe one build <=10m; require independent runtime admission; stop on conflict or gate refusal.",
+					"limit": 15,
+					"exception": true
+				},
+				{
+					"name": "resource-check",
+					"scope": "Only B1 exact target occupancy, fresh admission and E source review",
+					"direction": "Check actual locks <=10m. Recheck admission once. Use only the original unspent build allowance; if gate blocked, take the E source review branch <=15m.",
+					"limit": 30,
+					"requires": "module-build",
+					"once": true
+				},
+				{
+					"name": "source-fix",
+					"scope": "E timer-reader sources, offline tests and current evidence",
+					"direction": "Repair verified source findings, refresh pins and obtain independent review. No D write, build or native launch.",
+					"limit": 50
+				}
+			]
+		},
+		"ueperf-platform": {
+			"minutes": 240,
+			"rules": [
+				{
+					"name": "host-reproducer",
+					"scope": "Single original evidence E read-only, new PM handoff and probe evidence",
+					"direction": "Read frozen E through the existing parser and hand the minimal reproducer to the host maintainer. Preserve original exit 2.",
+					"limit": 20
+				},
+				{
+					"name": "canonical-assembly",
+					"scope": "New s2-canonical-assembly-authorized-v1 only, one author and independent review",
+					"direction": "If the accountable supplier has not delivered, authorize one bounded isolated implementation with frozen inputs; implementation 60m and independent review 30m. No UE launch or capture.",
+					"limit": 90,
+					"exception": true
+				},
+				{
+					"name": "isolated-fix",
+					"scope": "Fresh S2 repair and evidence directory only; preserve original runs",
+					"direction": "Repair the verified exit/result defect; static and benign validation only until isolation is independently established. Reserve independent review; do not modify host or launch UE.",
+					"limit": 60,
+					"requires": "canonical-assembly"
+				}
+			]
+		}
+	},
+	"events": [
+		{
+			"at": "00:28",
+			"key": "mw-pm-dp-continuity",
+			"action": "archive-repair",
+			"minutes": 40,
+			"id": "d1895a19-b37d-4802-b981-56bb4aaa0c83",
+			"evidence": "evidence/acceptance/S2/T06-K4-partial-recovery-schedule-20261117.md",
+			"fact": "K4 partial: third body observed, only two archived. 20m implementation + 10m PM verification + 10m review requested.",
+			"sourceSha256": "8ee954b4fb433894954cb5a1ca7c4419537d835f41b15c2760bdefd87f7cad13"
+		},
+		{
+			"at": "00:54",
+			"key": "ueperf-platform",
+			"action": "host-reproducer",
+			"minutes": 20,
+			"id": "2e4821d4-72ae-4694-b66d-4e35585ee18a",
+			"evidence": "evidence/runs/pm-s2-v80-frontier-review-terminal-20261116-v1/report.md",
+			"fact": "v79 exit2. Sole permitted E contains six headings; recovery expects another report. Reproduce from original E.",
+			"sourceSha256": "d7be836b93f93e74862b7a59333fc2eb67deef3ea25c6c5a7e422832d175aa5e"
+		},
+		{
+			"at": "01:03",
+			"key": "gaze-integration-spike",
+			"action": "module-build",
+			"minutes": 15,
+			"id": "05506be4-ee13-4cf9-becc-7e17782551f1",
+			"evidence": "evidence/build/h03ygk-timer-metadata-module-01/approved-card.md",
+			"fact": "Deployment risk: five pinned targets, partial install or residual owned build possible. First D deployment requested.",
+			"sourceSha256": "18589a4b63afab3a1499b390c95d68c9e3f366af183ff2682b24ab0eaeaad8b1"
+		},
+		{
+			"at": "01:09",
+			"key": "mw-pm-dp-continuity",
+			"action": "archive-repair",
+			"minutes": 45,
+			"id": "ec77b6f3-7f5b-4da6-bb81-dcc8b2dd7c37",
+			"evidence": "evidence/acceptance/S2/T06-K5-terminal-PM-AC015-review-20261117.md",
+			"fact": "K5 third action pre-archive branch not attempted. Same adapter/store/test surfaces, 30m implementation + 15m verification/review.",
+			"sourceSha256": "88d86b7c368df293659e8903f1ae0fe11a11203811181c712ff33d049b4a8ea7"
+		},
+		{
+			"at": "01:10",
+			"key": "ueperf-platform",
+			"action": "canonical-assembly",
+			"minutes": 90,
+			"id": "ba83f28c-65da-4a81-80af-e8ef8d491ebd",
+			"evidence": "evidence/runs/pm-s2-v81-v79-recovery-probe-20261116-v1/next-acceptance-step.md",
+			"fact": "No delivered canonical package or named supplier. Choose waiting for provider or new bounded implementation in isolated directory.",
+			"sourceSha256": "31d283114c31da5fdc010e36805bc345b77ebff9acd3946b428634d590268264"
+		},
+		{
+			"at": "01:21",
+			"key": "gaze-integration-spike",
+			"action": "resource-check",
+			"minutes": 30,
+			"id": "39fbc5c7-f440-4fe6-97ff-472241c89767",
+			"evidence": "evidence/build/h03ygk-timer-metadata-module-01/report.md",
+			"fact": "First preflight stopped on candidate MSBuild PID 9524. No build started. Exact resource occupancy remains unknown.",
+			"sourceSha256": "4643c8bf30955ba817089d360cfcea92a6333e81d9936f5d03672013b3b5b62d"
+		},
+		{
+			"at": "01:59",
+			"key": "mw-pm-dp-continuity",
+			"action": "archive-repair",
+			"minutes": 60,
+			"id": "64ca751b-6728-40f3-983d-af8c030982c8",
+			"evidence": "evidence/acceptance/S2/T06-K6-terminal-PM-review-20261117.md",
+			"fact": "E245 frozen review: three effects and archives. observed_at mismatch and refusal matrix remain.",
+			"sourceSha256": "d74b914ed69780827c6f14907906b46699082573c789b16ff1c7a250d748913e"
+		},
+		{
+			"at": "02:03",
+			"key": "gaze-integration-spike",
+			"action": "source-fix",
+			"minutes": 50,
+			"id": "68935690-e648-421e-9ab5-26f834c76376",
+			"evidence": "evidence/build/h03ygk-b1-r1-01/report.md",
+			"fact": "Runtime gate blocked D; E review identifies constructor 8/10 args and lateFail cleanup; F2 ready.",
+			"sourceSha256": "f653d54c1db428263b05e3c513e5fb234f4128d19f1ea52db964d3ccd5e47350"
+		},
+		{
+			"at": "02:39",
+			"key": "ueperf-platform",
+			"action": "isolated-fix",
+			"minutes": 60,
+			"id": "fc8a65c9-a1e8-4a78-bee4-9dc9383a4e97",
+			"evidence": "log/pm-v84-joined-qg-terminal-20261116.md",
+			"fact": "Joined review FIX: case FAIL can produce exit 0. Freeze v83/v84; request isolated fix and review.",
+			"sourceSha256": "65ea7605c9ea0f383f879f543542f01900a6affea81474ad567a2af1c9ea0c53"
+		},
+		{
+			"at": "03:38",
+			"key": "ueperf-platform",
+			"action": "isolated-fix",
+			"minutes": 60,
+			"id": "7e8e0be8-5a45-46a5-84a3-4b40b9ead068",
+			"evidence": "log/pm-v86-terminal-scoped-qg-20261116.md",
+			"fact": "v86 static finding: exceptional diagnostics can exit early; parent fails to check result presence. Benign producer/result/exit regression proposed.",
+			"sourceSha256": "193683bd34f3ce85eca9b9a06c126a76fc1b6961845bec97634ea3ca6823c03b"
+		}
+	]
+}
