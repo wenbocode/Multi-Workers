@@ -765,82 +765,151 @@ def _coerce_confidence(raw) -> float | None:
     return float(raw)
 
 
-#: Model-facing instruction of the prepared basis question. It states where the
-#: candidate texts come from (the PM preparation) so a selecting model never
-#: reports them as its own wording, and it forbids substituting a failure reason
-#: or a probability for the basis.
+#: The normalized business result still carries ``basis_id``. On the model
+#: surface it is bound to the business conclusion in one selection, so two
+#: independently answered questions cannot produce an incompatible pair.
+PREPARED_SELECTION_QUESTION_ID = "decision_selection"
 PREPARED_BASIS_INSTRUCTIONS = (
-    "从 PM 已准备的依据中选择最符合所选业务结论的一项；"
+    "从合法的业务结论与依据配对中选择最符合全部材料的一项；"
+    "每个选项同时确定结论和依据，不分别回答结论或依据。"
     "这些依据文字由 PM 预备（不是模型原文，也不是失败原因或概率）。"
 )
 
 
-def build_prepared_questions(dp_id: str, material: object, preparation: object) -> dict:
-    """The one same-call question set of a prepared request (design D012A).
+def prepared_selection_options(
+    dp_id: str,
+    material: object,
+    preparation: object,
+    *,
+    business_questions: Mapping | None = None,
+) -> dict[str, dict[str, str]]:
+    """Render only legal conclusion/basis pairs from this prepared request.
 
-    Two ``choice`` questions are asked in **one** request:
-
-    1. the entry's own business question(s), straight from the protocol registry
-       (``decision_points.questions_map``) so the entry keeps its id, choices,
-       labels and instructions; a dynamic candidate source (dp-auto) is rendered
-       here from the submitted material as an explicit choice enum, because the
-       transport sends a nested ``{material, preparation}`` state and the legacy
-       ``dynamic_choices`` renderer reads top-level state keys;
-    2. ``BASIS_QUESTION_ID`` over the prepared basis catalog, whose criteria are
-       exactly the PM-prepared ``text`` of each item.
-
-    Only ids and prepared texts are rendered - ``material_refs``/``applies_to``
-    stay validation metadata, and no free-form reason field is added. A catalog
-    that cannot render is an error (the caller turns it into a refusal); this
-    builder never invents a candidate, a default or a truncated label.
+    Wire ids are local to this exact material/catalog snapshot, never parsed as
+    a business conclusion. Static entries use readable ids such as fixA/fixB;
+    dynamic candidates use optionA/optionB so arbitrary caller-owned ids cannot
+    collide or become an illegal transport identifier. A basis may name more
+    than one conclusion, and each legal pairing receives its own option.
     """
-    questions = dict(_dpts.questions_map(dp_id))
-    for qid, spec in list(questions.items()):
-        source_key = spec.get("dynamic_choices") if isinstance(spec, Mapping) else None
-        if not isinstance(source_key, str):
-            continue
-        candidates = material.get(source_key) if isinstance(material, Mapping) else None
-        labels: dict[str, str] = {}
-        if isinstance(candidates, list):
-            for item in candidates:
-                if not isinstance(item, Mapping):
-                    continue
-                candidate_id = item.get("id")
-                label = item.get("label")
-                if isinstance(candidate_id, str) and isinstance(label, str):
-                    labels[candidate_id] = label
-        if not labels:
-            raise ValueError(
-                f"{dp_id}: dynamic candidate source {source_key!r} is not renderable"
-            )
-        converted = {key: value for key, value in spec.items() if key != "dynamic_choices"}
-        converted["choices"] = list(labels)
-        converted["labels"] = labels
-        questions[str(qid)] = converted
-
+    questions = _dpts.questions_map(dp_id)
+    if len(questions) != 1:
+        raise ValueError(f"{dp_id}: a prepared selection needs one business question")
+    spec = next(iter(questions.values()))
+    business_qid = next(iter(questions))
+    presentation = (
+        business_questions.get(business_qid)
+        if isinstance(business_questions, Mapping)
+        else None
+    )
     catalog = preparation.get("basis_catalog") if isinstance(preparation, Mapping) else None
-    if not isinstance(catalog, list) or not catalog:
-        raise ValueError(
-            f"{dp_id}: preparation.basis_catalog is required for the same-call basis selection"
-        )
-    basis_labels: dict[str, str] = {}
-    for item in catalog:
-        if not isinstance(item, Mapping):
+    if _dpts.basis_catalog_issues(dp_id, catalog, material):
+        raise ValueError(f"{dp_id}: preparation.basis_catalog is not complete and legal")
+    labels = spec.get("labels")
+    labels = dict(labels) if isinstance(labels, Mapping) else {}
+    dynamic_source = spec.get("dynamic_choices")
+    if isinstance(dynamic_source, str):
+        candidates = material.get(dynamic_source) if isinstance(material, Mapping) else None
+        if isinstance(candidates, list):
+            labels = {
+                item["id"]: item["label"]
+                for item in candidates
+                if isinstance(item, Mapping)
+                and isinstance(item.get("id"), str)
+                and isinstance(item.get("label"), str)
+            }
+    if isinstance(presentation, Mapping):
+        labels.update(_choice_criteria(presentation, None))
+    options: dict[str, dict[str, str]] = {}
+    for choice in _dpts.resolve_entry_choices(dp_id, material):
+        if _dpts.entry_choice_issues(dp_id, choice, material):
             continue
-        basis_item_id = item.get("id")
-        text = item.get("text")
-        if isinstance(basis_item_id, str) and isinstance(text, str):
-            basis_labels[basis_item_id] = text
-    if not basis_labels:
-        raise ValueError(f"{dp_id}: preparation.basis_catalog carries no usable item")
-    questions[BASIS_QUESTION_ID] = {
-        "id": BASIS_QUESTION_ID,
-        "type": "choice",
-        "instructions": PREPARED_BASIS_INSTRUCTIONS,
-        "choices": list(basis_labels),
-        "labels": basis_labels,
+        number = 0
+        for item in catalog:
+            if choice not in item["applies_to"]:
+                continue
+            number += 1
+            # Spreadsheet-style letters stay readable beyond 26 bases. The
+            # dynamic counter is global; static counters are conclusion-local.
+            ordinal = len(options) + 1 if isinstance(dynamic_source, str) else number
+            suffix = ""
+            while ordinal:
+                ordinal, digit = divmod(ordinal - 1, 26)
+                suffix = chr(65 + digit) + suffix
+            prefix = "option" if isinstance(dynamic_source, str) else choice
+            option_id = prefix + suffix
+            if option_id in options:
+                raise ValueError(f"{dp_id}: prepared option ids are not unique")
+            label = labels.get(choice, choice)
+            options[option_id] = {
+                "choice": choice,
+                "basis_id": item["id"],
+                "basis_text": item["text"],
+                "label": (
+                    f"结论 {choice}: {label}\n"
+                    f"依据 {item['id']}: {item['text']}"
+                ),
+            }
+    if not options:
+        raise ValueError(f"{dp_id}: no prepared pair satisfies the entry conditions")
+    return options
+
+
+def decode_prepared_selection(
+    dp_id: str, material: object, preparation: object, answers: object
+) -> dict[str, dict[str, object]]:
+    """Decode one model selection into the unchanged business answer shape.
+
+    The two normalized fields share the one joint-selection confidence; they
+    are not independent model answers or marginal probabilities. The actual
+    selection remains in the transport evidence, and its probabilities are not
+    mislabeled as probabilities of conclusions or bases.
+    """
+    if not isinstance(answers, Mapping):
+        raise ValueError("missing prepared pair selection")
+    selection = answers.get(PREPARED_SELECTION_QUESTION_ID)
+    if not isinstance(selection, Mapping):
+        raise ValueError("missing prepared pair selection")
+    value = selection.get("value")
+    options = prepared_selection_options(dp_id, material, preparation)
+    if not isinstance(value, str) or value not in options:
+        raise ValueError("selected pair is not an option of this prepared request")
+    selected = options[value]
+    business_qid = next(iter(_dpts.questions_map(dp_id)))
+    confidence = _coerce_confidence(selection.get("confidence"))
+    return {
+        business_qid: {"value": selected["choice"], "confidence": confidence},
+        BASIS_QUESTION_ID: {"value": selected["basis_id"], "confidence": confidence},
     }
-    return questions
+
+
+def build_prepared_questions(
+    dp_id: str,
+    material: object,
+    preparation: object,
+    *,
+    business_questions: Mapping | None = None,
+) -> dict:
+    """One choice over the legal conclusion/basis pairs of any active entry."""
+    options = prepared_selection_options(
+        dp_id, material, preparation, business_questions=business_questions
+    )
+    canonical = _dpts.questions_map(dp_id)
+    business_qid = next(iter(canonical))
+    business_spec = canonical[business_qid]
+    if isinstance(business_questions, Mapping) and isinstance(
+        business_questions.get(business_qid), Mapping
+    ):
+        business_spec = business_questions[business_qid]
+    question = {
+        "id": PREPARED_SELECTION_QUESTION_ID,
+        "type": "choice",
+        "instructions": (
+            f"{business_spec.get('instructions', '')}\n{PREPARED_BASIS_INSTRUCTIONS}"
+        ),
+        "choices": list(options),
+        "labels": {option_id: option["label"] for option_id, option in options.items()},
+    }
+    return {PREPARED_SELECTION_QUESTION_ID: question}
 
 
 # ── Outcome helpers ─────────────────────────────────────────────────────────
@@ -1202,6 +1271,7 @@ __all__ = [
     "HttpResponse",
     "PROBE_TARGETS",
     "PREPARED_BASIS_INSTRUCTIONS",
+    "PREPARED_SELECTION_QUESTION_ID",
     "TIMI_AUTH_FIELD",
     "TIMI_AUTH_JSON",
     "TIMI_BASE_URL",
@@ -1210,6 +1280,8 @@ __all__ = [
     "TransportTimeout",
     "credential_status",
     "build_prepared_questions",
+    "prepared_selection_options",
+    "decode_prepared_selection",
     "current_credential_snapshot",
     "probe_matrix",
     "resolve_timi_api_key",

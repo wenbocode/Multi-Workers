@@ -77,6 +77,7 @@ from typing import Callable, Mapping
 
 import decision
 import decision_book
+import decision_material_sources
 import decision_points
 import decision_wire
 import mw_common
@@ -627,7 +628,7 @@ class DecisionPlayground:
             "required_state_fields": decision_book.required_fields(point.id),
             "optional_state_fields": decision_book.optional_fields(point.id),
             "context_slots": list(decision_book.context_slots(point.id)),
-            "max_state_bytes": decision_points.MAX_STATE_BYTES,
+            "max_state_bytes": cfg.max_state_bytes,
             "transport": self._transport_state(cfg),
             "observe_only": OBSERVE_ONLY,
         }
@@ -690,8 +691,15 @@ class DecisionPlayground:
                     f"book is for {book.get('decision_point')!r}, not {dp!r}",
                 )
             )
+        request_limits = {
+            "max_state_bytes": credentials.cfg.max_state_bytes,
+            "max_total_tokens": credentials.cfg.max_total_tokens,
+            "max_state_plus_question_tokens": credentials.cfg.max_state_plus_question_tokens,
+        }
         for issue in decision_book.check_book(
-            book, project_dir=self.control_root, redactor=credentials.gate_redactor
+            book, project_dir=self.control_root, repo_root=self.control_root,
+            redactor=credentials.gate_redactor,
+            limits=request_limits,
         ):
             issues.append(PlaygroundIssue(issue.code, issue.path, issue.detail))
 
@@ -729,16 +737,6 @@ class DecisionPlayground:
                 issues.append(PlaygroundIssue("book-state", f"state.{path}", detail))
             state_bytes = len(decision._encode_state(sent_state))
             state_digest = decision_book.state_digest(sent_state)
-            if state_bytes > decision_points.MAX_STATE_BYTES:
-                issues.append(
-                    PlaygroundIssue(
-                        "book-budget",
-                        "state",
-                        f"{state_bytes} bytes > {decision_points.MAX_STATE_BYTES} bytes; the "
-                        "observation send state must fit without truncation (a truncated "
-                        "state would no longer be the book state)",
-                    )
-                )
 
         context_slots: tuple[str, ...] = ()
         context = state.get("context") if isinstance(state, Mapping) else None
@@ -770,23 +768,34 @@ class DecisionPlayground:
                         issues.append(secret_issue)
 
         if not issues and sent_state is not None:
-            projected, dropped, _size = decision_points.send_state(dp, sent_state)
-            if any(not path.startswith("context.") for path in dropped):
-                issues.append(PlaygroundIssue(
-                    "book-budget", "state", "prepared core material cannot be truncated"
-                ))
-            else:
+            projected = decision_points.model_state_for(dp, sent_state)
+            try:
                 request_state, request_questions = decision_points.prepared_observation_request(
                     dp, projected, book["preparation"],
                     reviewed_questions or decision_points.questions_map(point),
+                    project_dir=self.control_root, limits=request_limits,
+                    source_references=(book.get("notes") or {}).get("evidence"),
                 )
+            except decision_material_sources.SourceMaterialError as exc:
+                issues.extend(
+                    PlaygroundIssue(
+                        "book-budget" if "compression-required" in detail else "book-evidence",
+                        path, detail,
+                    )
+                    for path, detail in exc.issues
+                )
+            except ValueError:
+                issues.append(PlaygroundIssue(
+                    "book-preparation", "preparation", "cannot render a legal conclusion/basis selection"
+                ))
+            else:
                 state_bytes = len(decision._encode_state(request_state))
                 state_digest = decision_book.state_digest(request_state)
-                if state_bytes > decision_points.MAX_STATE_BYTES:
+                if decision.secret_hit(
+                    json.dumps(request_state, ensure_ascii=False, default=str), credentials.gate_redactor
+                ):
                     issues.append(PlaygroundIssue(
-                        "book-budget", "state",
-                        f"complete prepared state is {state_bytes} bytes > "
-                        f"{decision_points.MAX_STATE_BYTES}; no request is sent",
+                        "book-secret", "evidence_sources", "hydrated file evidence matches the known-secret gate",
                     ))
 
         unique: list[PlaygroundIssue] = []
@@ -835,7 +844,7 @@ class DecisionPlayground:
             "ok": review.ok,
             "issues": [issue.as_dict() for issue in review.issues],
             "state_bytes": review.state_bytes,
-            "max_state_bytes": decision_points.MAX_STATE_BYTES,
+            "max_state_bytes": review.credentials.cfg.max_state_bytes if review.credentials is not None else 0,
             "state_digest": review.state_digest,
             "context_slots": list(review.context_slots),
             "context_sent": False,
@@ -891,7 +900,7 @@ class DecisionPlayground:
             cfg,
         )
         if len(questions) > min(cfg.max_questions, policy["max_questions"]):
-            return None, "the prepared question pair exceeds max_questions; nothing would be sent"
+            return None, "the prepared selection question exceeds max_questions; nothing would be sent"
         # The entry id is what makes a dynamic candidate list legal for its own
         # contract: without it the preview refused exactly the dynamic entry.
         dynamic = decision_points.dynamic_choice_labels(

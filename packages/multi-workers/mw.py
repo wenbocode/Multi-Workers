@@ -50,6 +50,7 @@ import decision
 import decision_backends
 import decision_blocked
 import decision_context
+import decision_file_evidence
 import decision_lifecycle
 import decision_monitor
 import decision_points
@@ -1600,8 +1601,50 @@ def _decide_feedback_fields(results: list) -> dict:
     }
 
 
+def _decide_replay_file_dependencies(
+    control_root: pathlib.Path, decision_id: str,
+) -> list[dict[str, object]] | None:
+    """Read the original saved source contract, never rehydrate newer files."""
+    snapshots = decision_wire.read_events(decision_wire.production_wire_sink(control_root))
+    dependencies = None
+    for event in snapshots.events:
+        if event.get("kind") != "book-snapshot" or event.get("decision_id") != decision_id:
+            continue
+        captured = event.get("book")
+        if not isinstance(captured, Mapping) or not isinstance(captured.get("text"), str):
+            raise decision_file_evidence.FileEvidenceError("original source snapshot is not readable")
+        if any(captured.get(flag) for flag in (
+            "truncated", "read_capped", "text_omitted", "decode_errors", "boundary_scrubbed",
+        )):
+            raise decision_file_evidence.FileEvidenceError("original source snapshot is incomplete")
+        text = captured["text"]
+        digest = captured.get("captured_redacted_sha256")
+        if isinstance(digest, str) and hashlib.sha256(text.encode("utf-8")).hexdigest() != digest:
+            raise decision_file_evidence.FileEvidenceError("original source snapshot digest does not match")
+        try:
+            document = json.loads(text)
+        except (ValueError, RecursionError):
+            raise decision_file_evidence.FileEvidenceError("original source snapshot is not valid JSON") from None
+        if not isinstance(document, Mapping) or document.get("decision_id") != decision_id:
+            raise decision_file_evidence.FileEvidenceError("original source snapshot identity does not match")
+        parsed = decision_file_evidence.parse_file_evidence(document)
+        if parsed is None:
+            state = document.get("state")
+            if isinstance(state, Mapping) and state.get("evidence_sources"):
+                raise decision_file_evidence.FileEvidenceError("original source dependencies are missing")
+            continue
+        if dependencies is not None and dependencies != parsed:
+            raise decision_file_evidence.FileEvidenceError("original source snapshots disagree")
+        dependencies = parsed
+    return dependencies
+
+
 def _decide_replayed_payload(
-    dp: str, logical_id: str, linked: list, *, mode: str | None = None
+    dp: str, logical_id: str, linked: list, *, mode: str | None = None,
+    control_root: pathlib.Path | None = None,
+    material: Mapping | None = None,
+    preparation: Mapping | None = None,
+    source_references: Mapping | None = None,
 ) -> dict:
     """The honest response for an already-started logical id (no model call)."""
     last = linked[-1] if linked else {}
@@ -1643,7 +1686,69 @@ def _decide_replayed_payload(
         "business_decisions": int(last.get("business_decisions") or 0),
     }
     result.update(_decide_feedback_fields([]))
+    if linked and control_root is not None and isinstance(last.get("decision_id"), str):
+        try:
+            source_required = bool(decision_points.decision_material_sources._references(
+                material, source_references, preparation
+            ))
+            dependencies = _decide_replay_file_dependencies(control_root, last["decision_id"])
+            if source_required and not dependencies:
+                raise decision_file_evidence.FileEvidenceError("original source dependency snapshot is missing")
+            changed = dependencies is not None and decision_file_evidence.check_file_evidence(dependencies).changed
+        except (ValueError, OSError):
+            dependencies = None
+            changed = True
+        if changed:
+            result.update({
+                "available": False,
+                "answers": None,
+                "reason": "input-incomplete",
+                "escalated_reason": "stale-file-evidence",
+                "choice": None,
+                "basis_id": None,
+                "basis_text": None,
+                "basis_source": None,
+                "business_decisions": 0,
+                "detail": "original cited file evidence is stale or unprovable; prepare a new logical_id for a new judgment; no request sent",
+                "issues": [{"field": "file_evidence", "issue": "original source snapshot no longer matches current files"}],
+            })
+        if dependencies is not None:
+            result["file_evidence"] = dependencies
     return result
+
+
+def _decide_prepared_capture(
+    capture: decision_points._DecisionCapture,
+    client: decision.DecisionClient,
+    point: decision_points.DecisionPoint,
+    trigger: decision_points.Trigger,
+    response: Mapping,
+    mode: str,
+) -> dict:
+    """Retain the actual prepared source snapshot and rendered pair vocabulary."""
+    state = getattr(client, "last_prepared_state", None)
+    questions = getattr(client, "last_prepared_questions", None)
+    if not isinstance(state, Mapping) or not isinstance(questions, Mapping):
+        return {}
+    digest = decision_points._state_digest(state)
+    capture.mode = mode
+    capture.remember_state(state, questions=questions, state_digest=digest)
+    capture.record_call(client)
+    available = bool(response.get("available"))
+    outcome = decision_points._outcome(
+        dp_point=point,
+        trigger=trigger,
+        status="suggested" if available else "escalated",
+        escalated_reason=None if available else "unavailable",
+        mode=mode,
+        state_digest=digest,
+        response=response,
+    )
+    updates = capture.finish(decision_points._ArchiveTrace(), outcome=outcome)
+    return {
+        "state_digest": digest,
+        **{key: updates.get(key) for key in ("snapshot_ref", "call_id", "capture_status")},
+    }
 
 
 def _decide_run_prepared(
@@ -1794,7 +1899,11 @@ def _decide_run_prepared(
         # Same logical id: answer from the recorded fact, never a new send.
         stage = "replay"
         emit(
-            _decide_replayed_payload(dp, str(logical_id), linked, mode=mode)
+            _decide_replayed_payload(
+                dp, str(logical_id), linked, mode=mode, control_root=control_root,
+                material=material, preparation=preparation,
+                source_references=book_meta.get("evidence") if isinstance(book_meta, Mapping) else None,
+            ),
         )
         return 0
 
@@ -1811,7 +1920,11 @@ def _decide_run_prepared(
             linked = []
         stage = "replay"
         emit(
-            _decide_replayed_payload(dp, str(logical_id), linked, mode=mode)
+            _decide_replayed_payload(
+                dp, str(logical_id), linked, mode=mode, control_root=control_root,
+                material=material, preparation=preparation,
+                source_references=book_meta.get("evidence") if isinstance(book_meta, Mapping) else None,
+            ),
         )
         return 0
     if not start_result.recorded:
@@ -1833,8 +1946,22 @@ def _decide_run_prepared(
         emit(result)
         return 2
 
+    trigger = decision_points.Trigger.from_mapping(
+        material, trigger_id=str(logical_id), key=meta.key, task_key=meta.task_key
+    )
+    capture = decision_points._DecisionCapture(observation=None, intent="answer")
+    scope, _channel = decision_points._capture_scope(
+        capture, project=project_dir, cfg=cfg, client=None,
+        dp_point=point, decision_id=decision_id, trigger=trigger,
+        snapshot=credential_snapshot,
+    )
+    capture.attach(
+        scope, _channel, dp_id=point.id, decision_id=decision_id,
+        questions_version=point.questions_version,
+    )
     client = decision.DecisionClient(
-        cfg, project_root=project_dir, credential_snapshot=credential_snapshot
+        cfg, project_root=project_dir, credential_snapshot=credential_snapshot,
+        wire_scope=scope,
     )
     stage = "request"
     try:
@@ -1844,6 +1971,7 @@ def _decide_run_prepared(
             preparation,
             actor_role=_decide_protocol_actor_role(verified_role),
             logical_id=str(logical_id),
+            **({"source_references": book_meta.get("evidence")} if book_meta is not None else {}),
         )
     except decision.DecisionInputError as exc:
         return refuse(
@@ -1859,6 +1987,10 @@ def _decide_run_prepared(
         )
     if not isinstance(request_result, dict):
         return refuse("bad-response", detail="the transport returned no prepared result")
+
+    capture_fields = _decide_prepared_capture(
+        capture, client, point, trigger, request_result, mode
+    )
 
     feedback: list = []
     if request_result.get("business_decisions") == 1 and request_result.get("prepared_at"):
@@ -1922,6 +2054,9 @@ def _decide_run_prepared(
         "detail": request_result.get("detail"),
         "prepared_at": request_result.get("prepared_at"),
     }
+    result.update(capture_fields)
+    file_evidence = getattr(client, "last_file_evidence", None)
+    result["file_evidence"] = [dict(dependency) for dependency in (file_evidence or [])]
     if book_meta is not None:
         result["book"] = {
             "path": book_meta.get("path"),
@@ -2046,11 +2181,9 @@ def _decide_print(payload: dict, as_json: bool) -> None:
 def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
     """`mw decide run`: one decision through the single authority.
 
-    A structured request (no `questions`, `--dp <registry id>`) goes through
-    :func:`decision_points.decide_for` with ``intent="answer"``: authorization,
-    the state input gate, the transport call, the answer check and the archive
-    row all happen in one place (design D-035/D-036). `enabled=false` therefore
-    returns before any encode/spawn/archive on the CLI path too (AC-001).
+    Active entries require the prepared stdin envelope or a decision book.
+    Authorization, paired choices, file evidence and lifecycle association use
+    the same prepared request path; an old structured state cannot bypass it.
 
     A legacy request carrying its own `questions` is a human-only isolated
     query, not a pre-T-02b direct send: it names no registry dp (the default
@@ -2276,12 +2409,11 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         }
         _decide_print(payload, getattr(args, "json", False))
         return 0
-    # Structured path: the registry dp is the authority. Validate the active
-    # entry's complete material contract before the model call; an old id or an
-    # incomplete state is a refusal, never a partially sent request.
-    state = payload.get("state")
+    # Active entries require the prepared envelope. A legacy structured state
+    # has no timestamped basis or verified local metadata, so it must not bypass
+    # the paired question, source-content preparation or actor binding.
     try:
-        point = decision_points.require_active_dp(dp)
+        decision_points.require_active_dp(dp)
     except decision.DecisionInputError as exc:
         _decide_print_refusal(
             project_dir,
@@ -2290,54 +2422,16 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
             stage="registry-check",
         )
         return 2
-    if not isinstance(state, dict):
-        detail = "request state must be a JSON object"
-        _decide_audit_block(
-            _decide_control_root(project_dir), "input-validation",
-            _decide_request_failure(dp, None, "input-incomplete", detail=detail),
-        )
-        print(f"[mw decide run] {detail}", file=sys.stderr)
-        return 2
-    material_issues = decision_points.entry_material_issues(dp, state)
-    if material_issues:
-        _decide_print_refusal(
-            project_dir,
-            _decide_request_failure(
-                dp,
-                None,
-                "input-incomplete",
-                issues=material_issues,
-                detail=f"{len(material_issues)} blocking material issue(s); no request sent",
-            ),
-            getattr(args, "json", False),
-        )
-        return 2
-    client = decision.DecisionClient(
-        cfg, project_root=project_dir, credential_snapshot=credential_snapshot
+    _decide_print_refusal(
+        project_dir,
+        _decide_request_failure(
+            dp, None, "input-incomplete",
+            issues=(("preparation", "active decision points require a prepared material/preparation/meta envelope"),),
+            detail="submit the prepared envelope or a decision book; no request sent",
+        ),
+        getattr(args, "json", False),
     )
-    trigger = decision_points.Trigger.from_mapping(state)
-    try:
-        outcome = decision_points.decide_for(
-            point.id, trigger, project_dir, client=client, intent="answer"
-        )
-    except decision.DecisionInputError as exc:
-        _decide_audit_block(
-            _decide_control_root(project_dir), "request",
-            _decide_request_failure(dp, None, "input-incomplete", detail=str(exc)),
-        )
-        print(f"[mw decide run] {exc}", file=sys.stderr)
-        return 2
-    result = _decide_run_payload(outcome)
-    if result.get("available") is False:
-        _decide_audit_block(
-            _decide_control_root(project_dir), "request", result,
-            config=cfg, snapshot=credential_snapshot,
-        )
-    if getattr(args, "json", False):
-        print(json.dumps(result, ensure_ascii=False))
-    else:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return 2
 
 
 def _decide_probe(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
@@ -6397,6 +6491,11 @@ def _decide_sign_finalize(
             dp_point=point, decision_id=f"{point.id}:{meta.logical_id}",
             trigger=trigger, snapshot=credential_snapshot,
         )
+        capture.attach(
+            scope, _channel, dp_id=point.id,
+            decision_id=f"{point.id}:{meta.logical_id}",
+            questions_version=point.questions_version,
+        )
         client = decision.DecisionClient(
             cfg, project_root=control_dir, credential_snapshot=credential_snapshot,
             wire_scope=scope,
@@ -6410,13 +6509,19 @@ def _decide_sign_finalize(
             return _decide_sign_refusal(
                 key_dir_path, as_json, [str(exc)], logical_id=meta.logical_id
             )
+        _decide_prepared_capture(capture, client, point, trigger, response, mode)
+        file_evidence = getattr(client, "last_file_evidence", [])
+        archive_response = response
+        if not response.get("available") and response.get("reason") not in decision.REASON_CODES:
+            archive_response = {**response, "reason": decision.REASON_BAD_RESPONSE}
         decision_points._maybe_archive(
             True, dp_point=point, trigger=trigger, project_dir=control_dir,
-            state={"material": decision_points.model_state_for(point.id, material),
-                   "preparation": preparation},
-            mode=mode, response=response, authority="advisory",
+            state=client.last_prepared_state,
+            mode=mode, response=archive_response,
+            authority="advisory" if response.get("available") else "human",
             escalated_reason=None if response.get("available") else "unavailable",
-            acted=False, actual_action=None, note="intent=answer", policy=policy,
+            acted=False, actual_action=None,
+            note=f"intent=answer; prepared_reason={response.get('reason')}", policy=policy,
         )
         if not response.get("available") or response.get("business_decisions") != 1:
             reason = response.get("reason") or "bad-response"
@@ -6425,7 +6530,8 @@ def _decide_sign_finalize(
             if detail:
                 problems.append(detail.splitlines()[0][:240])
             return _decide_sign_refusal(
-                key_dir_path, as_json, problems, logical_id=meta.logical_id
+                key_dir_path, as_json, problems, logical_id=meta.logical_id,
+                file_evidence=file_evidence,
             )
         conclusion = response.get("choice")
         if conclusion not in decision_signoff_result.CONCLUSIONS:
@@ -6454,6 +6560,7 @@ def _decide_sign_finalize(
             return _decide_sign_refusal(
                 key_dir_path, as_json, ["dp-sign-key answer is below the configured confidence threshold"],
                 logical_id=meta.logical_id,
+                file_evidence=file_evidence,
             )
         # The answer is only applicable to the basis captured before the call.
         # Never bind a stale answer to a contract/goal edited during the call.
@@ -6495,6 +6602,7 @@ def _decide_sign_finalize(
                 "decision_id": f"{point.id}:{meta.logical_id}",
                 "actor_role": verified_role,
                 "material_sha256": decision_signoff_result.digest_material(material)[0],
+                "file_evidence": file_evidence,
             },
         )
         record_status = "written"
@@ -6543,6 +6651,7 @@ def _decide_sign_payload_base(record, facts, key: str) -> dict:
 
 def _decide_sign_refusal(
     key_dir_path: pathlib.Path, as_json: bool, problems: list[str], *, logical_id: str | None,
+    file_evidence: list[dict] | None = None,
 ) -> int:
     for problem in problems:
         print(f"[mw decide sign] {problem}", file=sys.stderr)
@@ -6555,6 +6664,7 @@ def _decide_sign_refusal(
         "signoff_path": None,
         "second_approval": 0,
         "problems": list(problems),
+        **({"file_evidence": file_evidence} if file_evidence else {}),
     }
     _decide_sign_audit_block(key_dir_path, payload, problems)
     _decide_print(payload, as_json)
@@ -6652,6 +6762,22 @@ def _decide_sign_finish(
             logical_id=record.logical_id,
         )
     payload = _decide_sign_payload_base(record, facts, key)
+    file_evidence = proof.get("file_evidence")
+    payload["file_evidence"] = file_evidence if isinstance(file_evidence, list) else []
+    if isinstance(file_evidence, list) and file_evidence:
+        try:
+            changed = decision_file_evidence.check_file_evidence(file_evidence).changed
+        except (decision_file_evidence.FileEvidenceError, OSError):
+            return _decide_sign_refusal(
+                key_dir_path, as_json, ["cited file evidence is no longer readable under the current scope; request a new judgment"],
+                logical_id=record.logical_id, file_evidence=file_evidence,
+            )
+        if changed:
+            return _decide_sign_refusal(
+                key_dir_path, as_json, ["cited file evidence changed after the judgment; request a new judgment"],
+                logical_id=record.logical_id, file_evidence=file_evidence,
+            )
+        payload["file_evidence"] = file_evidence
     payload.update({
         "available": True,
         "answers": dict(answers),

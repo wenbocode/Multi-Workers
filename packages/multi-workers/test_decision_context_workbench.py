@@ -1120,10 +1120,13 @@ def test_edited_cases_reach_the_real_loopback_typed_validate(tmp_path):
             trigger = decision_points.Trigger.from_mapping(dict(book["material"]))
             sent_state = decision_points.get_decision_point(dp).build_state(trigger)
             assert sent_state[field] == edited_value
-            request_state = {
-                "material": decision_points.send_state(dp, sent_state)[0],
-                "preparation": book["preparation"],
-            }
+            request_state, request_questions = decision_points.prepared_observation_request(
+                dp, decision_points.model_state_for(dp, sent_state), book["preparation"],
+                decision_points.questions_map(dp), project_dir=repo,
+                source_references=book["notes"]["evidence"],
+            )
+            assert len(request_questions) == 1
+            assert request_state["evidence_sources"]
             assert data["state_digest"] == decision_book.state_digest(request_state)
             assert data["state_bytes"] == len(decision._encode_state(request_state))
             assert data["state_digest"] != decision_book.state_digest(

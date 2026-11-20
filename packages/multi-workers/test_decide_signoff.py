@@ -982,7 +982,7 @@ def test_basis_change_during_the_model_request_is_not_bound_or_signed(
 
     def mutate_during_the_call(state, questions, cfg):
         business_id = cli_fixtures._business_question_id("dp-sign-key")
-        assert set(questions) == {business_id, "basis_id"}
+        assert set(questions) == {"decision_selection"}
         assert state["preparation"] == envelope["preparation"]
         (key_dir / "spec.md").write_text(
             "| AC-001 | rewritten during the model request |\n",
@@ -993,10 +993,7 @@ def test_basis_change_during_the_model_request_is_not_bound_or_signed(
             available=True,
             reason=None,
             retryable=False,
-            answers={
-                business_id: {"value": "finalize", "confidence": 0.9},
-                "basis_id": {"value": "b-primary", "confidence": 0.9},
-            },
+            answers={"decision_selection": {"value": str("finalize") + "A", "confidence": 0.9}},
             latency_ms=5,
             detail="",
         )

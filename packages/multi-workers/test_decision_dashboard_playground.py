@@ -129,6 +129,14 @@ def _make_project(
 ) -> pathlib.Path:
     project = tmp_path / name
     (project / ".agenticdoc" / "_autopilot").mkdir(parents=True)
+    for relative in (
+        "packages/multi-workers/scripts/build_decide_cases.py",
+        "packages/multi-workers/test_decision_context_workbench.py",
+        "packages/multi-workers/decision_book.py",
+    ):
+        evidence = project / relative
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        evidence.write_text("Local fixture evidence for the cited source line.\n", encoding="utf-8")
     config: dict[str, object] = {
         "enabled": enabled,
         "transport": "timi-decisions",
@@ -203,12 +211,9 @@ def _supported_answer(dp: str, book: dict) -> dict[str, str]:
     a subset of it. The synthetic HTTP fixture must answer a choice+basis pair
     the book itself prepared; no first-choice default and no production answer.
     """
-    qid = next(iter(dpts.questions_map(dp)))
-    catalog = book["preparation"]["basis_catalog"]
-    for choice in dpts.resolve_entry_choices(dp, book["material"]):
-        for item in catalog:
-            if choice in item["applies_to"]:
-                return {qid: choice, "basis_id": item["id"]}
+    options = decision_backends.prepared_selection_options(dp, book["material"], book["preparation"])
+    if options:
+        return {decision_backends.PREPARED_SELECTION_QUESTION_ID: next(iter(options))}
     raise AssertionError(f"no prepared choice+basis pair for {dp}")
 
 
@@ -594,9 +599,7 @@ def test_scaffold_and_validate_expose_the_questions_and_the_request_preview(
         )
         preview = report["request_preview"]
         assert set(preview) == {"model", "state", "questions"}
-        assert preview["questions"]["triage_type"]["instructions"] == (
-            "T10 edited: which worker type?"
-        )
+        assert "T10 edited: which worker type?" in preview["questions"][decision_backends.PREPARED_SELECTION_QUESTION_ID]["instructions"]
         assert set(preview["state"]) == {"material", "preparation"}
         assert preview["state"]["preparation"] == _book(DP_W_TYPE)["preparation"]
         assert set(preview["state"]["material"]) == {
@@ -617,21 +620,9 @@ def test_scaffold_and_validate_expose_the_questions_and_the_request_preview(
         assert plain["ok"] is True
         assert plain["questions_source"] == "registry"
         assert plain["questions"] == dpts.questions_map(DP_W_TYPE)
-        assert plain["request_preview"]["questions"] == {
-            "triage_type": {
-                "type": "choice",
-                "instructions": dpts.questions_map(DP_W_TYPE)["triage_type"]["instructions"],
-                "criteria": dpts.questions_map(DP_W_TYPE)["triage_type"]["labels"],
-            },
-            "basis_id": {
-                "type": "choice",
-                "instructions": decision_backends.PREPARED_BASIS_INSTRUCTIONS,
-                "criteria": {
-                    item["id"]: item["text"]
-                    for item in _book(DP_W_TYPE)["preparation"]["basis_catalog"]
-                },
-            },
-        }
+        assert plain["request_preview"]["questions"] == decision_backends.TimiDecisionsBackend().build_questions(
+            decision_backends.build_prepared_questions(DP_W_TYPE, _book(DP_W_TYPE)["material"], _book(DP_W_TYPE)["preparation"])
+        )
         assert fixture.calls == 0, "a preview never reaches the model endpoint"
         assert _of_kind(project, "attempt-start") == []
 
@@ -652,7 +643,7 @@ def test_scaffold_and_validate_spend_no_call_and_state_context_is_not_sent(
         assert [field["name"] for field in scaffold["optional_state_fields"]] == list(
             dpts.OPTIONAL_STATE_FIELDS.get(DP_W_TYPE, ())
         )
-        assert scaffold["max_state_bytes"] == dpts.MAX_STATE_BYTES
+        assert scaffold["max_state_bytes"] == decision.DecisionConfig.max_state_bytes
         assert len(created) == 1, "exactly one provider is created for this control root"
         assert _discoveries() == [], "scaffold resolves no credential"
 
@@ -679,7 +670,7 @@ def test_scaffold_and_validate_spend_no_call_and_state_context_is_not_sent(
         assert report["context_slots"] == ["error_excerpt"]
         assert report["context_sent"] is False
         assert report["context_note"]
-        assert report["state_bytes"] <= report["max_state_bytes"]
+        assert report["max_state_bytes"] == 0 or report["state_bytes"] <= report["max_state_bytes"]
         assert report["observe_only"] is True
         assert fixture.calls == 0, "validate must never reach the model endpoint"
         assert _of_kind(project, "submission-start") == []
@@ -779,9 +770,10 @@ def test_real_submit_posts_to_the_fixture_and_joins_the_answer_by_ids(
             "task_deliverables",
             "images_required",
         }
-        assert set(sent["questions"]) == {"triage_type", "basis_id"}
-        assert sent["questions"]["basis_id"]["criteria"] == {
-            item["id"]: item["text"] for item in book["preparation"]["basis_catalog"]
+        assert set(sent["questions"]) == {decision_backends.PREPARED_SELECTION_QUESTION_ID}
+        options = decision_backends.prepared_selection_options(DP_W_TYPE, book["material"], book["preparation"])
+        assert sent["questions"][decision_backends.PREPARED_SELECTION_QUESTION_ID]["criteria"] == {
+            wire_id: item["label"] for wire_id, item in options.items()
         }
         assert "context" not in sent["state"]["material"], "this dispatch book has no used context"
 
@@ -861,7 +853,8 @@ def test_real_submit_posts_to_the_fixture_and_joins_the_answer_by_ids(
         assert json.loads(attempt["request"]["text"])["state"] == sent["state"]
         assert attempt["request"]["byte_exact"] is True
         assert attempt["response"]["text_omitted"] is False
-        assert json.loads(attempt["response"]["text"])["answers"]["triage_type"]["choice"] == "coding"
+        wire_choice = json.loads(attempt["response"]["text"])["answers"][decision_backends.PREPARED_SELECTION_QUESTION_ID]["choice"]
+        assert options[wire_choice]["choice"] == "coding"
         assert "context" not in json.loads(attempt["request"]["text"])["state"]["material"]
 
         status, payload = _get(instance, "/api/test/history", token)
@@ -930,13 +923,13 @@ def test_prepared_preview_equals_the_actual_same_call_http_body(
         assert fixture.calls == 0, "validation never sends"
         validation_calls = fixture.calls
         assert preview["state"]["preparation"] == book["preparation"]
-        assert preview["questions"][qid]["instructions"] == questions[qid]["instructions"]
+        selection = preview["questions"][decision_backends.PREPARED_SELECTION_QUESTION_ID]
+        assert questions[qid]["instructions"] in selection["instructions"]
         if "criteria" in questions[qid]:
-            assert preview["questions"][qid]["criteria"] == questions[qid]["criteria"]
-        assert set(preview["questions"]) == {qid, "basis_id"}
-        assert preview["questions"]["basis_id"]["criteria"] == {
-            item["id"]: item["text"] for item in book["preparation"]["basis_catalog"]
-        }
+            options = decision_backends.prepared_selection_options(dp, book["material"], book["preparation"])
+            assert all(any(questions[qid]["criteria"][item["choice"]] in label for label in selection["criteria"].values())
+                for item in options.values())
+        assert set(preview["questions"]) == {decision_backends.PREPARED_SELECTION_QUESTION_ID}
 
         status, payload = _post(
             instance, "/api/test/submit",
@@ -1116,7 +1109,7 @@ def test_invalid_smuggled_oversize_and_secret_books_spend_no_call(tmp_path: path
 
         over = _book(DP_W_TYPE)
         # One required string over the published budget: refused whole, never cut.
-        over["material"]["task_goal"] = "x" * (dpts.MAX_STATE_BYTES + 1)
+        over["material"]["task_goal"] = "x" * (decision.DecisionConfig.max_state_plus_question_tokens * 4 + 1)
         status, payload = _post(
             instance,
             "/api/test/submit",

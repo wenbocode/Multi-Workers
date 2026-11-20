@@ -43,6 +43,7 @@ from typing import Any, Iterable, Mapping
 
 import decision
 import decision_context
+import decision_material_sources
 import decision_points
 
 #: 决策本格式版本（顶层 ``schema_version``）。3 = material/meta/preparation 分层；
@@ -782,7 +783,12 @@ def check_book(
             redactor=redactor,
         )
     )
-    issues.extend(_check_budget(book, dp_id, limits=limits))
+    issues.extend(
+        _check_budget(
+            book, dp_id, limits=limits,
+            project_dir=repo_root if repo_root is not None else project_dir, redactor=redactor,
+        )
+    )
     issues.extend(_check_secrets(book, redactor=redactor))
     return issues
 
@@ -805,7 +811,9 @@ def observation_book_issues(
         return (("book", f"must be a JSON object, got {type(book).__name__}"),)
     return tuple(
         (issue.path, f"{issue.code}: {issue.detail}")
-        for issue in check_book(book, project_dir=project_dir, redactor=redactor)
+        for issue in check_book(
+            book, project_dir=project_dir, repo_root=project_dir, redactor=redactor
+        )
     )
 
 
@@ -1237,11 +1245,14 @@ def _check_budget(
     dp_id: str,
     *,
     limits: Mapping[str, int] | None,
+    project_dir: pathlib.Path | str | None = None,
+    redactor: object | None = None,
 ) -> list[Issue]:
     """The same token/byte gates as the decide layer, on the whole send surface.
 
-    Material + preparation are sent together by ``request_prepared`` and are never
-    truncated: over budget is a refusal, not a silent cut of the core evidence.
+    The canonical prepared builder includes the real legal-pair question and
+    file-source contents. Core material is never truncated; source excerpts are
+    explicit and carry provenance, just as on the production send path.
     """
     resolved = _limits(limits)
     material = book.get("material")
@@ -1251,7 +1262,26 @@ def _check_budget(
         if isinstance(material, Mapping)
         else {}
     )
-    payload = {"material": projected, "preparation": dict(preparation or {})}
+    try:
+        payload, questions = decision_points.prepared_observation_request(
+            dp_id, projected, dict(preparation or {}), decision_points.questions_map(dp_id),
+            project_dir=project_dir, limits=resolved,
+            source_references=(book.get("notes") or {}).get("evidence"),
+        )
+    except decision_material_sources.SourceMaterialError as exc:
+        return [
+            Issue(
+                "book-budget" if "compression-required" in detail else "book-evidence",
+                path, detail,
+            )
+            for path, detail in exc.issues
+        ]
+    except ValueError:
+        # An invalid preparation already has precise field issues from the
+        # preceding gate; it must never crash a book check during rendering.
+        return [Issue("book-preparation", "preparation", "cannot render a legal conclusion/basis selection")]
+    if decision.secret_hit(json.dumps(payload, ensure_ascii=False, default=str), redactor):
+        return [Issue("book-secret", "evidence_sources", _SECRET_DETAIL)]
     state_bytes = decision._encode_state(payload)
     state_text = state_bytes.decode("utf-8", errors="replace")
     state_tokens = decision._estimate_tokens(state_text)
@@ -1267,12 +1297,12 @@ def _check_budget(
         )
     question_tokens = sum(
         decision._estimate_tokens(json.dumps(spec, ensure_ascii=False, default=str))
-        for spec in decision_points.questions_map(dp_id).values()
+        for spec in questions.values()
     )
     longest_question = max(
         (
             decision._estimate_tokens(json.dumps(spec, ensure_ascii=False, default=str))
-            for spec in decision_points.questions_map(dp_id).values()
+            for spec in questions.values()
         ),
         default=0,
     )

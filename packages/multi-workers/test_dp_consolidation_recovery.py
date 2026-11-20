@@ -2022,7 +2022,7 @@ class _FakePreparedClient:
         self.choice = choice
 
     def request_prepared(self, dp, material, preparation, *, actor_role=None, logical_id=None,
-                         replay_check=None):
+                         replay_check=None, source_references=None):
         self.calls.append({"dp": dp, "material": material, "preparation": preparation,
                            "actor_role": actor_role, "logical_id": logical_id})
         if self.business == 1:
@@ -2660,10 +2660,7 @@ def _real_backend(choice="approve", *, business=1):
         }], name="timi-decisions", model="fake-model", confidence_source="api")
     return decision.FakeBackend([{
         "available": True, "reason": None, "retryable": False,
-        "answers": {
-            "gate_decision": {"value": choice, "confidence": 0.8},
-            "basis_id": {"value": "b-approve", "confidence": 0.8},
-        },
+        "answers": {"decision_selection": {"value": str(choice) + "A", "confidence": 0.8}},
         "latency_ms": 5,
     }], name="timi-decisions", model="fake-model", confidence_source="api")
 
@@ -2681,7 +2678,7 @@ def test_prepare_writes_the_one_formal_gate_answer_with_a_real_client(
     assert prepared["ok"] is True, prepared
     assert prepared["choice"] == choice
     assert len(backend.calls) == 1
-    assert set(backend.calls[0]["questions"]) == {"gate_decision", "basis_id"}
+    assert set(backend.calls[0]["questions"]) == {"decision_selection"}
     gate = gates.parse(gate_path)
     assert gate.transport == "answered" and gate.business == choice
     assert gate.decision_ref == prepared["decision_ref"] == "dp-gate-approve:" + grant["operation_id"]
@@ -3093,7 +3090,7 @@ def test_h11_prepare_uses_the_real_halted_stage_and_the_one_gate_writer(tmp_path
     assert prepared["stop_sha256"] == parts["facts"]["stop_sha256"]
     assert prepared["decision_ref"] == "dp-gate-approve:" + parts["grant"]["operation_id"]
     assert len(backend.calls) == 1
-    assert set(backend.calls[0]["questions"]) == {"gate_decision", "basis_id"}
+    assert set(backend.calls[0]["questions"]) == {"decision_selection"}
     gate = _h11_gate(parts)
     assert gate.transport == "answered" and gate.business == "approve"
     assert gate.effect == "not-started"
@@ -3427,6 +3424,7 @@ def _pm_h11_fixture(
 
     root = tmp_path / "project"
     (root / ".agenticdoc" / "_autopilot" / "gates").mkdir(parents=True)
+    (root / ".agenticdoc" / "target.yml").write_text("active: single\n", encoding="utf-8")
     claim = f"{socket.gethostname()}:{os.getpid()}"
     (root / ".agenticdoc" / "_index.parallel").write_text(
         "| Key | Status | Phase | Claim | Deps | Desc | Updated |\n"
@@ -3524,10 +3522,7 @@ def _pm_h11_fixture(
     backend = decision.FakeBackend(
         [on_decision if on_decision is not None else {
             "available": True, "reason": None, "retryable": False,
-            "answers": {
-                "gate_decision": {"value": choice, "confidence": 0.8},
-                "basis_id": {"value": "b-approve", "confidence": 0.8},
-            },
+            "answers": {"decision_selection": {"value": str(choice) + "A", "confidence": 0.8}},
             "latency_ms": 1,
         }],
         name="timi-decisions", model="fake-model", confidence_source="api",
@@ -3710,10 +3705,7 @@ def test_pm_h11_source_revoked_during_the_model_call_blocks_the_effect(tmp_path,
         host.write_text(json.dumps(payload), encoding="utf-8", newline="\n")
         return {
             "available": True, "reason": None, "retryable": False,
-            "answers": {
-                "gate_decision": {"value": "approve", "confidence": 0.8},
-                "basis_id": {"value": "b-approve", "confidence": 0.8},
-            },
+            "answers": {"decision_selection": {"value": str("approve") + "A", "confidence": 0.8}},
             "latency_ms": 1,
         }
 
@@ -3744,10 +3736,7 @@ def test_pm_h11_unknown_reserved_effect_is_not_applied_on_replay(tmp_path, monke
         host.write_text(json.dumps(payload), encoding="utf-8", newline="\n")
         return {
             "available": True, "reason": None, "retryable": False,
-            "answers": {
-                "gate_decision": {"value": "approve", "confidence": 0.8},
-                "basis_id": {"value": "b-approve", "confidence": 0.8},
-            },
+            "answers": {"decision_selection": {"value": str("approve") + "A", "confidence": 0.8}},
             "latency_ms": 1,
         }
 

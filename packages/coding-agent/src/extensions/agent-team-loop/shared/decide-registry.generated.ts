@@ -88,7 +88,7 @@ export const DECIDE_REGISTRY_PREPARATION: DecideRegistryPreparation = {
 /** Exactly the eight active entries, in registry order. */
 export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {
 	"dp-w-type": {
-		questionsVersion: "q-b06e79ab",
+		questionsVersion: "q-d130b00c",
 		businessQuestionId: "triage_type",
 		fixedChoiceIds: ["coding", "research", "review", "vision"],
 		kind: "fixed",
@@ -123,7 +123,7 @@ export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {
 		preparation: DECIDE_REGISTRY_PREPARATION,
 	},
 	"dp-pm-steer": {
-		questionsVersion: "q-ba8e970f",
+		questionsVersion: "q-c2d79bf6",
 		businessQuestionId: "checkpoint_action",
 		fixedChoiceIds: ["narrow", "split", "direct-exec", "escalate"],
 		kind: "fixed",
@@ -169,7 +169,7 @@ export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {
 		preparation: DECIDE_REGISTRY_PREPARATION,
 	},
 	"dp-w-check-task": {
-		questionsVersion: "q-10671804",
+		questionsVersion: "q-add9d820",
 		businessQuestionId: "reachability",
 		fixedChoiceIds: ["continue", "terminate", "investigate"],
 		kind: "fixed",
@@ -245,7 +245,7 @@ export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {
 		preparation: DECIDE_REGISTRY_PREPARATION,
 	},
 	"dp-QG": {
-		questionsVersion: "q-16b4bb5c",
+		questionsVersion: "q-b8e9bfe6",
 		businessQuestionId: "qg_verdict",
 		fixedChoiceIds: ["pass", "fix", "reopen"],
 		kind: "fixed",
@@ -290,7 +290,7 @@ export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {
 		preparation: DECIDE_REGISTRY_PREPARATION,
 	},
 	"dp-gate-approve": {
-		questionsVersion: "q-f5de87ef",
+		questionsVersion: "q-3ae2a3fb",
 		businessQuestionId: "gate_decision",
 		fixedChoiceIds: ["approve", "steer", "need_fix", "reject"],
 		kind: "fixed",
@@ -368,7 +368,7 @@ export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {
 		preparation: DECIDE_REGISTRY_PREPARATION,
 	},
 	"dp-sign-key": {
-		questionsVersion: "q-134a64cd",
+		questionsVersion: "q-522132b0",
 		businessQuestionId: "q-conclusion",
 		fixedChoiceIds: ["finalize", "continue", "user-confirm"],
 		kind: "fixed",
@@ -419,7 +419,7 @@ export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {
 		preparation: DECIDE_REGISTRY_PREPARATION,
 	},
 	"dp-auto": {
-		questionsVersion: "q-21d2d577",
+		questionsVersion: "q-72397e0a",
 		businessQuestionId: "handling",
 		fixedChoiceIds: [],
 		kind: "dynamic-candidates",
@@ -474,7 +474,7 @@ export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {
 		preparation: DECIDE_REGISTRY_PREPARATION,
 	},
 	"dp-route": {
-		questionsVersion: "q-605c6874",
+		questionsVersion: "q-92238d53",
 		businessQuestionId: "entry",
 		fixedChoiceIds: [
 			"dp-w-type",

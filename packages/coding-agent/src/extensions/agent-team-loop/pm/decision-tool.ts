@@ -33,6 +33,7 @@ import {
 	isTaskStateSnapshot,
 	type TaskStateSnapshot,
 } from "./decision-task-state.ts";
+import { checkFileEvidence, parseFileEvidence } from "./file-evidence-cache.ts";
 import {
 	canonicalStateBytes,
 	MAX_STRUCTURED_STATE_BYTES,
@@ -1109,6 +1110,11 @@ async function runMaterialAskDecision(
 	if (!called.ok) return called.outcome;
 	const response = called.response;
 
+	const dependencies = parseFileEvidence(response);
+	if (dependencies === null) return unavailable("bad-response", dp, true);
+	if (dependencies && checkFileEvidence(dependencies).changed) {
+		return unavailable("input-incomplete", dp, true, { escalated_reason: "stale-file-evidence" });
+	}
 	if (
 		response.decision_id !== `${dp}:${meta.logical_id}` ||
 		(response.dp !== undefined && response.dp !== dp) ||

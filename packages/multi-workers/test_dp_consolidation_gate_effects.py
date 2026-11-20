@@ -46,6 +46,18 @@ from autopilot import config, gate_effects, roadmap
 CHOICES = ("approve", "steer", "need_fix", "reject")
 
 
+def _seed_gate_case_sources(root: pathlib.Path) -> None:
+    """The shipped synthetic book cites these real files, now sent as content."""
+    for relative in (
+        "packages/multi-workers/decision_book.py",
+        "packages/multi-workers/scripts/build_decide_cases.py",
+    ):
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            target.write_bytes((REPO_ROOT / relative).read_bytes())
+
+
 def _gate_text(**overrides: str) -> str:
     fields = {
         "id": "gate-0001",
@@ -300,6 +312,7 @@ class EffectFixture:
                  claim: str | None = None, store_kind: str = "production"):
         self.root = tmp / "project"
         config.save_config(self.root, {"enabled": True, "paused": False, "auto_gate_mode": "live"})
+        _seed_gate_case_sources(self.root)
         self.claim = claim or f"{socket.gethostname()}:{os.getpid()}"
         self.index = self.root / ".agenticdoc/_index.parallel"
         self.index.write_text(f"| owner | active | EXECUTE | {self.claim} | - | test | now |\n", encoding="utf-8")
@@ -344,8 +357,7 @@ class EffectFixture:
         )
         prepared = raw["preparation"]
         basis = next(v for v in prepared["basis_catalog"] if choice in v["applies_to"])
-        answers = {"gate_decision": {"value": choice, "confidence": 0.95},
-                   "basis_id": {"value": basis["id"], "confidence": 0.95}}
+        answers = {"decision_selection": {"value": str(choice) + "A", "confidence": 0.95}}
         client = decision.DecisionClient(
             decision.DecisionConfig(enabled=True, project_root=self.root, evidence_path=tmp / "transport.jsonl"),
             decision.FakeBackend([decision.BackendOutcome(True, None, False, answers, 0)]),
@@ -652,9 +664,11 @@ def test_current_pm_can_prepare_a_real_stage_trigger_without_releasing_it(tmp_pa
 def _conductor_h_fixture(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str, str, conductor.ConductorState, pathlib.Path]:
     root = tmp_path / "project"
     config.save_config(root, {"enabled": True, "paused": False, "auto_gate_mode": "live"})
+    _seed_gate_case_sources(root)
     owner = "owner"
     claim = f"{socket.gethostname()}:{os.getpid()}"
     (root / ".agenticdoc").mkdir(parents=True, exist_ok=True)
+    (root / ".agenticdoc" / "target.yml").write_text("active: single\n", encoding="utf-8")
     (root / ".agenticdoc/_index.parallel").write_text(
         f"| {owner} | active | EXECUTE | {claim} | - | test | now |\n", encoding="utf-8")
     (root / ".agenticdoc/goal.md").write_text("# Deliver the agreed feature\n", encoding="utf-8")
@@ -745,10 +759,7 @@ def _approved_h_through_conductor(tmp_path: pathlib.Path, case: str = "h01"):
     basis = next(v for v in preparation["basis_catalog"] if "approve" in v["applies_to"])
     client = decision.DecisionClient(
         decision.DecisionConfig(enabled=True, project_root=root, evidence_path=tmp_path / "transport.jsonl"),
-        decision.FakeBackend([decision.BackendOutcome(True, None, False, {
-            "gate_decision": {"value": "approve", "confidence": 0.95},
-            "basis_id": {"value": basis["id"], "confidence": 0.95},
-        }, 0)]),
+        decision.FakeBackend([decision.BackendOutcome(True, None, False, {"decision_selection": {"value": str("approve") + "A", "confidence": 0.95}}, 0)]),
     )
     result = client.request_prepared("dp-gate-approve", material, preparation,
                                      logical_id=meta.logical_id, actor_role="pm")
@@ -1533,6 +1544,7 @@ def _h10_new_project(tmp_path):
     project = tmp_path / "project"
     ap = project / ".agenticdoc" / "_autopilot"
     ap.mkdir(parents=True)
+    (project / ".agenticdoc" / "target.yml").write_text("active: single\n", encoding="utf-8")
     (project / ".agenticdoc" / "goal.md").write_text(
         "# Goal\n\nShip stage 1.\n", encoding="utf-8", newline="\n")
     cfg = config.default_config()
@@ -1867,10 +1879,7 @@ def _pm_entry_fixture(tmp_path, case, *, answer=True):
     client = decision.DecisionClient(
         decision.DecisionConfig(enabled=True, project_root=root,
                                 evidence_path=tmp_path / "transport.jsonl"),
-        decision.FakeBackend([decision.BackendOutcome(True, None, False, {
-            "gate_decision": {"value": "approve", "confidence": 0.95},
-            "basis_id": {"value": basis["id"], "confidence": 0.95},
-        }, 0)]),
+        decision.FakeBackend([decision.BackendOutcome(True, None, False, {"decision_selection": {"value": str("approve") + "A", "confidence": 0.95}}, 0)]),
     )
     result = client.request_prepared("dp-gate-approve", material, preparation,
                                      logical_id=meta.logical_id, actor_role="pm")
@@ -2260,14 +2269,12 @@ def _pm_run_fixture(tmp_path, case, *, choice="approve", logical_id=None):
 
 
 def _pm_fake_client(root, preparation, choice):
+    _seed_gate_case_sources(root)
     basis = next(v for v in preparation["basis_catalog"] if choice in v["applies_to"])
     return decision.DecisionClient(
         decision.DecisionConfig(enabled=True, project_root=root,
                                 evidence_path=root / "transport.jsonl"),
-        decision.FakeBackend([decision.BackendOutcome(True, None, False, {
-            "gate_decision": {"value": choice, "confidence": 0.95},
-            "basis_id": {"value": basis["id"], "confidence": 0.95},
-        }, 0)]),
+        decision.FakeBackend([decision.BackendOutcome(True, None, False, {"decision_selection": {"value": str(choice) + "A", "confidence": 0.95}}, 0)]),
     )
 
 
@@ -3027,6 +3034,7 @@ def _h11_preparation(choice="approve"):
 def _h11_fixture(tmp_path, monkeypatch, *, choice="approve", limit=3, rounds=1):
     root = tmp_path / "h11-normal"
     (root / ".agenticdoc" / "_autopilot" / "gates").mkdir(parents=True)
+    (root / ".agenticdoc" / "target.yml").write_text("active: single\n", encoding="utf-8")
     claim = f"{socket.gethostname()}:{os.getpid()}"
     (root / ".agenticdoc" / "_index.parallel").write_text(
         "| Key | Status | Phase | Claim | Deps | Desc | Updated |\n"
@@ -3104,9 +3112,7 @@ def _h11_fixture(tmp_path, monkeypatch, *, choice="approve", limit=3, rounds=1):
         conductor.operator_authority, "_pm_process_peer", lambda _pid: peer)
     backend = decision.FakeBackend([
         {"available": True, "reason": None, "retryable": False,
-         "answers": {
-             "gate_decision": {"value": choice, "confidence": 0.8},
-             "basis_id": {"value": "b-approve", "confidence": 0.8}},
+         "answers": {"decision_selection": {"value": str(choice) + "A", "confidence": 0.8}},
          "latency_ms": 1},
     ], name="timi-decisions", model="fake-model", confidence_source="api")
     real_client = getattr(decision.DecisionClient, "_dpc_original", decision.DecisionClient)
@@ -3287,15 +3293,13 @@ def _tick_decide_config(root):
 
 def _tick_client(monkeypatch, preparation, choice="approve"):
     basis = next(v for v in preparation["basis_catalog"] if choice in v["applies_to"])
-    backend = decision.FakeBackend([decision.BackendOutcome(True, None, False, {
-        "gate_decision": {"value": choice, "confidence": 0.95},
-        "basis_id": {"value": basis["id"], "confidence": 0.95},
-    }, 0)])
+    backend = decision.FakeBackend([decision.BackendOutcome(True, None, False, {"decision_selection": {"value": str(choice) + "A", "confidence": 0.95}}, 0)])
     real = decision.DecisionClient
     factory_calls = []
 
     def factory(cfg, **kwargs):
         factory_calls.append(1)
+        _seed_gate_case_sources(pathlib.Path(cfg.project_root))
         return real(cfg, backend=backend, **kwargs)
 
     factory._dpc_original = real
@@ -3961,7 +3965,7 @@ def test_h08_old_actual_pass_cannot_reach_done_after_approved_contract_change(
     assert old_run["red_counts"]["returncode"] == 0
     material = {
         "review_requirements": T20_SPEC,
-        "review_evidence": [old_run["stdout_path"] + ":1"],
+        "review_evidence": [pathlib.Path(old_run["stdout_path"]).relative_to(root).as_posix() + ":1"],
         "review_findings": json.dumps(old_run),
         "uncovered_scope": "isolated contract fixture; no product deployment claim",
     }
@@ -3969,12 +3973,10 @@ def test_h08_old_actual_pass_cannot_reach_done_after_approved_contract_change(
         "id": "actual-old-command", "text": "The submitted original-contract check actually exited0.",
         "material_refs": ["review_evidence", "review_findings"], "applies_to": ["pass"]}]}
     qg_client = decision.DecisionClient(decision.DecisionConfig(enabled=True, project_root=root),
-        decision.FakeBackend([decision.BackendOutcome(True, None, False, {
-            "qg_verdict": {"value": "pass", "confidence": 0.95},
-            "basis_id": {"value": "actual-old-command", "confidence": 0.95}}, 0)]))
+        decision.FakeBackend([decision.BackendOutcome(True, None, False, {"decision_selection": {"value": str("pass") + "A", "confidence": 0.95}}, 0)]))
     answer = qg_client.request_prepared("dp-QG", material, preparation,
                                         actor_role="pm", logical_id="old-qg")
-    assert answer["available"] and answer["choice"] == "pass" and len(qg_client.backend.calls) == 1
+    assert answer["available"] and answer["choice"] == "pass" and len(qg_client.backend.calls) == 1, json.dumps(answer)
     report = key_dir / "workers" / dispatch.task_key_for(owner, "l3-a1") / "output.md"
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text("## Quality Gate Report\n" + json.dumps({"answer": answer, "verification": old_run})
@@ -4133,9 +4135,7 @@ def _actual_reverification_qg(root, owner, receipt, logical_id):
         "id": "actual-current-execution", "text": "The original dispatched command exited0 against current AC-001.",
         "material_refs": ["review_evidence", "review_findings"], "applies_to": ["pass"]}]}
     client = decision.DecisionClient(decision.DecisionConfig(enabled=True, project_root=root),
-        decision.FakeBackend([decision.BackendOutcome(True, None, False, {
-            "qg_verdict": {"value": "pass", "confidence": 0.95},
-            "basis_id": {"value": "actual-current-execution", "confidence": 0.95}}, 0)]))
+        decision.FakeBackend([decision.BackendOutcome(True, None, False, {"decision_selection": {"value": str("pass") + "A", "confidence": 0.95}}, 0)]))
     answer = client.request_prepared("dp-QG", material, preparation,
         actor_role="pm", logical_id=logical_id)
     assert answer["available"] and answer["choice"] == "pass" and len(client.backend.calls) == 1, answer

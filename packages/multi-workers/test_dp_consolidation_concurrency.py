@@ -1623,6 +1623,14 @@ def _authority(ref: str, scope: tuple[str, ...]) -> policy.AuthorityRecord:
 
 
 def _lifecycle(project: pathlib.Path, *, key: str, pm_note: str) -> tuple[str, str]:
+    for relative in (
+        "packages/multi-workers/decision_book.py",
+        "packages/multi-workers/scripts/build_decide_cases.py",
+    ):
+        target = project / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            target.write_bytes((PACKAGE_DIR.parents[1] / relative).read_bytes())
     store = lifecycle.LifecycleStore.production(
         project, redact=wire.SubstringRedactor(())
     )
@@ -1634,10 +1642,7 @@ def _lifecycle(project: pathlib.Path, *, key: str, pm_note: str) -> tuple[str, s
     prepared = raw["preparation"]
     material = raw["material"]
     basis = prepared["basis_catalog"][0]
-    answers = {
-        "gate_decision": {"value": "approve", "confidence": 0.95},
-        "basis_id": {"value": basis["id"], "confidence": 0.95},
-    }
+    answers = {"decision_selection": {"value": str("approve") + "A", "confidence": 0.95}}
     client = decision.DecisionClient(
         decision.DecisionConfig(
             enabled=True,

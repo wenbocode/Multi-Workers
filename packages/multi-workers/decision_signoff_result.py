@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 import decision_validity
+import decision_file_evidence
 from autopilot import contract_guard
 
 __all__ = [
@@ -1245,6 +1246,16 @@ def validate_signoff(
         or record.material_sha256 != material
     ):
         return _invalid("result record does not match the sign-off file", **fields)
+    if record is not None and record.prepared_proof is not None:
+        try:
+            dependencies = decision_file_evidence.parse_file_evidence(record.prepared_proof)
+            if dependencies is not None and decision_file_evidence.check_file_evidence(dependencies).changed:
+                return _invalid(
+                    "cited file evidence changed since the judgment; a new judgment is required",
+                    **fields,
+                )
+        except decision_file_evidence.FileEvidenceError:
+            return _invalid("prepared file evidence metadata is malformed", **fields)
     # Native basis: the file, the record and the sources now must agree. Old
     # internal-consistency-only files remain readable history, never proof.
     if basis is not None:

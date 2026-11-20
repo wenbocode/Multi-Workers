@@ -365,6 +365,7 @@ def _coerce_trigger(trigger: Trigger | Mapping | None) -> Trigger:
 #: ``criteria`` are model-facing text — editing the wording must not change the
 #: version an archived row or a ``state.questions_version`` handshake carries.
 VERSIONED_QUESTION_KEYS = ("id", "type", "choices", "dynamic_choices")
+PREPARED_QUESTION_PROTOCOL_VERSION = "legal-pair-v1"
 
 #: The only legal ``noul`` criteria keys (FIX-O): the two boolean outcomes.
 NOUL_CRITERIA_KEYS = frozenset({"true", "false"})
@@ -466,7 +467,10 @@ def _questions_version(questions: tuple[dict, ...]) -> str:
         {key: question[key] for key in VERSIONED_QUESTION_KEYS if key in question}
         for question in questions
     ]
-    canonical = json.dumps(list(versioned), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(
+        {"questions": versioned, "prepared_protocol": PREPARED_QUESTION_PROTOCOL_VERSION},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    )
     return "q-" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8]
 
 
@@ -1967,23 +1971,33 @@ def prepared_observation_request(
     projected_material: Mapping,
     preparation: Mapping,
     questions: Mapping[str, Mapping],
+    *,
+    project_dir: pathlib.Path | str | None = None,
+    limits: Mapping[str, int] | None = None,
+    source_references: Mapping | None = None,
 ) -> tuple[dict, dict[str, dict]]:
     """One prepared request shape for the real observation and its preview.
 
     Callers validate the book and question edits first. The canonical builder
-    owns both choice vocabularies; only already validated business instructions
-    and static criteria are carried over. Neither core material nor preparation
-    is fitted or clipped here: callers refuse when their real budgets do not fit.
+    owns legal pair IDs; already validated business instructions and criteria
+    supply the pair labels. File sources use the same hydration and explicit
+    excerpt budget as production, so preview and transport share one surface.
     """
     prepared_questions = decision_backends.build_prepared_questions(
-        dp_id, projected_material, preparation
+        dp_id, projected_material, preparation, business_questions=questions
     )
-    for qid, spec in questions.items():
-        prepared_questions[qid].update(
-            {key: spec[key] for key in ("instructions", "criteria") if key in spec}
-        )
-    return (
+    resolved = limits or {}
+    state = decision_material_sources.prepare_source_state(
         {"material": dict(projected_material), "preparation": copy.deepcopy(preparation)},
+        project_dir,
+        max_state_bytes=int(resolved.get("max_state_bytes", 0)),
+        max_total_tokens=int(resolved.get("max_total_tokens", 65536)),
+        max_state_plus_question_tokens=int(resolved.get("max_state_plus_question_tokens", 32768)),
+        questions=prepared_questions,
+        source_references=source_references,
+    )
+    return (
+        state,
         prepared_questions,
     )
 
@@ -5368,6 +5382,8 @@ class _DecisionCapture:
     #: book). Refused material is never stored as a snapshot: only the refusal
     #: facts belong in the ledger (T05b F1/F2, T05k N1).
     material_refused: bool = False
+    #: Local source dependencies for replay/consumer freshness, outside model state.
+    file_evidence: list[dict] | None = None
 
     def attach(
         self,
@@ -5394,8 +5410,9 @@ class _DecisionCapture:
         state_digest: str | None,
     ) -> None:
         """Keep the material of this call (never a reconstruction of it)."""
-        self.state = dict(state)
-        self.questions = questions
+        self.state = copy.deepcopy(dict(state))
+        self.file_evidence = copy.deepcopy(getattr(state, "file_evidence", None))
+        self.questions = copy.deepcopy(questions)
         self.state_digest = state_digest
 
     def record_call(self, client: Any) -> None:
@@ -5416,7 +5433,7 @@ class _DecisionCapture:
         rendered = dynamic_choice_labels(
             self.questions or {}, self.state, dp_id=self.dp_id
         ) or {}
-        if decision.BASIS_QUESTION_ID in (self.questions or {}):
+        if decision_backends.PREPARED_SELECTION_QUESTION_ID in (self.questions or {}):
             # The prepared builder renders dynamic candidates as explicit enums
             # for the nested request. Store those exact enums and basis texts,
             # rather than losing them by trying to resolve top-level material.
@@ -5452,6 +5469,8 @@ class _DecisionCapture:
             },
             "state": self.state,
         }
+        if self.file_evidence:
+            document["file_evidence"] = self.file_evidence
         if kind == "book":
             document["book"] = self.observation.book if self.observation is not None else None
         return document
@@ -5464,6 +5483,7 @@ class _DecisionCapture:
             "dp": document.get("dp"),
             "questions_version": document.get("questions_version"),
             "state_digest": document.get("state_digest"),
+            "file_evidence": document.get("file_evidence"),
             "candidates": {
                 qid: [item["id"] for item in items if isinstance(item, Mapping)]
                 for qid, items in (document.get("candidates") or {}).items()
@@ -5555,12 +5575,40 @@ class _DecisionCapture:
                     document, ensure_ascii=False, sort_keys=True, default=str
                 )
                 snapshot_ref = self._snapshot_ref(document)
+                snapshot_scope = scope
+                if isinstance(self.state, Mapping) and self.state.get("evidence_sources"):
+                    # A hydrated source snapshot can be larger than the normal
+                    # HTTP segment cap. Retain this bounded JSON document whole
+                    # using the same sink and redactor, without raising caps for
+                    # transport streams or arbitrary capture events.
+                    required = len(text.encode("utf-8"))
+                    if required > 512 * 1024:
+                        raise ValueError("prepared source snapshot exceeds its capture ceiling")
+                    snapshot_scope = replace(
+                        scope,
+                        segment_cap=max(scope.segment_cap, required),
+                        line_cap=wire.READER_LINE_CAP_BYTES,
+                    )
+                captured = snapshot_scope.capture(text)
+                if snapshot_scope is not scope:
+                    # Reserve the complete escaped capture plus bounded event
+                    # metadata. Do not publish a truncated JSON snapshot as a
+                    # usable material-of-record reference.
+                    if (
+                        captured is None
+                        or captured.truncated
+                        or captured.read_capped
+                        or captured.text_omitted
+                        or len(json.dumps(captured.as_dict(), ensure_ascii=False).encode("utf-8"))
+                        + 8192 > snapshot_scope.line_cap
+                    ):
+                        raise ValueError("prepared source snapshot cannot be captured completely")
                 result = wire.record_event(
-                    scope,
+                    snapshot_scope,
                     "book-snapshot",
                     fields={
                         "book_ref": snapshot_ref,
-                        "book": scope.capture(text),
+                        "book": captured,
                         "file_sha256": None,
                         "book_sha256": None,
                         "book_version": "input-memory",
@@ -6459,7 +6507,12 @@ def decide_for(
             "observation requires a working wire capture module (record_event/scope API); "
             "refusing to fall back to an unwatched production path"
         )
-    capture = _DecisionCapture(observation=observation, intent=intent)
+    captured_observation = (
+        replace(observation, book=copy.deepcopy(observation.book))
+        if observation is not None and observation.book is not None
+        else observation
+    )
+    capture = _DecisionCapture(observation=captured_observation, intent=intent)
     trace = _ArchiveTrace()
     try:
         outcome = _decide_for(
@@ -6781,12 +6834,33 @@ def _decide_for(
     # strips identity/audit facts and may truncate, so it is not the local state
     # a book claim can be checked against.
     call_state = state
-    state, dropped_paths, size = send_state(dp_point.id, state)
+    book = capture.observation.book if capture.observation is not None else None
+    if book is None and dp_point.id in ACTIVE_DP_IDS:
+        capture.material_refused = True
+        return _outcome(
+            dp_point=dp_point, trigger=trigger_obj, status="escalated",
+            escalated_reason="input-incomplete", mode=mode,
+            detail=(
+                f"{decision_id}: active entries require a prepared decision book "
+                "or DecisionClient.request_prepared with material and preparation; "
+                "a business-only question cannot replace the legal-pair/source contract"
+            ),
+            state_digest=_state_digest(state),
+        )
+    if book is None:
+        state, dropped_paths, size = send_state(dp_point.id, state)
+    else:
+        # Prepared business material is indivisible. Only file sources may be
+        # explicitly excerpted by the shared source preparer below; the old
+        # 8KB legacy fitting path must not clip the facts before that happens.
+        state = model_state_for(dp_point.id, state)
+        dropped_paths = ()
+        size = _state_size(state)
     digest = _state_digest(state)
     # The material that is actually sent (post-truncation) is what gets
     # snapshotted; the rendered candidate enum belongs to the same call.
     capture.remember_state(state, questions=questions, state_digest=digest)
-    if size > MAX_STATE_BYTES:
+    if book is None and size > MAX_STATE_BYTES:
         dropped_note = f"; dropped: {', '.join(dropped_paths)}" if dropped_paths else ""
         return _outcome(
             dp_point=dp_point,
@@ -6803,7 +6877,6 @@ def _decide_for(
     # it must be this dp's book, pass `check_book` and carry the state that is
     # actually sent. A refused book sends nothing, stores no snapshot and leaves
     # no book_ref behind.
-    book = capture.observation.book if capture.observation is not None else None
     if book is not None:
         book_issues = _observation_book_issues(
             book,
@@ -6826,13 +6899,39 @@ def _decide_for(
                 truncated=dropped_paths,
             )
 
-        # A schema-3 observation selects its business answer and a PM-prepared
-        # basis in one call, just like request_prepared. Keep validated editor
-        # text; regenerate the choice vocabularies from the canonical builder.
+        # Schema-3 observations use the same legal-pair single choice and file
+        # sources as request_prepared. Keep validated editor wording while the
+        # canonical builder owns the legal wire selection IDs.
         preparation = book["preparation"]
-        prepared_state, questions = prepared_observation_request(
-            dp_point.id, state, preparation, questions
-        )
+        try:
+            prepared_state, questions = prepared_observation_request(
+                dp_point.id, state, preparation, questions,
+                project_dir=project,
+                limits={
+                    "max_questions": cfg.max_questions,
+                    "max_state_bytes": cfg.max_state_bytes,
+                    "max_total_tokens": cfg.max_total_tokens,
+                    "max_state_plus_question_tokens": cfg.max_state_plus_question_tokens,
+                },
+                source_references=(book.get("notes") or {}).get("evidence"),
+            )
+        except decision_material_sources.SourceMaterialError as exc:
+            capture.material_refused = True
+            detail = "; ".join(f"{path}: {issue}" for path, issue in exc.issues)
+            return _outcome(
+                dp_point=dp_point, trigger=trigger_obj, status="escalated",
+                escalated_reason="input-incomplete", mode=mode,
+                detail=f"{decision_id}: file evidence refused ({detail})",
+                state_digest=digest,
+            )
+        except ValueError:
+            capture.material_refused = True
+            return _outcome(
+                dp_point=dp_point, trigger=trigger_obj, status="escalated",
+                escalated_reason="input-incomplete", mode=mode,
+                detail=f"{decision_id}: preparation has no legal conclusion/basis pair",
+                state_digest=digest,
+            )
         question_ceiling = min(
             cfg.max_questions,
             client.cfg.max_questions if client is not None else cfg.max_questions,
@@ -6848,34 +6947,23 @@ def _decide_for(
                 mode=mode,
                 state_digest=digest,
             )
-        # Required material and preparation must survive intact. Optional
-        # context keeps its existing fit; a core cut is a refusal, not evidence.
-        if any(not path.startswith("context.") for path in dropped_paths):
+        if decision.secret_hit(
+            json.dumps(prepared_state, ensure_ascii=False, default=str),
+            command_known_secret_redactor(cfg, snapshot=snapshot),
+        ):
             capture.material_refused = True
             return _outcome(
                 dp_point=dp_point,
                 trigger=trigger_obj,
                 status="escalated",
-                escalated_reason="input-oversize",
-                detail=f"{decision_id}: prepared material cannot be truncated",
+                escalated_reason="input-incomplete",
+                detail=f"{decision_id}: hydrated file evidence matches the known-secret gate",
                 mode=mode,
                 state_digest=digest,
-                truncated=dropped_paths,
             )
         state = prepared_state
         digest = _state_digest(state)
         capture.remember_state(state, questions=questions, state_digest=digest)
-        if _state_size(state) > MAX_STATE_BYTES:
-            return _outcome(
-                dp_point=dp_point,
-                trigger=trigger_obj,
-                status="escalated",
-                escalated_reason="input-oversize",
-                detail=f"{decision_id}: complete prepared state exceeds {MAX_STATE_BYTES}B; no request sent",
-                mode=mode,
-                state_digest=digest,
-                truncated=dropped_paths,
-            )
 
     # Step 7 — one transport call; `decision.DecisionClient` never raises here.
     # A caller-owned capture ledger must be able to prove this call's actual
@@ -6940,6 +7028,9 @@ def _decide_for(
         )
 
     answers = response.get("answers") or {}
+    # Score the one model choice before normalizing it for existing business
+    # consumers. The two normalized fields share this joint score; neither is
+    # an independently scored answer or a marginal probability.
     confidence = _aggregate_confidence(answers)
     threshold = _confidence_threshold(cfg, min_confidence, policy)
     confidence_source = response.get("confidence_source")
@@ -6959,16 +7050,14 @@ def _decide_for(
         resolve_dynamic_choices(questions, state, dp_id=dp_point.id),
     )
     if defect is None and book is not None:
-        business_qid = next(qid for qid in questions if qid != decision.BASIS_QUESTION_ID)
-        choice = answers[business_qid]["value"]
-        issues = entry_choice_issues(dp_point.id, choice, book["material"])
-        issues += basis_selection_issues(
-            answers[decision.BASIS_QUESTION_ID]["value"],
-            book["preparation"]["basis_catalog"],
-            choice,
-        )
-        if issues:
-            defect = "; ".join(f"{path}: {issue}" for path, issue in issues)
+        try:
+            answers = decision_backends.decode_prepared_selection(
+                dp_point.id, capture.state["material"], capture.state["preparation"], answers
+            )
+        except ValueError:
+            defect = "unknown or missing legal conclusion/basis selection"
+        else:
+            response = dict(response, answers=answers)
     if defect is not None:
         # The transport was available but the payload is not an answer, so the
         # archive row must not claim one (available=false + a frozen reason).
@@ -7262,3 +7351,9 @@ def _apply_per_dp_budget(
     if not updates:
         return cfg
     return replace(cfg, **updates)
+
+
+# Source hydration reuses mw_common's target configuration, whose lifecycle
+# imports read the completed DP contract. Keep this a module-level import after
+# the definitions so every supported module import order sees that contract.
+import decision_material_sources  # noqa: E402

@@ -1271,7 +1271,7 @@ def test_goal_adoption_during_the_model_request_is_not_signed(
 
     def adopt_during(state, questions, cfg):
         business_id = cli_fixtures._business_question_id("dp-sign-key")
-        assert set(questions) == {business_id, "basis_id"}
+        assert set(questions) == {"decision_selection"}
         assert state["preparation"] == envelope["preparation"]
         nested.append(
             mw_cli._ap_family_run(
@@ -1284,10 +1284,7 @@ def test_goal_adoption_during_the_model_request_is_not_signed(
             available=True,
             reason=None,
             retryable=False,
-            answers={
-                business_id: {"value": "finalize", "confidence": 0.9},
-                "basis_id": {"value": "b-primary", "confidence": 0.9},
-            },
+            answers={"decision_selection": {"value": str("finalize") + "A", "confidence": 0.9}},
             latency_ms=5,
             detail="",
         )

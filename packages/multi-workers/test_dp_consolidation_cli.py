@@ -401,6 +401,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeCalls:
         actor_role=None,
         logical_id=None,
         replay_check=None,
+        source_references=None,
     ):
         calls.prepared.append(
             {
@@ -1739,17 +1740,14 @@ def _sign_args(project: pathlib.Path, **kw) -> dict:
 def _answer_backend(conclusion: str) -> "decision.FakeBackend":
     def answer(state, questions, cfg):
         business_id = _business_question_id("dp-sign-key")
-        assert set(questions) == {business_id, "basis_id"}, questions
+        assert set(questions) == {"decision_selection"}, questions
         assert state["material"] == _sign_material()
         assert state["preparation"] == _preparation("dp-sign-key", _sign_material())
         return decision.BackendOutcome(
             available=True,
             reason=None,
             retryable=False,
-            answers={
-                business_id: {"value": conclusion, "confidence": 0.9},
-                "basis_id": {"value": "b-primary", "confidence": 0.9},
-            },
+            answers={"decision_selection": {"value": str(conclusion) + "A", "confidence": 0.9}},
             latency_ms=5,
             detail="",
         )

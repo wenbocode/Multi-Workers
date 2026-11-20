@@ -148,11 +148,9 @@ REASON_BUDGET_EXHAUSTED = "budget-exhausted"
 # instead of inventing a second one.
 REASON_INPUT_INCOMPLETE = "input-incomplete"
 
-#: The prepared basis question id of one same-call request (design D012A): the
-#: entry keeps its own business question id, and this second ``choice`` question
-#: asks which PM-prepared basis item supports the answered choice. It is one
-#: request, not a second call: the answer pair is decoded together and a missing
-#: or mismatched basis refuses the decision instead of asking again.
+#: Normalized result field for the basis bound to a model-selected pair. The
+#: model sees one ``decision_selection`` question; consumers still receive the
+#: entry's business answer plus this basis id from the same joint selection.
 BASIS_QUESTION_ID = "basis_id"
 
 REASON_CODES = frozenset(
@@ -1733,6 +1731,14 @@ class DecisionClient:
         #: (``None`` = no backend reported a count; the client's attempt count is
         #: then the only measurable transport count).
         self._transport_attempts_total: int | None = None
+        #: Exact safe, hydrated model inputs of the latest prepared request.
+        #: CLI capture and diagnostics reuse these snapshots, never rebuild the
+        #: file sources after the decision against a potentially newer file.
+        self.last_prepared_state: dict | None = None
+        self.last_prepared_questions: dict | None = None
+        #: Authorized source/config dependencies used by this preparation;
+        #: nullable hashes let the host invalidate a failed read after repair.
+        self.last_file_evidence: list[dict[str, str | None]] = []
 
     # -- public API ---------------------------------------------------------
 
@@ -1781,8 +1787,9 @@ class DecisionClient:
         actor_role: object = None,
         logical_id: str | None = None,
         replay_check: Callable[[str, str], bool] | None = None,
+        source_references: Mapping | None = None,
     ) -> dict:
-        """One same-call business choice plus PM-prepared basis selection.
+        """One choice over legal business-conclusion/prepared-basis pairs.
 
         Unlike :meth:`decide` (the generic transport face), this composes the
         eight-entry protocol and the transport in the order the design fixes:
@@ -1801,22 +1808,20 @@ class DecisionClient:
         3. the pure protocol gate validates role -> complete material -> prepared
            basis (a prepared catalog item must reference a real material fact and
            name a legal choice) before anything is sent;
-        4. the one request carries the entry's own business question **and** the
-           prepared basis question (``BASIS_QUESTION_ID``), so the model's choice
-           and its traceable reason are decided together - no second call asks
-           for a reason, and no free-form ``reason``/``rationale`` field is read;
+        4. the one request carries one choice question whose options bind a
+           legal business conclusion to one applicable prepared basis. No
+           second call asks for a reason, and no free-form rationale is read;
         5. the answered pair is decoded against the submitted contract (choice
            enum, ``applies_to`` of the selected basis item, branch-level material
            rules). Any mismatch is a blocking ``bad-response``: the business
            decision count stays 0 and no default/first candidate is applied.
 
-        The complete projected material and the complete basis catalog are sent
-        as-is: the existing size gates refuse an over-budget request instead of
-        truncating the core evidence the decision depends on. The same-call pair
-        needs two questions (the entry's business question plus the basis), so a
-        ``max_questions`` below that is reported as a ``budget-exhausted``
-        refusal with zero POSTs and zero business decisions - never as an escaping
-        ``DecisionInputError``, and never by raising the configured ceiling.
+        Referenced file content is hydrated before sending, and any evidence
+        excerpt is explicit about omitted lines. Core material and the complete
+        basis catalog are never silently truncated. Existing token/byte gates
+        remain authoritative; this method never raises the configured ceiling.
+        Both normalized answer fields carry the one joint-selection confidence,
+        not independent model answers or invented marginal probabilities.
 
         Counting is deliberately two-axis: ``attempts`` (client backend calls),
         ``transport_attempts`` (real POSTs, retry-after retries included) and
@@ -1827,6 +1832,9 @@ class DecisionClient:
         refusal, not an exception).
         """
         start = self._clock()
+        self.last_prepared_state = None
+        self.last_prepared_questions = None
+        self.last_file_evidence = []
         protocol = _protocol_module()
         if protocol is None:
             return self._prepared(
@@ -1901,12 +1909,20 @@ class DecisionClient:
                 issues=issues,
                 detail=f"{len(issues)} blocking material/preparation issue(s); no request sent",
             )
-        # 4. The one question set: entry question + prepared basis question.
+        # 4. One question over the actual legal conclusion/basis pairs.
         try:
             import decision_backends  # type: ignore[import-not-found]  # sibling
 
             questions = decision_backends.build_prepared_questions(
                 dp, material, preparation
+            )
+        except ValueError as exc:
+            return self._prepared(
+                start,
+                dp=dp,
+                reason=REASON_INPUT_INCOMPLETE,
+                issues=(("preparation.basis_catalog", str(exc)),),
+                detail="no legal prepared selection can be rendered; no request sent",
             )
         except Exception as exc:  # noqa: BLE001 - rendering failure stays a refusal
             return self._prepared(
@@ -1918,7 +1934,7 @@ class DecisionClient:
                     "no request sent"
                 ),
             )
-        business_qids = [qid for qid in questions if qid != BASIS_QUESTION_ID]
+        business_qids = list(protocol.questions_map(dp))
         if len(business_qids) != 1:  # pragma: no cover - registry contract holds
             return self._prepared(
                 start,
@@ -1930,7 +1946,7 @@ class DecisionClient:
                 ),
             )
         business_qid = business_qids[0]
-        # The pair needs two questions (business + prepared basis). The generic
+        # The prepared pair needs one question. The generic
         # ``decide`` face raises ``DecisionInputError`` above ``max_questions``;
         # escaping with that exception would leave the caller without a result and
         # without the visible reason, so the boundary is reported as a refusal
@@ -1944,7 +1960,7 @@ class DecisionClient:
                 reason=REASON_BUDGET_EXHAUSTED,
                 detail=(
                     f"{dp} needs {len(questions)} questions in one prepared request "
-                    f"(business + {BASIS_QUESTION_ID}) but max_questions={ceiling}; "
+                    f"(legal paired selection) but max_questions={ceiling}; "
                     "no request sent, the ceiling is not raised and the question "
                     "set is not truncated"
                 ),
@@ -1957,9 +1973,64 @@ class DecisionClient:
                 "prepared_at": preparation["prepared_at"],  # type: ignore[index]
             },
         }
+        try:
+            state = protocol.decision_material_sources.prepare_source_state(
+                state,
+                self.cfg.project_root,
+                max_state_bytes=self.cfg.max_state_bytes,
+                max_total_tokens=self.cfg.max_total_tokens,
+                max_state_plus_question_tokens=self.cfg.max_state_plus_question_tokens,
+                questions=questions,
+                source_references=source_references,
+            )
+        except protocol.decision_material_sources.SourceMaterialError as exc:
+            self.last_file_evidence = copy.deepcopy(exc.file_evidence)
+            return self._prepared(
+                start,
+                dp=dp,
+                reason=(
+                    REASON_BUDGET_EXHAUSTED
+                    if any("compression-required" in issue for _, issue in exc.issues)
+                    else REASON_INPUT_INCOMPLETE
+                ),
+                issues=exc.issues,
+                detail="file evidence preparation failed; no request sent",
+            )
+        self.last_file_evidence = copy.deepcopy(getattr(state, "file_evidence", []))
+        # The source text must be checked against the very same credential
+        # snapshot the transport uses. A fresh snapshot is local to this call;
+        # restoring the caller's pin prevents it leaking into the next request.
+        snapshot = self._pinned_credential_snapshot or credential_snapshot(self.cfg)
+        if not isinstance(snapshot, CredentialSnapshot) or snapshot.frozen_known_values() is None:
+            return self._prepared(
+                start,
+                dp=dp,
+                reason=REASON_ENTRY_UNAVAILABLE,
+                detail="credential snapshot has no provable known set; no request sent",
+            )
+        snapshot.known_superset()
+        redactor = known_secret_redactor(self.cfg, snapshot=snapshot)
+        if secret_hit(_encode_state(state).decode("utf-8"), redactor):
+            return self._prepared(
+                start,
+                dp=dp,
+                reason=REASON_INPUT_INCOMPLETE,
+                issues=(("material", "contains credential-looking evidence; redact before sending"),),
+                detail="prepared material cannot be proven secret-free; no request sent",
+            )
+        self.last_prepared_state = copy.deepcopy(state)
+        self.last_prepared_questions = copy.deepcopy(questions)
+        # Retain a separate decode contract: the caller and injected backend
+        # may mutate their own mappings while the network call is in flight.
+        # A wire option always means the pair rendered before that call.
+        frozen_material = copy.deepcopy(state["material"])
+        frozen_preparation = copy.deepcopy(state["preparation"])
+        frozen_catalog = _prepared_catalog(frozen_preparation)
         # 5. Exactly one transport call (the client owns retries/budget only).
         # The generic face raises only on invalid arguments; a prepared request
         # reports that as a refusal instead of letting it escape.
+        previous_pin = self._pinned_credential_snapshot
+        self._pinned_credential_snapshot = snapshot
         try:
             response = self.decide(state, questions, dp=dp)
         except DecisionInputError as exc:
@@ -1972,6 +2043,8 @@ class DecisionClient:
                     f"({_scrub_detail(exc)}); no request sent"
                 ),
             )
+        finally:
+            self._pinned_credential_snapshot = previous_pin
         attempts = int(response.get("attempts") or 0)
         transport_attempts = self._transport_attempts(attempts)
         shared = {
@@ -1992,12 +2065,26 @@ class DecisionClient:
                 or f"transport unavailable: {response.get('reason')}",
                 **shared,
             )
-        answers = response.get("answers") or {}
+        raw_answers = response.get("answers") or {}
+        try:
+            answers = decision_backends.decode_prepared_selection(
+                dp, frozen_material, frozen_preparation, raw_answers
+            )
+        except ValueError as exc:
+            return self._prepared(
+                start,
+                dp=dp,
+                reason=REASON_BAD_RESPONSE,
+                issues=(("decision_selection", str(exc)),),
+                detail="the answered selection is not a prepared legal pair; no second call made",
+                answers=raw_answers,
+                **shared,
+            )
         choice = (answers.get(business_qid) or {}).get("value")
         basis_id = (answers.get(BASIS_QUESTION_ID) or {}).get("value")
         answer_issues = tuple(
-            protocol.entry_choice_issues(dp, choice, material)
-        ) + tuple(protocol.basis_selection_issues(basis_id, catalog, choice))
+            protocol.entry_choice_issues(dp, choice, frozen_material)
+        ) + tuple(protocol.basis_selection_issues(basis_id, frozen_catalog, choice))
         if answer_issues:
             return self._prepared(
                 start,
@@ -2014,7 +2101,7 @@ class DecisionClient:
         selected = next(
             (
                 item
-                for item in catalog
+                for item in frozen_catalog
                 if isinstance(item, Mapping) and item.get("id") == basis_id
             ),
             None,
@@ -2027,7 +2114,7 @@ class DecisionClient:
             basis_id=str(basis_id),
             basis_text=str(selected.get("text")) if isinstance(selected, Mapping) else None,
             basis_source=str(getattr(protocol, "BASIS_SOURCE", "pm-prepared")),
-            prepared_at=str(preparation["prepared_at"]),  # type: ignore[index]
+            prepared_at=str(frozen_preparation["prepared_at"]),
             answers=answers,
             business_decisions=1,
             **shared,

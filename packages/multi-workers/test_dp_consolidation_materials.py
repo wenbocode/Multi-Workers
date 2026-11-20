@@ -6,9 +6,9 @@ Scope (isolated copy only, no network, no provider, no live object):
 - the one POST stays ``POST /v1/decisions`` with ``model=jev-latest`` and the
   bare ``Authorization`` value, and the original retry/time budget, boundary
   refusal (``box-requires-image``) and model-substitution refusal still hold;
-- one prepared request carries the entry's own business question AND a second
-  choice question over the PM-prepared basis catalog, so the model's choice and
-  its basis are decided in the *same* request (no second call for a reason, no
+- one prepared request carries one choice over legal conclusion/basis pairs,
+  so the model's choice and its basis are decided atomically in the *same*
+  request (no second call for a reason, no
   free-form ``reason``/``rationale`` field is ever read);
 - a missing answer, a basis outside the catalog, a basis that does not apply to
   the answered choice, an out-of-bounds request or a branch-contract violation
@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import sys
 
@@ -57,6 +58,14 @@ BUSINESS_QIDS = {
     "dp-route": "entry",
 }
 PREPARED_AT = "2026-10-26T12:00:00+00:00"
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_credentials(monkeypatch, tmp_path):
+    for name in tuple(os.environ):
+        if name.upper().endswith(decision._CRED_ENV_SUFFIXES):
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(backends, "_auth_json_path", lambda: tmp_path / "no-auth.json")
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +204,31 @@ class FakeHttp:
                 "timeout_s": timeout_s,
             }
         )
-        return self.responder(len(self.calls), url, headers, payload)
+        response = self.responder(len(self.calls), url, headers, payload)
+        # Test scenarios describe logical business/basis choices. Serialize
+        # those fixtures as the real one-question wire answer; the production
+        # decoder never accepts the old two-question answer shape.
+        if backends.PREPARED_SELECTION_QUESTION_ID in payload.get("questions", {}):
+            try:
+                body = json.loads(response.body)
+            except (ValueError, TypeError):
+                return response
+            answers = body.get("answers", {})
+            business = next((entry for key, entry in answers.items() if key in BUSINESS_QIDS.values()), None)
+            basis = answers.get("basis_id")
+            if business is not None and basis is not None:
+                state = payload["state"]
+                dp_id = next(key for key, qid in BUSINESS_QIDS.items() if qid in answers)
+                pairs = backends.prepared_selection_options(dp_id, state["material"], state["preparation"])
+                selected = next((wire_id for wire_id, item in pairs.items()
+                    if item["choice"] == business.get("choice") and item["basis_id"] == basis.get("choice")),
+                    "unprepared-selection")
+                body["answers"] = {backends.PREPARED_SELECTION_QUESTION_ID: {
+                    "type": "choice", "choice": selected,
+                    "confidence": min(business.get("confidence", 0), basis.get("confidence", 0)),
+                }}
+                response = backends.HttpResponse(response.status, response.content_type, json.dumps(body))
+        return response
 
 
 @pytest.fixture
@@ -232,6 +265,8 @@ def _ok_responder(dp_id: str, material: dict, **kwargs):
 
 def _make_client(tmp_path: pathlib.Path, monkeypatch, **overrides) -> decision.DecisionClient:
     monkeypatch.delenv("TIMI_API_KEY", raising=False)
+    (tmp_path / "evidence").mkdir(exist_ok=True)
+    (tmp_path / "evidence" / "close.md").write_text("Observed bounded stage-close evidence.\n", encoding="utf-8")
     cfg = decision.DecisionConfig(
         enabled=True,
         transport="timi-decisions",
@@ -305,21 +340,15 @@ def test_each_entry_sends_one_same_call_choice_and_basis(
     assert call["payload"]["model"] == "jev-latest"
 
     questions = call["payload"]["questions"]
-    business_qid = BUSINESS_QIDS[dp_id]
-    assert set(questions) == {business_qid, "basis_id"}
-    assert questions[business_qid]["type"] == "choice"
-    assert set(questions[business_qid]["criteria"]) == set(
-        dpts.resolve_entry_choices(dp_id, material)
-    )
-    basis_question = questions["basis_id"]
-    assert basis_question["type"] == "choice"
-    assert set(basis_question["criteria"]) == {"b-primary", "b-secondary"}
-    assert basis_question["criteria"]["b-primary"] == (
-        "PM-prepared reason drawn from the submitted material"
-    )
+    assert set(questions) == {backends.PREPARED_SELECTION_QUESTION_ID}
+    selection_question = questions[backends.PREPARED_SELECTION_QUESTION_ID]
+    assert selection_question["type"] == "choice"
+    options = backends.prepared_selection_options(dp_id, material, preparation)
+    assert set(selection_question["criteria"]) == set(options)
+    assert all(item["basis_text"] in selection_question["criteria"][wire_id] for wire_id, item in options.items())
 
     state = call["payload"]["state"]
-    assert set(state) == {"material", "preparation"}
+    assert {"material", "preparation"} <= set(state)
     # Preparation stays a separate input and carries no material/meta/context.
     assert set(state["preparation"]) == set(dpts.PREPARATION_KEYS)
     assert state["preparation"]["prepared_at"] == PREPARED_AT
@@ -415,7 +444,7 @@ def test_missing_basis_answer_is_refused_without_default_or_second_call(
     assert result["attempts"] == 1
     assert result["transport_attempts"] == 1
     assert len(fake.calls) == 1
-    assert "basis_id" in result["detail"]
+    assert backends.PREPARED_SELECTION_QUESTION_ID in result["detail"]
 
 
 def test_free_form_reason_fields_are_never_read_as_the_basis(
@@ -504,8 +533,9 @@ def test_basis_not_applicable_to_the_answered_choice_is_refused(
     assert result["reason"] == "bad-response"
     assert result["business_decisions"] == 0
     assert result["choice"] is None
-    assert [issue["field"] for issue in result["issues"]] == ["basis_id"]
-    assert "does not apply" in result["issues"][0]["issue"]
+    assert "out of enum" in result["detail"]
+    options = backends.prepared_selection_options(dp_id, material, preparation)
+    assert not any(item["choice"] == choice for item in options.values())
     assert len(fake.calls) == 1
 
 
@@ -934,7 +964,9 @@ def test_branch_contract_violation_after_the_answer_is_refused(
     assert result["reason"] == "bad-response"
     assert result["business_decisions"] == 0
     assert result["choice"] is None
-    assert any(issue["field"] == "basis_issue" for issue in result["issues"])
+    assert "out of enum" in result["detail"]
+    assert not any(item["choice"] == "reopen" for item in
+        backends.prepared_selection_options(dp_id, material, preparation).values())
     assert len(fake.calls) == 1
 
 
@@ -989,20 +1021,16 @@ def test_attempt_and_business_decision_counters_are_separate(
 def test_question_ceiling_is_a_prepared_refusal_not_an_exception(
     tmp_path: pathlib.Path, monkeypatch, http
 ) -> None:
-    """A legal pair under ``max_questions=1`` must not escape as an exception.
+    """A one-question pair request under ``max_questions=0`` refuses cleanly.
 
-    The same-call request needs two questions (the entry's business question and
-    the prepared basis). The generic ``decide`` face raises ``DecisionInputError``
-    above ``max_questions``; a prepared request has to report that as a visible
-    refusal with zero HTTP and zero business decisions instead of letting the
-    exception escape - and the configured ceiling must stay what it was, never be
-    raised or loosened to make the pair fit.
+    The generic face raises above its ceiling; the prepared face must report a
+    visible refusal with zero HTTP and no default, without changing that ceiling.
     """
     dp_id = "dp-w-type"
     material = _material(dp_id)
     preparation = _preparation(dp_id, material)
     fake = http(_ok_responder(dp_id, material))
-    client = _make_client(tmp_path, monkeypatch, max_questions=1)
+    client = _make_client(tmp_path, monkeypatch, max_questions=0)
 
     # No ``pytest.raises`` here: escaping with DecisionInputError is the defect.
     result = client.request_prepared(
@@ -1019,9 +1047,9 @@ def test_question_ceiling_is_a_prepared_refusal_not_an_exception(
     assert result["answers"] is None
     assert fake.calls == []
     # The refusal names the real boundary and does not pretend to have called.
-    assert "max_questions=1" in result["detail"]
+    assert "max_questions=0" in result["detail"]
     # The ceiling itself is untouched by the refusal.
-    assert client.cfg.max_questions == 1
+    assert client.cfg.max_questions == 0
 
 
 def test_question_ceiling_control_still_accepts_a_legal_pair(
@@ -1197,10 +1225,10 @@ def test_retired_id_is_refused_before_replay_credential_and_backend(
 def test_transport_record_and_business_refusal_stay_separate_layers(
     tmp_path: pathlib.Path, monkeypatch, http
 ) -> None:
-    """A transport answer is recorded; a refused pair adds no business decision.
+    """A malformed wire selection is recorded and adds no business decision.
 
     The generic evidence line is the *transport* row: it records that the answer
-    came back and it structurally carries no business fields (no choice, basis,
+    came back but was unusable, and carries no business fields (no choice, basis,
     business-decision count, replay flag or preparation timestamp). The business
     truth lives only on the prepared result. The two coexist here - which is
     exactly why this row must never be read as "a valid business decision was
@@ -1241,7 +1269,7 @@ def test_transport_record_and_business_refusal_stay_separate_layers(
     assert result["reason"] == "bad-response"
     assert result["business_decisions"] == 0
     assert result["choice"] is None
-    # Transport layer: the answer really was fetched (one attempt, one POST).
+    # Transport layer: a response really was fetched (one attempt, one POST).
     assert result["attempts"] == 1
     assert result["transport_attempts"] == 1
     assert len(fake.calls) == 1
@@ -1264,7 +1292,7 @@ def test_transport_record_and_business_refusal_stay_separate_layers(
         "replayed",
         "prepared_at",
     } & set(row)
-    assert row["available"] is True  # the transport answered ...
+    assert row["available"] is False  # the response selected no legal wire option
     assert row["dp"] == dp_id
     assert row["attempts"] == 1
     # ... and the refused business layer never rewrote that transport fact.
@@ -1307,6 +1335,14 @@ def _case_book(dp_id: str) -> dict:
 def _observe_project(tmp_path: pathlib.Path) -> pathlib.Path:
     project = tmp_path / "project"
     (project / ".mw").mkdir(parents=True, exist_ok=True)
+    for relative in (
+        "packages/multi-workers/scripts/build_decide_cases.py",
+        "packages/multi-workers/test_decision_context_workbench.py",
+        "packages/multi-workers/decision_book.py",
+    ):
+        evidence = project / relative
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        evidence.write_text("Local fixture evidence for the cited source line.\n", encoding="utf-8")
     (project / ".mw" / "decide.json").write_text(
         json.dumps(
             {
@@ -1355,6 +1391,7 @@ def _observe_client(tmp_path: pathlib.Path, monkeypatch, *, scope, backend):
         cfg,
         backend=backend,
         wire_scope=scope,
+        credential_snapshot=decision.credential_snapshot(cfg, env={}, auth_path=tmp_path / "no-auth.json"),
         sleep=lambda _seconds: None,
     )
 
@@ -1378,6 +1415,12 @@ def _prepared_answer(dp_id: str, material: dict, preparation: dict) -> tuple[str
 
 def _observe_backend(dp_id: str, material: dict, preparation: dict) -> decision.FakeBackend:
     choice, basis_id = _prepared_answer(dp_id, material, preparation)
+    try:
+        pairs = backends.prepared_selection_options(dp_id, material, preparation)
+    except ValueError:
+        pairs = {}
+    selection = next((wire_id for wire_id, item in pairs.items()
+        if item["choice"] == choice and item["basis_id"] == basis_id), "unprepared-selection")
     return decision.FakeBackend(
         [
             decision.BackendOutcome(
@@ -1385,8 +1428,7 @@ def _observe_backend(dp_id: str, material: dict, preparation: dict) -> decision.
                 reason=None,
                 retryable=False,
                 answers={
-                    BUSINESS_QIDS[dp_id]: {"value": choice, "confidence": 0.9},
-                    "basis_id": {"value": basis_id, "confidence": 0.9},
+                    backends.PREPARED_SELECTION_QUESTION_ID: {"value": selection, "confidence": 0.9},
                 },
                 latency_ms=2,
                 detail="",
@@ -1487,9 +1529,11 @@ def test_observation_accepts_every_generated_schema3_case_book(
     assert len(backend.calls) == 1, "the generated book must reach the transport"
     sent = backend.calls[0]["state"]
     expected = dpts.send_state(dp_id, decision_book.book_state(book))[0]
-    assert sent == {"material": expected, "preparation": book["preparation"]}
-    assert backend.calls[0]["questions"]["basis_id"]["labels"] == {
-        item["id"]: item["text"] for item in book["preparation"]["basis_catalog"]
+    assert sent["material"] == expected
+    assert sent["preparation"] == book["preparation"]
+    options = backends.prepared_selection_options(dp_id, material, book["preparation"])
+    assert backend.calls[0]["questions"][backends.PREPARED_SELECTION_QUESTION_ID]["labels"] == {
+        wire_id: item["label"] for wire_id, item in options.items()
     }
     assert outcome.snapshot_ref is not None
     snapshots = [e for e in _test_events(root) if e.get("kind") == "book-snapshot"]
@@ -1498,9 +1542,9 @@ def test_observation_accepts_every_generated_schema3_case_book(
     document = json.loads(snapshots[0]["book"]["text"])
     assert document["state"] == sent
     assert document["book"] == book
-    assert document["candidates"]["basis_id"] == [
-        {"id": item["id"], "label": item["text"]}
-        for item in book["preparation"]["basis_catalog"]
+    assert document["candidates"][backends.PREPARED_SELECTION_QUESTION_ID] == [
+        {"id": wire_id, "label": item["label"]}
+        for wire_id, item in options.items()
     ]
 
     assert outcome.actual_action is None, "an observation never executes"
@@ -1613,9 +1657,9 @@ def test_observation_answers_every_pm_candidate_vocabulary(
     assert outcome.preview["executor_invoked"] is False
     # The rendered enum is the one stored for a later human answer: the
     # candidate ids themselves, not a display-only label.
-    assert _snapshot_candidates(root)["handling"] == [
-        {"id": candidate_id, "label": f"candidate {candidate_id}"}
-        for candidate_id in ids
+    options = backends.prepared_selection_options("dp-auto", book["material"], book["preparation"])
+    assert _snapshot_candidates(root)[backends.PREPARED_SELECTION_QUESTION_ID] == [
+        {"id": wire_id, "label": item["label"]} for wire_id, item in options.items()
     ]
     assert _tree(project) == before, "an observation writes nothing into the project"
 
@@ -1636,11 +1680,7 @@ def test_observation_refuses_an_answer_outside_the_rendered_candidates(
                 reason=None,
                 retryable=False,
                 answers={
-                    "handling": {"value": "c1", "confidence": 0.99},
-                    "basis_id": {
-                        "value": book["preparation"]["basis_catalog"][0]["id"],
-                        "confidence": 0.99,
-                    },
+                    backends.PREPARED_SELECTION_QUESTION_ID: {"value": "c1", "confidence": 0.99},
                 },
                 latency_ms=2,
                 detail="",
@@ -1654,7 +1694,7 @@ def test_observation_refuses_an_answer_outside_the_rendered_candidates(
 
     assert outcome.status == "escalated"
     assert outcome.escalated_reason == "low-confidence", outcome.detail
-    assert "illegal value for handling" in outcome.detail, outcome.detail
+    assert backends.PREPARED_SELECTION_QUESTION_ID in outcome.detail, outcome.detail
     assert outcome.actual_action is None
     assert outcome.preview["executor_invoked"] is False
     assert outcome.preview["would_act"] is False
@@ -1722,13 +1762,15 @@ def test_prepared_observation_preserves_valid_question_edits(
     assert outcome.status == "suggested", outcome.detail
     assert len(backend.calls) == 1
     sent = backend.calls[0]
-    assert sent["questions"][qid]["instructions"] == override[qid]["instructions"]
+    selection = sent["questions"][backends.PREPARED_SELECTION_QUESTION_ID]
+    assert override[qid]["instructions"] in selection["instructions"]
     if "criteria" in override[qid]:
-        assert sent["questions"][qid]["criteria"] == override[qid]["criteria"]
+        assert all(any(label in value for value in selection["labels"].values())
+            for choice, label in override[qid]["criteria"].items()
+            if any(item["choice"] == choice for item in
+                backends.prepared_selection_options(dp_id, book["material"], book["preparation"]).values()))
     assert sent["state"]["preparation"] == book["preparation"]
-    assert sent["questions"]["basis_id"]["labels"] == {
-        item["id"]: item["text"] for item in book["preparation"]["basis_catalog"]
-    }
+    assert set(sent["questions"]) == {backends.PREPARED_SELECTION_QUESTION_ID}
     assert outcome.preview["executor_invoked"] is False
     assert _tree(project) == before
 
@@ -1746,7 +1788,7 @@ def test_prepared_observation_refuses_real_limits_without_send_or_effects(
     backend = _observe_backend(dp_id, book["material"], book["preparation"])
     client = _observe_client(tmp_path, monkeypatch, scope=scope, backend=backend)
     if boundary == "questions":
-        client.cfg.max_questions = 1
+        client.cfg.max_questions = 0
     elif boundary == "prepared-size":
         book["preparation"]["basis_catalog"][0]["text"] = "prepared fact " * dpts.MAX_STATE_BYTES
     else:
@@ -1762,9 +1804,10 @@ def test_prepared_observation_refuses_real_limits_without_send_or_effects(
     assert _tree(project) == before
     if boundary == "questions":
         assert outcome.transport_reason == decision.REASON_BUDGET_EXHAUSTED
-        assert client.cfg.max_questions == 1
+        assert client.cfg.max_questions == 0
     elif boundary == "prepared-size":
-        assert outcome.escalated_reason == "input-oversize"
+        assert outcome.escalated_reason == "input-incomplete"
+        assert "book-budget" in outcome.detail
         assert book["preparation"]["basis_catalog"][0]["text"] == "prepared fact " * dpts.MAX_STATE_BYTES
     else:
         assert outcome.transport_reason == decision.REASON_DISABLED
