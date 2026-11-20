@@ -27,7 +27,7 @@ afterEach(() => {
 function fixture(mode: "dual" | "partition") {
 	for (const name of ["MW_TARGET_GAME", "MW_TARGET_ENGINE", "MW_PARTITION_PARENT", "MW_PARTITION_ROOT"])
 		vi.stubEnv(name, "");
-	const top = fs.mkdtempSync(path.join(os.tmpdir(), "mw-rooted-face-"));
+	const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "mw-rooted-face-")));
 	temporary.push(top);
 	const control = path.join(top, "control");
 	const target = path.join(top, "target");
@@ -38,7 +38,7 @@ function fixture(mode: "dual" | "partition") {
 	fs.mkdirSync(agenticdoc);
 	const config =
 		mode === "dual"
-			? { mode, game: target, engine: extra }
+			? { mode, game: target, engine: extra, engine_writable: true }
 			: { active: mode, partition: { parent: extra, partition: target, roots: { sdk: named } } };
 	fs.writeFileSync(path.join(agenticdoc, "target.yml"), JSON.stringify(config));
 	return { top, control, target, extra, named, agenticdoc };
@@ -302,6 +302,25 @@ describe.each(["dual", "partition"] as const)("%s separated write roots", (mode)
 		}
 		process.stdout.write(`[VERIFY] VC-004 ${mode}: research write_scope retains control-root evidence identity\n`);
 	});
+});
+
+it("read-only Engine is denied even for an undeclared foreign-write worker while Game stays writable", async () => {
+	const fx = fixture("dual");
+	fs.writeFileSync(
+		path.join(fx.agenticdoc, "target.yml"),
+		JSON.stringify({ mode: "dual", game: fx.target, engine: fx.extra }),
+	);
+	const guard = await worker(task(fx, "engine-policy", undefined, ["allow_foreign_write: true"]), fx.target);
+	try {
+		const engineFile = path.join(fx.extra, "Source", "Engine.cpp");
+		for (const toolName of ["write", "edit"]) {
+			expect(guard.call(toolName, { path: path.join(fx.target, "Plugin.cpp"), content: "x" })).toBeUndefined();
+			expect(guard.call(toolName, { path: engineFile, content: "x" })?.reason).toContain("denied write list");
+		}
+		expect(guard.call("bash", { command: `echo x > "${engineFile}"` })?.reason).toContain("engine-read-only");
+	} finally {
+		guard.settle();
+	}
 });
 
 it("TS/Python agree on rooted identities including nested and literal root prefixes", () => {

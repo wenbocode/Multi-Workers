@@ -46,6 +46,7 @@ WRITE_FACE_EMPTY = "write-face-empty"
 WRITE_FACE_INVALID_ENTRY = "write-face-invalid-entry"
 WRITE_FACE_ESCAPE = "write-face-escape"
 WRITE_FACE_OUTSIDE_BASE = "write-face-outside-base"
+WRITE_FACE_READ_ONLY = "write-face-read-only"
 
 # ---------------------------------------------------------------------------
 # Conservative-fallback limits (section 3.2).  Hitting any of these must be
@@ -647,6 +648,65 @@ def _normalize_entry(
 
 
 # ---------------------------------------------------------------------------
+# Read-only exceptions (mw-dual-build-artifacts design §4)
+# ---------------------------------------------------------------------------
+
+
+def _literal_segments(
+    value: str, *, base: str, case_insensitive: bool, roots: Sequence[str] | None,
+) -> tuple[str, ...] | None:
+    """Segment sequence of a wildcard-free directory path, or None.
+
+    The value is mapped through the same root/base normalisation as an allow
+    entry and **not** through `canonicalize`: an exception root is a literal
+    anchor, so a junction target must never widen the grant.
+    """
+    entry_globs, _norm, refusal = _normalize_entry(
+        value, base=base, case_insensitive=case_insensitive, roots=roots,
+    )
+    if refusal is not None or not entry_globs:
+        return None
+    segments: list[str] = []
+    for segment in entry_globs[0].segments:
+        literal = _segment_literal(segment) if not isinstance(segment, str) else None
+        if literal is None:
+            return None
+        segments.append(literal)
+    return tuple(segments)
+
+
+def _segment_literal(segment: Segment) -> str | None:
+    """The exact text of a segment that contains only literal characters."""
+    text = "".join(token.ch for token in segment.tokens if isinstance(token, Lit))
+    return text if len(text) == len(segment.tokens) else None
+
+
+def _literal_prefix(segments: Sequence[Segment], allowed: Sequence[str], ci: bool) -> bool:
+    """True when `allowed` is a complete literal segment prefix of `segments`."""
+    if len(segments) < len(allowed):
+        return False
+    for segment, expected in zip(segments, allowed):
+        literal = None if isinstance(segment, str) else _segment_literal(segment)
+        if literal is None or not _eq(literal, expected, ci):
+            return False
+    return True
+
+
+def _glob_intersects(glob: CompiledGlob, protected: CompiledGlob, ci: bool) -> bool:
+    """True when the glob overlaps the protected root or cannot be decided.
+
+    Undecidable is treated as overlap (section 3.2), so an unsupported or
+    fallback glob still has to prove a complete literal exception prefix.
+    """
+    if glob.unsupported or protected.unsupported:
+        return True
+    try:
+        return _globs_overlap(glob.segments, protected.segments, ci) is not None
+    except _ConservativeUnknown:
+        return True
+
+
+# ---------------------------------------------------------------------------
 # Public parser (section 3.3 three states)
 # ---------------------------------------------------------------------------
 
@@ -654,6 +714,8 @@ def _normalize_entry(
 def parse_write_face(
     text: str, *, base: str, case_insensitive: bool = False, roots: Sequence[str] | None = None,
     canonicalize: Callable[[str], str] | None = None,
+    read_only_roots: Sequence[str] = (),
+    read_only_allowed_roots: Sequence[str] = (),
 ) -> WriteFace | ParseResult:
     """Parse the `write_face:` head of a task.md.
 
@@ -662,6 +724,17 @@ def parse_write_face(
     * no `write_face:` head, or a dash-only value (`write_face: -`) -> `Undeclared`;
     * a present-but-empty head -> `Refused(WRITE_FACE_EMPTY)`;
     * a non-empty head -> `WriteFace` with the normalized, expanded allow set.
+
+    `read_only_roots` are hard read-only trees (D-001 of
+    `mw-dual-build-artifacts`); any allow glob that provably intersects one is
+    refused.  `read_only_allowed_roots` narrows that rule: an overlapping glob
+    is admitted only when one of those directories is a **complete literal
+    segment prefix** of it (a wildcard parent, a wider parent such as
+    `Engine/Intermediate/**`, an undecidable pattern or any merely intersecting
+    glob still refuses).  Omitting the option keeps the original all-or-nothing
+    behaviour.  The exception values are mapped through the same root/base
+    normalisation as an allow entry but are never realpath-migrated, so a
+    junction target can never become a new writable root.
 
     An optional `write_face_deny:` head is parsed for completeness, but the
     overlap operator never uses it (section 3.2).
@@ -712,7 +785,7 @@ def parse_write_face(
             if norm is not None:
                 deny_entries.append(norm)
 
-    return WriteFace(
+    face = WriteFace(
         allow=tuple(globs),
         allow_entries=tuple(norm_entries),
         deny=tuple(deny_entries),
@@ -721,6 +794,27 @@ def parse_write_face(
         case_insensitive=case_insensitive,
         roots=tuple(roots) if roots is not None else None,
     )
+    allowed_prefixes = tuple(
+        allowed for allowed in (
+            _literal_segments(value, base=base, case_insensitive=case_insensitive, roots=roots)
+            for value in read_only_allowed_roots
+        ) if allowed is not None
+    )
+    for root in read_only_roots:
+        protected_globs, _norm, refusal = _normalize_entry(
+            _norm_sep(root).rstrip("/") + "/**",
+            base=base, case_insensitive=case_insensitive, roots=roots, canonicalize=canonicalize,
+        )
+        if refusal is not None or not protected_globs:
+            return Refused(WRITE_FACE_READ_ONLY, detail=f"read-only root '{root}'")
+        for protected in protected_globs:
+            for glob in face.allow:
+                if not _glob_intersects(glob, protected, case_insensitive):
+                    continue
+                if not any(_literal_prefix(glob.segments, allowed, case_insensitive)
+                           for allowed in allowed_prefixes):
+                    return Refused(WRITE_FACE_READ_ONLY, detail=f"read-only root '{root}'")
+    return face
 
 
 # ---------------------------------------------------------------------------

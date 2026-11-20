@@ -103,7 +103,7 @@ export function normalizeForCompare(projectRoot: string, p: string): string {
 	const tail: string[] = [];
 	for (;;) {
 		try {
-			return path.join(fs.realpathSync(cur), ...tail);
+			return path.join(fs.realpathSync.native(cur), ...tail);
 		} catch {
 			const parent = path.dirname(cur);
 			if (parent === cur) return abs; // reached the fs root unresolved — lexical is the best available
@@ -141,7 +141,7 @@ function defaultStatSize(absolutePath: string): number {
 export function matchedDenyGlob(projectRoot: string, denyGlobs: string[], rawPath: string): string | null {
 	if (denyGlobs.length === 0) return null;
 	const abs = normalizeForCompare(projectRoot, rawPath);
-	const rel = path.relative(projectRoot, abs).replaceAll("\\", "/");
+	const rel = path.relative(normalizeForCompare(projectRoot, projectRoot), abs).replaceAll("\\", "/");
 	for (const glob of denyGlobs) {
 		if (minimatch(abs, glob) || minimatch(rel, glob)) return glob;
 		// A trailing /** also denies the directory itself: plain minimatch

@@ -1712,9 +1712,10 @@ def write_face_base(project_root: pathlib.Path) -> str:
     return str(project_root.resolve())
 
 
-def write_face_roots(project_root: pathlib.Path) -> list[str] | None:
+def write_face_roots(project_root: pathlib.Path, config: dict | None = None) -> list[str] | None:
     """Configured roots for separated-workspace absolute file identities."""
-    config = mw_common.load_target_config(project_root)
+    if config is None:
+        config = mw_common.load_target_config(project_root)
     if config["mode"] == "single":
         return None
     if config["mode"] == "dual":
@@ -1728,6 +1729,23 @@ def write_face_roots(project_root: pathlib.Path) -> list[str] | None:
 def canonical_write_face_path(absolute_path: str) -> str:
     """Resolve junctions and existing prefixes before comparing file identities."""
     return str(pathlib.Path(absolute_path).resolve())
+
+
+def write_face_read_only_allowed_roots(config: dict) -> list[str]:
+    """Build-artifact exceptions inside the read-only Engine root.
+
+    Derived only from the production dual/`engine_writable=false` workspace
+    config (mw-dual-build-artifacts design §4): the frozen three literal UBT
+    artifact directories under the configured Engine root.  Every other mode
+    (single/partition) and an explicit Engine write grant yield no exception,
+    so the read-only rule stays all-or-nothing there.
+    """
+    if config["mode"] != "dual" or config.get("engine_writable") is True:
+        return []
+    engine_root = config.get("engine_root")
+    if not engine_root:
+        return []
+    return mw_common.engine_build_artifact_roots(engine_root)
 
 
 def _card_write_face_entries(card: dict | None) -> list[str] | None:
@@ -1835,6 +1853,7 @@ def _write_face_verdict(
     *,
     card_backed: bool,
     timeline: timeline_mod.Timeline | None,
+    target_config: dict | None = None,
 ) -> DispatchResult | None:
     """D-001..D-008 gate, called INSIDE the `workers.lock` critical section.
 
@@ -1855,11 +1874,19 @@ def _write_face_verdict(
     author-fixable, so its undeclared face is held serial-only.
     """
     base = write_face_base(project_root)
-    roots = write_face_roots(project_root)
+    if target_config is None:
+        target_config = mw_common.load_target_config(project_root)
+    roots = write_face_roots(project_root, target_config)
     case_insensitive = write_face_case_insensitive()
     parsed = write_face_mod.parse_write_face(
         content, base=base, case_insensitive=case_insensitive, roots=roots,
         canonicalize=canonical_write_face_path if roots is not None else None,
+        read_only_roots=(
+            [target_config["engine_root"]]
+            if target_config["mode"] == "dual" and target_config["engine_root"] is not None
+            and target_config.get("engine_writable") is not True else []
+        ),
+        read_only_allowed_roots=write_face_read_only_allowed_roots(target_config),
     )
     rows = mw_common.parse_workers_file(mw_common.workers_path(project_root))
     in_flight = [
@@ -2107,9 +2134,11 @@ def dispatch(
     # (load_rag_config returns ({}, error) by contract).
     rag_config, _rag_error = mw_common.load_rag_config(project_root)
     profile_block: str | None = None
-    if config["mode"] == "partition":
+    if config["mode"] in ("dual", "partition"):
         try:
-            profile_block = mw_common.render_partition_profile_md(
+            render_profile = (mw_common.render_dual_profile_md if config["mode"] == "dual"
+                              else mw_common.render_partition_profile_md)
+            profile_block = render_profile(
                 config, ignore_enforced=deny_globs is None
             )
         except mw_common.TargetConfigError as exc:

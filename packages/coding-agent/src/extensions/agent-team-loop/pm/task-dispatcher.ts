@@ -8,6 +8,7 @@ import { RAG_MARKER_V1, type RagTaskMeta, renderRagBlock } from "../rag/block.ts
 import { loadRagConfig } from "../rag/config.ts";
 import { LOCAL_CODEX_PROVIDER } from "../shared/codex-proxy.ts";
 import { PREFIX_TO_PROVIDER_ID, parseModelValue } from "../shared/dispatch-models.ts";
+import { dualEnginePolicyLines } from "../shared/engine-policy.ts";
 import { acquireLock } from "../shared/file-lock.ts";
 import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
@@ -67,6 +68,7 @@ function renderProfileBlock(config: WorkspaceConfig, ignoreEnforced: boolean): s
 		lines.push(`Control workspace: ${config.controlRoot}`);
 		lines.push(`Game root: ${config.gameRoot}`);
 		if (config.engineRoot !== null) lines.push(`Engine root: ${config.engineRoot}`);
+		lines.push(...dualEnginePolicyLines(config));
 	}
 	const toolNames = Object.keys(config.toolchain);
 	if (toolNames.length > 0) {

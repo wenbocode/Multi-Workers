@@ -5181,6 +5181,25 @@ def _tc_read_target_yml(control_root: str) -> dict:
         _tc_fail("invalid-config", "target.yml: top level must be a mapping")
     if not isinstance(parsed, dict):
         _tc_fail("invalid-config", "target.yml: top level must be a mapping")
+    # PyYAML accepts YAML 1.1 yes/on as booleans, while the TS reader uses
+    # YAML 1.2. A write grant must have the same meaning on both sides.
+    selected = parsed.get("dual") if parsed.get("active") == "dual" else parsed if "active" not in parsed else None
+    if isinstance(selected, dict) and isinstance(selected.get("engine_writable"), bool):
+        loader = yaml.SafeLoader(text)
+        try:
+            node = loader.get_single_node()
+            loader.flatten_mapping(node)
+            if parsed.get("active") == "dual":
+                node = next(value for key, value in reversed(node.value)
+                            if loader.construct_object(key) == "dual")
+                loader.flatten_mapping(node)
+            for key, value in reversed(node.value):
+                if loader.construct_object(key) == "engine_writable":
+                    if not isinstance(value, yaml.ScalarNode) or value.value.lower() not in ("true", "false"):
+                        _tc_fail("invalid-config", "target.yml: engine_writable must be a boolean")
+                    break
+        finally:
+            loader.dispose()
     return parsed
 
 
@@ -5229,7 +5248,7 @@ _V1_SHAPE_KEYS = ("mode", "game", "engine", "uproject")
 # v2 top-level whitelist (AC-003(c)).
 _V2_TOP_KEYS = frozenset(("active", "dual", "partition"))
 # Mode-block whitelists (AC-003(d)/(e)).
-_DUAL_BLOCK_KEYS = frozenset(("game", "engine", "vcs", "uproject", "toolchain", "ignore", "contract"))
+_DUAL_BLOCK_KEYS = frozenset(("game", "engine", "engine_writable", "vcs", "uproject", "toolchain", "ignore", "contract"))
 _PARTITION_BLOCK_KEYS = frozenset(("parent", "partition", "vcs", "roots", "toolchain", "ignore", "contract"))
 # roots key constraints (AC-003(f)).
 _ROOTS_RESERVED = frozenset(("parent", "partition", "game", "engine", "uproject"))
@@ -5497,6 +5516,10 @@ def _load_legacy_config(
     mode = "dual" if game_raw is not None else "single"
     if engine_raw is not None and mode == "single":
         _tc_fail("invalid-config", "target.yml: 'engine' requires dual mode (configure 'game' first)")
+    if "engine_writable" in raw and not isinstance(raw["engine_writable"], bool):
+        _tc_fail("invalid-config", "target.yml: engine_writable must be a boolean")
+    if raw.get("engine_writable") is True and (mode != "dual" or engine_raw is None):
+        _tc_fail("invalid-config", "target.yml: engine_writable requires a configured dual engine root")
 
     control_norm = _tc_normalize_root(control_root, control_root)
     game_root = _tc_normalize_root(game_raw, control_root) if mode == "dual" else control_norm
@@ -5511,6 +5534,7 @@ def _load_legacy_config(
         "control_root": control_norm,
         "game_root": game_root,
         "engine_root": None if engine_raw is None else _tc_normalize_root(engine_raw, control_root),
+        **({"engine_writable": raw.get("engine_writable") is True} if mode == "dual" else {}),
         "vcs": _tc_optional_string(raw.get("vcs"), "vcs"),
         "uproject": _tc_optional_string(raw.get("uproject"), "uproject"),
         "toolchain": _tc_parse_toolchain(raw.get("toolchain")),
@@ -5599,6 +5623,7 @@ def load_target_config(
                 "mode": "dual",
                 "game": block.get("game"),
                 "engine": block.get("engine"),
+                **({"engine_writable": block["engine_writable"]} if "engine_writable" in block else {}),
                 "vcs": block.get("vcs"),
                 "uproject": block.get("uproject"),
                 "toolchain": block.get("toolchain"),
@@ -6157,6 +6182,72 @@ def scan_build_error_lines(text: str) -> list[str]:
 
 PROFILE_MARK_V2 = "<!-- mw-profile: v2 -->"
 
+#: The three UBT build-artifact directories frozen by the dual-key design §4,
+#: relative to the configured Engine repository root (`target.yml` engine root,
+#: i.e. the UE repository root whose top level owns `Engine/`).
+ENGINE_BUILD_ARTIFACT_SUFFIXES = (
+    ("Engine", "Intermediate", "Build"),
+    ("Engine", "Saved", "UnrealBuildTool"),
+    ("Engine", "Saved", "Logs"),
+)
+
+
+def engine_build_artifact_roots(engine_root: str) -> list[str]:
+    """Mirror `engineBuildArtifactRoots` (mw-dual-build-artifacts design §4).
+
+    `engine_root` must be the already-resolved real Engine repository root;
+    this helper only concatenates the three frozen literal exceptions.  It
+    never realpaths an exception into a different authorization root, so a
+    junction target cannot become a new writable root.  An absent root yields
+    no exceptions (the read-only rule stays all-or-nothing).
+    """
+    if not engine_root:
+        return []
+    base = engine_root.rstrip("/\\")
+    return [os.path.join(base, *suffix) for suffix in ENGINE_BUILD_ARTIFACT_SUFFIXES]
+
+
+def dual_engine_policy_lines(config: dict) -> list[str]:
+    """Mirror shared/engine-policy.ts for every dual dispatch entry."""
+    if config["mode"] != "dual":
+        return []
+    writable = config.get("engine_writable") is True
+    lines = [
+        "Game writes: enabled (subject to task write_face/write_scope).",
+        f"Engine source writes: {'enabled' if writable else 'read-only'} (engine_writable: {str(writable).lower()}).",
+        "PM: Engine write permission never overrides project/task constraints. Never change engine_writable to unblock your own task.",
+    ]
+    if writable:
+        lines.append("PM: Plan direct Engine changes only within the approved scope, declare precise write_face/write_scope, and validate the affected target.")
+    else:
+        lines.extend([
+            "UBT builds: allowed without enabling Engine source writes. Build-generated files, caches and logs are writable only under Engine/Intermediate/Build/**, Engine/Saved/UnrealBuildTool/** and Engine/Saved/Logs/** (relative to the configured Engine root; subject to task write_face/write_scope).",
+            "UBT build permission does not allow rebuilding UBT itself or writing other Engine/Binaries paths, changing Engine source/build/config files or InstalledBuild.txt. A command name is not a write exemption.",
+            "Static command guards are not an OS sandbox. Keep detached run_dir outside Engine unless it is an explicitly permitted build-artifact path; report any other required Engine write.",
+            "Engine extension policy (mandatory):",
+            "- Keep extensions in Game. Wrap each upstream implementation in a project-owned code file that references the original Engine code (include/public API); maintain only the added or changed behavior.",
+            "- Never copy or fork Engine source into Game, another Engine tree, or any other directory to modify it. Renaming copied files or copying only part of an implementation is also forbidden.",
+            "- Prefer public APIs, inheritance, delegates and composition. An implementation wrapper must reference the original file, isolate macros/symbols, and compile without duplicate definitions; do not assume a private cpp can safely be included.",
+            "- Before acceptance, review the diff for copied Engine implementation, identify each wrapper and its upstream reference, and compile the affected target. If no safe extension point exists, report the limitation; do not copy code or change engine_writable to bypass it.",
+        ])
+    return lines
+
+
+def render_dual_profile_md(config: dict, ignore_enforced: bool = True) -> str:
+    """Dual equivalent of the TS task-dispatcher profile, including policy."""
+    lines = [
+        "<!-- mw-profile: v1 -->",
+        "[mw] Workspace profile (target.yml essentials, injected at dispatch;",
+        f"full file: {os.path.join(config['control_root'], '.agenticdoc', 'target.yml')})",
+        f"Control workspace: {config['control_root']}",
+        f"Game root: {config['game_root']}",
+    ]
+    if config["engine_root"] is not None:
+        lines.append(f"Engine root: {config['engine_root']}")
+    lines.extend(dual_engine_policy_lines(config))
+    lines.extend(_profile_sections(config, ignore_enforced))
+    return "\n".join(lines)
+
 
 def render_partition_profile_md(config: dict, ignore_enforced: bool = True) -> str:
     """Render the partition workspace-profile block (AC-007) — the line
@@ -6184,6 +6275,13 @@ def render_partition_profile_md(config: dict, ignore_enforced: bool = True) -> s
         lines.append("Named roots:")
         for name, root_path in roots.items():
             lines.append(f"- {name}: {root_path}")
+    lines.extend(_profile_sections(config, ignore_enforced))
+    return "\n".join(lines)
+
+
+def _profile_sections(config: dict, ignore_enforced: bool) -> list[str]:
+    """Shared toolchain, firewall and contract tail for separated workspaces."""
+    lines: list[str] = []
     toolchain = config.get("toolchain") or {}
     if toolchain:
         lines.append("Toolchain commands (placeholders resolved):")
@@ -6209,7 +6307,7 @@ def render_partition_profile_md(config: dict, ignore_enforced: bool = True) -> s
             lines.append("- docs (references, not inlined):")
             for doc in docs:
                 lines.append(f"  - {os.path.normpath(os.path.join(config['control_root'], doc))}")
-    return "\n".join(lines)
+    return lines
 
 
 def _probe_fingerprint(config: dict) -> str:

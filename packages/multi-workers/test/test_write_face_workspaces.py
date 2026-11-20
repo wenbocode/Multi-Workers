@@ -39,7 +39,7 @@ def test_separated_dispatch_identity_and_rejection(tmp_path, monkeypatch, mode):
     for root in (control, target, extra, named):
         root.mkdir()
     (control / ".agenticdoc").mkdir()
-    config = (dict(mode="dual", game=str(target), engine=str(extra)) if mode == "dual" else
+    config = (dict(mode="dual", game=str(target), engine=str(extra), engine_writable=True) if mode == "dual" else
               dict(active="partition", partition=dict(parent=str(extra), partition=str(target), roots=dict(sdk=str(named)))))
     (control / ".agenticdoc" / "target.yml").write_text(json.dumps(config), encoding="utf-8")
 

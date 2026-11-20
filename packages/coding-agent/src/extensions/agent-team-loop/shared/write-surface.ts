@@ -297,7 +297,9 @@ export function matchesWriteScopeEntry(projectRoot: string, entry: string, absol
 	const normalized = entry.trim();
 	if (normalized === "") return false;
 	if (GLOB_MAGIC_RE.test(normalized)) {
-		const relative = path.relative(projectRoot, absoluteTarget).replaceAll("\\", "/");
+		const relative = path
+			.relative(normalizeForCompare(projectRoot, projectRoot), absoluteTarget)
+			.replaceAll("\\", "/");
 		const forward = absoluteTarget.replaceAll("\\", "/");
 		const glob = normalized.replaceAll("\\", "/");
 		if (minimatch(relative, glob) || minimatch(forward, glob)) return true;

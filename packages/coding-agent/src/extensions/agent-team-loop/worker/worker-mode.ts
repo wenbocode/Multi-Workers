@@ -695,6 +695,11 @@ interface TaskMeta {
 	/** Preserve the parsed face and configured roots across a different cwd. */
 	writeFace?: WriteFace;
 	writeRoots?: readonly string[];
+	readOnlyWriteRoots?: readonly string[];
+	/** design.md §4 build-artifact exception: the three literal UBT directories
+	 * derived from the canonical Engine root. Only a target at or below one of
+	 * them escapes the read-only Engine verdict; role/write_face still decide. */
+	readOnlyArtifactRoots?: readonly string[];
 	/** A `write_face:` head that is present but refused (fail-closed). Only the
 	 * writable role path consults this: no target outside the own sandbox is
 	 * allowed by the authoritative carrier. */
@@ -898,6 +903,8 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 		writeFaceEntries: writeFaceParsed.kind === "declared" ? [...writeFaceParsed.face.entries] : undefined,
 		writeFace: writeFaceParsed.kind === "declared" ? writeFaceParsed.face : undefined,
 		writeRoots: writeFaceOptions.roots,
+		readOnlyWriteRoots: writeFaceOptions.readOnlyRoots,
+		readOnlyArtifactRoots: writeFaceOptions.readOnlyAllowedRoots,
 		writeFaceRejected: writeFaceParsed.kind === "rejected" ? writeFaceParsed.code : undefined,
 		readFileCap,
 		readByteCap,
@@ -1389,6 +1396,10 @@ export interface BashWriteScopeConfig {
 	writeFaceRejected?: boolean;
 	/** Configured roots; business writes outside cwd require a declared face. */
 	writeRoots?: readonly string[];
+	readOnlyWriteRoots?: readonly string[];
+	/** Literal build-artifact anchors exempted from `readOnlyWriteRoots` (never
+	 * realpath-migrated, design D-003). Absent → whole-root refusal. */
+	readOnlyArtifactRoots?: readonly string[];
 }
 
 /** Write-surface role classes (D-007). */
@@ -2517,6 +2528,16 @@ function samePath(a: string, b: string): boolean {
  * must stay writable for `coding`/`repair`), so it cannot be the PM table under
  * another name. The ALLOW face below is shared with the predicate instead. */
 function bashWriteDenyReason(config: BashWriteScopeConfig, target: string): string | null {
+	for (const root of config.readOnlyWriteRoots ?? []) {
+		if (!isSameOrUnder(normalizeForCompare(config.projectRoot, root), target)) continue;
+		// design.md §4: the three UBT build directories are the only Engine write
+		// exception. The anchors are literal concatenations of the canonical
+		// Engine root while `target` is realpath-normalized, so a junctioned
+		// artifact directory stays denied (design D-003). The exception never
+		// widens a role or task face — it only removes the read-only verdict.
+		if ((config.readOnlyArtifactRoots ?? []).some((allowed) => isSameOrUnder(allowed, target))) continue;
+		return "engine-read-only";
+	}
 	// Targets already use realpath; anchors must use the same identity when the
 	// control workspace itself was opened through a junction or symlink.
 	const keyDir = normalizeForCompare(config.projectRoot, config.keyDir);
@@ -2532,7 +2553,7 @@ function bashWriteDenyReason(config: BashWriteScopeConfig, target: string): stri
 	if (isSameOrUnder(trueRoot, target) && !isSameOrUnder(keyDir, target)) {
 		return "other key dir / .agenticdoc root";
 	}
-	if (config.roleClass !== "writable" && isSameOrUnder(path.join(config.projectRoot, "packages"), target)) {
+	if (config.roleClass !== "writable" && isSameOrUnder(normalizeForCompare(config.projectRoot, "packages"), target)) {
 		return "packages/**";
 	}
 	for (const root of config.writeRoots ?? [config.projectRoot, path.dirname(config.trueRoot)]) {
@@ -3523,6 +3544,8 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 					writeFace: declaredWriteFace,
 					writeFaceRejected: declaredWriteFaceRejected || undefined,
 					writeRoots: meta.writeRoots,
+					readOnlyWriteRoots: meta.readOnlyWriteRoots,
+					readOnlyArtifactRoots: meta.readOnlyArtifactRoots,
 				}
 			: undefined;
 	// D-115 rule 3: two carriers present ⇒ the runtime allow face is their

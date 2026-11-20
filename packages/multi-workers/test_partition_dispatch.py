@@ -518,11 +518,10 @@ class TestConductorProfileInjection:
         assert statuses["t001"] == "failed"
         print("[VERIFY] FIX-1: post-dispatch active switch -> config torn, spawned=no")
 
-    def test_conductor_dispatch_dual_single_never_inject(
+    def test_conductor_dispatch_dual_injects_policy_single_stays_unchanged(
         self, tmp_path: pathlib.Path,
     ) -> None:
-        """AC-016d zero change: dual/single conductor dispatches keep the
-        historical no-profile task.md (the v2 block is partition-only)."""
+        """Dual now carries the Engine policy; single still has no profile."""
         from autopilot import dispatch as dispatch_mod
 
         control = tmp_path / "control"
@@ -535,8 +534,10 @@ class TestConductorProfileInjection:
         )
         assert result.ok
         text = result.task_md.read_text(encoding="utf-8")  # type: ignore[union-attr]
-        assert "mw-profile" not in text
-        (control / ".agenticdoc" / "target.yml").unlink()
+        assert "<!-- mw-profile: v1 -->" in text
+        assert "Engine source writes: read-only" in text
+        assert "Never copy or fork Engine source" in text
+        _write_yml(control, "active: single\n")
         result2 = dispatch_mod.dispatch(
             control, "test-key", "single", "repair", "p", loop="L", attempt=1,
         )

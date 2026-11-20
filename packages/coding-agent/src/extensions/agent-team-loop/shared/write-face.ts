@@ -49,6 +49,7 @@ export const WRITE_FACE_EMPTY = "write-face-empty";
 export const WRITE_FACE_INVALID_ENTRY = "write-face-invalid-entry";
 export const WRITE_FACE_ESCAPE = "write-face-escape";
 export const WRITE_FACE_OUTSIDE_BASE = "write-face-outside-base";
+export const WRITE_FACE_READ_ONLY = "write-face-read-only";
 
 /** The conductor's `Refused.detail` for a present-but-empty head
  * (`write_face.py:654/674`). The only refusal with no offending entry, so it is
@@ -60,7 +61,8 @@ export type WriteFaceRejectCode =
 	| typeof WRITE_FACE_EMPTY
 	| typeof WRITE_FACE_INVALID_ENTRY
 	| typeof WRITE_FACE_ESCAPE
-	| typeof WRITE_FACE_OUTSIDE_BASE;
+	| typeof WRITE_FACE_OUTSIDE_BASE
+	| typeof WRITE_FACE_READ_ONLY;
 
 // ---------------------------------------------------------------------------
 // Conservative-fallback limits (§3.2). Hitting any of these must be
@@ -142,6 +144,15 @@ export interface WriteFaceParseOptions {
 	readonly base: string;
 	readonly caseInsensitive: boolean;
 	readonly roots?: readonly string[];
+	/** Workspace policy has priority over task declarations, including broad globs. */
+	readonly readOnlyRoots?: readonly string[];
+	/** Narrow build-artifact exception to {@link readOnlyRoots} (design.md §4):
+	 * a declared glob that would otherwise hit a read-only root is admitted only
+	 * when its complete literal segment sequence starts with one of these
+	 * directories. Absent → the historical whole-root refusal, unchanged. The
+	 * workspace supplies them as literal anchors (never realpath-migrated), so a
+	 * junctioned artifact directory cannot rescue an escape. */
+	readonly readOnlyAllowedRoots?: readonly string[];
 	/** Resolve existing path prefixes at workspace boundaries, before comparison. */
 	readonly canonicalize?: (absolutePath: string) => string;
 }
@@ -690,7 +701,75 @@ function buildFace(
 		caseInsensitive: opts.caseInsensitive,
 		...(opts.roots === undefined ? {} : { roots: opts.roots }),
 	};
+	for (const root of opts.readOnlyRoots ?? []) {
+		const protectedFace = parseWriteFaceEntries([`${normalizeSeparators(root).replace(/\/+$/, "")}/**`], {
+			...opts,
+			readOnlyRoots: undefined,
+			readOnlyAllowedRoots: undefined,
+		});
+		if (protectedFace.kind !== "declared") {
+			return { kind: "rejected", code: WRITE_FACE_READ_ONLY, detail: `read-only root '${root}'` };
+		}
+		const refused = { kind: "rejected", code: WRITE_FACE_READ_ONLY, detail: `read-only root '${root}'` } as const;
+		if (opts.readOnlyAllowedRoots === undefined) {
+			if (writeFacesOverlap(face, protectedFace.face) !== null) return refused;
+			continue;
+		}
+		// Narrow exception: each overlapping expanded glob must be provably inside
+		// one of the literal build-artifact directories. An undecidable overlap is
+		// treated as overlapping (fail closed).
+		const allowed = opts.readOnlyAllowedRoots.map(literalPathSegments);
+		for (const glob of face.allow) {
+			const overlaps = protectedFace.face.allow.some((protectedGlob) => {
+				const result = globsOverlap(glob.segments, protectedGlob.segments, opts.caseInsensitive);
+				return result.kind !== "none";
+			});
+			if (!overlaps) continue;
+			if (!isInsideAllowedArtifactRoot(glob, allowed, opts.caseInsensitive)) return refused;
+		}
+	}
 	return { kind: "declared", face };
+}
+
+// ---------------------------------------------------------------------------
+// Read-only-root admission (§4 narrow exception)
+// ---------------------------------------------------------------------------
+
+/** Split a literal directory path into its canonical comparison segments. */
+function literalPathSegments(p: string): string[] {
+	return normalizeSeparators(p)
+		.split("/")
+		.filter((segment) => segment !== "" && segment !== ".");
+}
+
+/** Do the glob's first `prefix.length` segments spell exactly the allowed
+ * directory? Only a literal equal prefix proves containment; a `**` or any
+ * wildcard inside the prefix (and a too-short glob) does not. Segments after
+ * the prefix are free — a trailing `/**` stays inside the allowed directory. */
+function hasLiteralPrefix(prefix: readonly string[], glob: WriteFaceGlob, caseInsensitive: boolean): boolean {
+	if (prefix.length > glob.segments.length) return false;
+	for (let index = 0; index < prefix.length; index++) {
+		const segment = glob.segments[index];
+		if (segment.kind !== "pattern") return false;
+		let text = "";
+		for (const token of segment.tokens) {
+			if (token.kind !== "lit") return false;
+			text += token.ch;
+		}
+		if (!eq(prefix[index], text, caseInsensitive)) return false;
+	}
+	return true;
+}
+
+/** Does `glob` stay fully inside one of the literal allowed directories?
+ * Only a complete literal segment prefix proves it (design §4: wildcard
+ * parents, wide patterns and undecidable forms stay refused). */
+function isInsideAllowedArtifactRoot(
+	glob: WriteFaceGlob,
+	allowed: readonly (readonly string[])[],
+	caseInsensitive: boolean,
+): boolean {
+	return allowed.some((prefix) => hasLiteralPrefix(prefix, glob, caseInsensitive));
 }
 
 // ---------------------------------------------------------------------------

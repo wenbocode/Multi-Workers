@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { initiatorRoleFromWorkerTask, registerAskDecisionTool } from "./pm/decision-tool.ts";
 import { pmActivate } from "./pm/pm-orchestrator.ts";
@@ -6,8 +7,10 @@ import { registerContextPolicy } from "./shared/context-extension.ts";
 import { configureDeepSeek } from "./shared/deepseek-provider.ts";
 import { registerImplementationGate } from "./shared/implementation-gate.ts";
 import { registerModelConcurrency } from "./shared/model-concurrency-extension.ts";
+import { controlRootFromTaskPath } from "./shared/paths.ts";
 import { registerProtectedConfigGuard } from "./shared/protected-config.ts";
 import { registerToa } from "./shared/toa-provider.ts";
+import { registerWorkspaceEngineGuard } from "./shared/workspace-engine-guard.ts";
 import { registerWorktreeJunctionGuard } from "./shared/worktree-junction-guard.ts";
 import { registerDecisionSignoffGuard, registerXkeyGateGuard } from "./shared/xkey-gate-guard.ts";
 import { registerZhient } from "./shared/zhient-provider.ts";
@@ -90,6 +93,9 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 	// Registered in EVERY mode, same position as the other guards: after the
 	// double-load flag, before the PM/Worker mode branches.
 	registerWorktreeJunctionGuard(pi);
+
+	const taskPath = process.env.PI_WORKER_TASK;
+	registerWorkspaceEngineGuard(pi, taskPath ? controlRootFromTaskPath(path.resolve(taskPath)) : process.cwd());
 
 	if (process.env.PI_WORKER_TASK) {
 		await workerModeActivate(pi);

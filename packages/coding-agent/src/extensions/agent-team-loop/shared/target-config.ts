@@ -93,6 +93,8 @@ export interface WorkspaceConfig {
 	gameRoot: string | null;
 	/** Engine root (UE), or null when not configured. */
 	engineRoot: string | null;
+	/** Engine writes require explicit target.yml authorization in dual mode. */
+	engineWritable?: boolean;
 	/** Parent project root (partition mode only; read-only context), or
 	 * null. */
 	parentRoot: string | null;
@@ -263,7 +265,16 @@ const V1_SHAPE_KEYS = ["mode", "game", "engine", "uproject"] as const;
 /** v2 top-level whitelist (AC-003(c)). */
 const V2_TOP_KEYS = new Set(["active", "dual", "partition"]);
 /** Mode-block whitelists (AC-003(d)/(e)). */
-const DUAL_BLOCK_KEYS = new Set(["game", "engine", "vcs", "uproject", "toolchain", "ignore", "contract"]);
+const DUAL_BLOCK_KEYS = new Set([
+	"game",
+	"engine",
+	"engine_writable",
+	"vcs",
+	"uproject",
+	"toolchain",
+	"ignore",
+	"contract",
+]);
 const PARTITION_BLOCK_KEYS = new Set(["parent", "partition", "vcs", "roots", "toolchain", "ignore", "contract"]);
 /** roots key constraints (AC-003(f)). */
 const ROOTS_RESERVED = new Set(["parent", "partition", "game", "engine", "uproject"]);
@@ -587,6 +598,12 @@ function resolveLegacyConfig(
 	if (engineRaw !== null && mode === "single") {
 		fail("invalid-config", "target.yml: 'engine' requires dual mode (configure 'game' first)");
 	}
+	if (raw.engine_writable !== undefined && typeof raw.engine_writable !== "boolean") {
+		fail("invalid-config", "target.yml: engine_writable must be a boolean");
+	}
+	if (raw.engine_writable === true && (mode !== "dual" || engineRaw === null)) {
+		fail("invalid-config", "target.yml: engine_writable requires a configured dual engine root");
+	}
 
 	const gameRoot =
 		mode === "dual" ? normalizeRoot(gameRaw as string, controlRoot) : normalizeRoot(controlRoot, controlRoot);
@@ -596,6 +613,7 @@ function resolveLegacyConfig(
 		controlRoot: normalizeRoot(controlRoot, controlRoot),
 		gameRoot,
 		engineRoot: engineRaw === null ? null : normalizeRoot(engineRaw, controlRoot),
+		...(mode === "dual" ? { engineWritable: raw.engine_writable === true } : {}),
 		parentRoot: null,
 		partitionRoot: null,
 		roots: null,
@@ -686,6 +704,7 @@ export function resolveWorkspaceConfig(controlRoot: string): WorkspaceConfig {
 				mode: "dual",
 				game: block.game,
 				engine: block.engine,
+				engine_writable: block.engine_writable,
 				vcs: block.vcs,
 				uproject: block.uproject,
 				toolchain: block.toolchain,
