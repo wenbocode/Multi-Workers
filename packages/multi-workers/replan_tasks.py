@@ -273,6 +273,13 @@ def inspect(project: Path, key_dir: Path, task: str | None, *, section: str = "i
         facts = {"task": task, "run_id": None, "status": "unstarted", "category": "unstarted",
                  "dispatch_time": None, "started": None, "card": ref}
     record = remember(key_dir, facts)
+    return {"issue": record["id"], "state": record["state"], "facts": facts,
+            **source_context(key_dir, facts),
+            "live_workers": [r["task_key"] for r in rows if r["status"] in {"pending", "running"}]}
+
+
+def source_context(key_dir: Path, facts: dict) -> dict:
+    task = identifier(facts["task"])
     original = body(source_card(key_dir, facts["card"])) if facts["card"].startswith("tasks/") else ""
     envelope = body(key_dir / "workers" / task / "task.md")
     snapshot = digest([facts, original, envelope])
@@ -285,9 +292,7 @@ def inspect(project: Path, key_dir: Path, task: str | None, *, section: str = "i
         snapshot_fields.append(design)
     snapshot = digest(snapshot_fields)
     acceptance = [item for item in coverage if item.startswith("AC-")]
-    return {"issue": record["id"], "snapshot": snapshot, "state": record["state"], "facts": facts,
-            "acceptance": acceptance, "coverage": coverage, "closure": closure,
-            "live_workers": [r["task_key"] for r in rows if r["status"] in {"pending", "running"}]}
+    return {"snapshot": snapshot, "acceptance": acceptance, "coverage": coverage, "closure": closure}
 
 
 def retained_proof(project: Path, key_dir: Path, current: dict, retained: dict) -> dict:
@@ -642,6 +647,63 @@ def execute(project: Path, req: dict) -> dict:
         return {"state": "applied", **verdict, "decision_id": record["decision_id"]}
 
 
+def evidence_takeover_complete(project: Path, key_dir: Path, record: dict, parent: tuple[dict, dict],
+                               rows_by_task: dict, dispatched_cards: set[str]) -> bool:
+    plan = record["plan"]
+    retained = plan.get("retained")
+    if (plan["units"] or not isinstance(retained, dict) or not retained
+            or not all(isinstance(ref, str) and ref.startswith("evidence/")
+            for ref in retained.values()) or record.get("key") != key_dir.name
+            or not record.get("decision_id") or not record.get("action_evidence")):
+        return False
+    source = record["source"]
+    prior, unit = parent
+    try:
+        if prior["state"] != "applied" or body(source_card(key_dir, source["card"])) != card_text(prior, unit):
+            return False
+        if source["status"] == "unstarted":
+            if source["card"] in dispatched_cards or source["task"] in rows_by_task:
+                return False
+        else:
+            row = rows_by_task.get(source["task"])
+            if not row or row["status"] in {"pending", "running"}:
+                return False
+            facts = run_facts(key_dir, source["task"], row["status"])
+            facts["dispatch_time"] = row.get("dispatched_at")
+            if facts != source:
+                return False
+        current = source_context(key_dir, source)
+        if (current["snapshot"] != record["snapshot"] or not set(unit["covers"]) <= retained.keys()
+                or set(current["coverage"]) != retained.keys()):
+            return False
+        proofs = retained_proof(project, key_dir, {**current, "facts": source}, retained)
+        version = digest([record["id"], current["snapshot"], plan, proofs])
+        if version != record["version"]:
+            return False
+        prepared = {"action": "direct-exec", "basis_id": "replan-" + version[:24]}
+        _, events = decision(project, key_dir.name, source, prepared, record["decision_id"])
+        lifecycle = [e for e in events if e["kind"] == "lifecycle"]
+        return (sum(e.get("lifecycle") == "executed" and e.get("action") == "direct-exec"
+                    and e.get("event_id") == record["action_evidence"] for e in lifecycle) == 1
+                and sum(e.get("lifecycle") == "settled" and e.get("outcome") == "ok" for e in lifecycle) == 1)
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return False
+
+
+def unit_dependencies(by_card: dict, record: dict, unit: dict) -> set[str]:
+    dependencies = set(unit["depends_on"])
+    parent_ref = record["source"]["card"]
+    visited = set()
+    while parent_ref in by_card:
+        if parent_ref in visited:
+            raise ValueError("cyclic replan ancestry")
+        visited.add(parent_ref)
+        parent, original = by_card[parent_ref]
+        dependencies.update(original["depends_on"])
+        parent_ref = parent["source"]["card"]
+    return dependencies
+
+
 def admission(project: Path, owner: str, task: str, ref: str, *, attempt: int = 1,
               card_hash: str | None = None, supersedes: str | None = None) -> str | None:
     """Called under workers.lock before any dispatch writes. No nested lock."""
@@ -682,11 +744,12 @@ def admission(project: Path, owner: str, task: str, ref: str, *, attempt: int = 
     path = source_card(key_dir, ref)
     if body(path) != card_text(record, unit) or (card_hash and cards.card_digest(path) != card_hash):
         return "replan-card-drift"
-    done = set()
+    done, dispatched_cards = set(), set()
     for row in rows:
         folder = key_dir / "workers" / identifier(row["task_key"])
         head = body(folder / "task.md")
         used = card_identity(mw_common.read_task_header_scalar(head, "card_path") or "")
+        dispatched_cards.add(used)
         if used == ref:
             reviewed = [r for r in known if r["source"]["task"] == row["task_key"]
                         and r["state"] == "open" and r.get("reviewed_infrastructure") == r["source"]
@@ -705,20 +768,21 @@ def admission(project: Path, owner: str, task: str, ref: str, *, attempt: int = 
             if resources is None or (other_resources is None and resources) or (
                     other_resources and set(resources).intersection(other_resources)):
                 return f"replan-resource-busy:{row['task_key']}"
-    # A dependent keeps its original edge when an upstream card is split again.
+    # A dependent keeps its original edge when an upstream card is split again
+    # or closed by the PM. A takeover still inherits the card's prerequisites.
     replacements = {by_card[r["source"]["card"]][1]["id"]: {u["id"] for u in r["plan"]["units"]}
                     for r in known if r["state"] == "applied" and r["plan"]["action"] in {"split", "narrow"}
                     and r["source"]["card"] in by_card
                     and all(str(ref).startswith("evidence/") for ref in r["plan"].get("retained", {}).values())}
+    rows_by_task = {row["task_key"]: row for row in rows}
+    for r in known:
+        parent = by_card.get(r["source"]["card"])
+        if (parent and r["state"] == "applied" and r["plan"]["action"] == "direct-exec"
+                and evidence_takeover_complete(project, key_dir, r, parent, rows_by_task, dispatched_cards)):
+            replacements.setdefault(parent[1]["id"], unit_dependencies(by_card, *parent))
     while newly_done := {stem for stem, children in replacements.items() if children <= done} - done:
         done.update(newly_done)
-    dependencies = set(unit["depends_on"])
-    parent_ref = record["source"]["card"]
-    while parent_ref in by_card:
-        parent, original = by_card[parent_ref]
-        dependencies.update(original["depends_on"])
-        parent_ref = parent["source"]["card"]
-    missing = dependencies - done
+    missing = unit_dependencies(by_card, record, unit) - done
     return "replan-dependency-pending:" + ",".join(sorted(missing)) if missing else None
 
 

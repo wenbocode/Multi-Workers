@@ -249,6 +249,125 @@ def test_reviewed_model_failure_on_successor_can_retry(fixture):
     assert "already-dispatched" in rp.admission(project, "demo", "new", "tasks/one.md")
 
 
+@pytest.mark.parametrize("change", [
+    "none", "previewed", "escalate", "no receipt", "wrong receipt", "wrong basis",
+    "missing settlement", "empty evidence", "remaining card", "missing coverage",
+    "evidence drift", "source drift", "parent card drift",
+])
+def test_evidence_only_takeover_resolves_transitive_dispatch_dependency(fixture, change):
+    project, key, _, _ = fixture
+    args, split = prepare(project)
+    tool(project, "apply", **args, version=split["version"], decision_id=answer(project, split))
+
+    def send(stem):
+        return dispatch.dispatch(project, "demo", stem, "phase-writer", "check", loop="execute", attempt=1)
+
+    def stop(stem, status):
+        result = send(stem)
+        assert result.ok
+        mw_common.update_status(project, result.task_key, status)
+        put(result.task_md.with_name("run.json"), json.dumps({"status": status, "task_key": result.task_key}))
+        return tool(project, "inspect", task=result.task_key), result.task_md.with_name("run.json")
+
+    first, first_run = stop("one", "needs-clarification")
+    args = {field: first[field] for field in ("issue", "snapshot")}
+    review_unit = unit("review", "AC-001")
+    if change == "missing coverage":
+        review_unit["covers"].append("AC-002")
+    narrow = tool(project, "preview", **args, plan={"action": "narrow", "reason": "require independent review",
+        "units": [review_unit]})
+    tool(project, "apply", **args, version=narrow["version"],
+         decision_id=answer(project, narrow, choice="narrow", task=first["facts"]["task"]))
+
+    review, review_run = stop("review", "failed")
+    blocked = send("two")
+    assert not blocked.ok and blocked.reason == "replan-dependency-pending:one"
+    args = {field: review[field] for field in ("issue", "snapshot")}
+    evidence = key / "evidence/accepted.md"
+    put(evidence, "AC-001 PASS · independent review accepted\n")
+    action = "escalate" if change == "escalate" else "direct-exec"
+    retained = {"AC-001": "evidence/accepted.md"}
+    if change == "empty evidence":
+        retained = {}
+    elif change == "remaining card":
+        put(key / "tasks/remaining.md", card("remaining"))
+        retained = {"AC-001": "tasks/remaining.md"}
+    proposal = tool(project, "preview", **args, plan={"action": action, "reason": "record review outcome",
+        "units": [], "retained": retained})
+    task = review["facts"]["task"]
+    ref = answer(project, proposal, choice=action, task=task)
+    cfg, error = decision.DecisionConfig.from_project(project)
+    assert not error
+    store = decision_lifecycle.LifecycleStore.production(project, redact=decision.known_secret_redactor(cfg))
+    meta = decision_lifecycle.DecisionMeta("demo", ref.split(":")[1], initiator_role="pm", task_key=task)
+    assert decision_lifecycle.record_executed(store, meta, action=action, dp="dp-pm-steer", decision_id=ref,
+                                              event_id="review-accepted").recorded
+    if change != "previewed":
+        tool(project, "apply", **args, version=proposal["version"], decision_id=ref,
+             action_evidence="review-accepted")
+
+    record_path = key / "evidence/replan" / (review["issue"] + ".json")
+    record = json.loads(rp.body(record_path))
+    if change in {"no receipt", "wrong receipt"}:
+        if change == "no receipt":
+            record.pop("action_evidence")
+        else:
+            record["action_evidence"] = "unrelated-action"
+        rp.save(record_path, record)
+    elif change == "wrong basis":
+        sink = decision_wire.production_lifecycle_sink(project)
+        put(sink, rp.body(sink).replace(proposal["basis_id"], "replan-wrong-basis"))
+    elif change == "missing settlement":
+        sink = decision_wire.production_lifecycle_sink(project)
+        put(sink, "".join(line + "\n" for line in rp.body(sink).splitlines()
+                          if not (json.loads(line).get("decision_id") == ref
+                                  and json.loads(line).get("lifecycle") == "settled")))
+    elif change == "evidence drift":
+        put(evidence, "AC-001 PASS · different evidence\n")
+    elif change == "source drift":
+        put(review_run.with_name("report.md"), "Different report\n")
+    elif change == "parent card drift":
+        path = key / "tasks/review.md"
+        put(path, rp.body(path) + "\nNew text\n")
+
+    terminal_before = [p.read_bytes() for p in (first_run, review_run)]
+    result = send("two")
+    assert [p.read_bytes() for p in (first_run, review_run)] == terminal_before
+    statuses = {r["task_key"]: r["status"] for r in rp.worker_rows(project, "demo")}
+    assert statuses[first_run.parent.name] == "needs-clarification"
+    assert statuses[review_run.parent.name] == "failed"
+    if change == "none":
+        assert result.ok and result.row_verified
+    else:
+        assert not result.ok and result.reason == "replan-dependency-pending:one"
+
+
+def test_takeover_of_unstarted_card_waits_for_its_predecessor(fixture):
+    project, key, _, _ = fixture
+    args, split = prepare(project, {"action": "split", "reason": "three ordered checks", "units": [
+        unit("one", "AC-001"), unit("middle", "AC-002", ["one"]), unit("last", "AC-002", ["middle"])]})
+    tool(project, "apply", **args, version=split["version"], decision_id=answer(project, split))
+    current = tool(project, "inspect", task="middle")
+    args = {field: current[field] for field in ("issue", "snapshot")}
+    put(key / "evidence/accepted.md", "AC-002 PASS · PM verification\n")
+    proposal = tool(project, "preview", **args, plan={"action": "direct-exec", "reason": "verified locally",
+        "units": [], "retained": {"AC-002": "evidence/accepted.md"}})
+    ref = answer(project, proposal, choice="direct-exec", task=None)
+    cfg, error = decision.DecisionConfig.from_project(project)
+    assert not error
+    store = decision_lifecycle.LifecycleStore.production(project, redact=decision.known_secret_redactor(cfg))
+    meta = decision_lifecycle.DecisionMeta("demo", ref.split(":")[1], initiator_role="pm")
+    assert decision_lifecycle.record_executed(store, meta, action="direct-exec", dp="dp-pm-steer",
+                                              decision_id=ref, event_id="middle-accepted").recorded
+    tool(project, "apply", **args, version=proposal["version"], decision_id=ref, action_evidence="middle-accepted")
+    assert rp.admission(project, "demo", "new", "tasks/last.md") == "replan-dependency-pending:middle"
+    first = dispatch.dispatch(project, "demo", "one", "phase-writer", "check", loop="execute", attempt=1)
+    assert first.ok
+    mw_common.update_status(project, first.task_key, "done")
+    put(first.task_md.with_name("run.json"), json.dumps({"status": "done"}))
+    assert rp.admission(project, "demo", "new", "tasks/last.md") is None
+
+
 def test_windows_crlf_plan_publishes_dispatchable_cards(fixture):
     project, _, _, _ = fixture
     units = [unit("one", "AC-001"), unit("two", "AC-002")]
