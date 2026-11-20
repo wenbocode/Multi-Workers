@@ -8,6 +8,8 @@
 
 ### Added
 
+- Added `/mw ue-continue-develop-frame install` for dual projects. The installer stays within the Game `Plugins` directory and automatically checks the installed package. Failures include a log excerpt and the full log path.
+
 - Added `mw thinking show|set|clear` to inspect and atomically update project worker thinking defaults and role overrides while preserving unrelated configuration. See the [worker thinking guide](docs/worker-thinking.md).
 
 - Added project-local pi worker thinking levels through `.mw/dispatch.yml` (`thinking.default` and `thinking.roles`), passed to new worker spawns and dry runs without changing models or running workers. See the [worker thinking guide](docs/worker-thinking.md).

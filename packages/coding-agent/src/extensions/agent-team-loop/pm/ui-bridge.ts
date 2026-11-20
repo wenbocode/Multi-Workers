@@ -56,9 +56,11 @@ import {
 	buildMw,
 	decideMw,
 	doctorMw,
+	findMwPy,
 	getMwStatus,
 	initMw,
 	modelMw,
+	PYTHON_EXE,
 	partitionMw,
 	pmStateMw,
 	RAG_SUBCOMMANDS,
@@ -4603,7 +4605,7 @@ export async function runMwModelCommand(
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
 export const MW_COMMAND_DESCRIPTION =
-	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / thinking / decide / rag / stats / pm-state compact / run-detached / ack / trim [task] / replan [task]";
+	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / ue-continue-develop-frame install / model / thinking / decide / rag / stats / pm-state compact / run-detached / ack / trim [task] / replan [task]";
 
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
@@ -5523,6 +5525,30 @@ export function registerMwCommands(
 				return;
 			}
 
+			if (sub === "ue-continue-develop-frame") {
+				const args = splitCommandLine(trimmed.slice(sub.length).trim());
+				if (args[0] !== "install") {
+					ctx.ui.notify("用法：/mw ue-continue-develop-frame install [--module Plugins/<插件>]", "warning");
+					return;
+				}
+				const mwPy = findMwPy();
+				if (!mwPy) {
+					ctx.ui.notify("找不到 mw.py，请检查 MW 安装。", "error");
+					return;
+				}
+				const result = await pi.exec(
+					PYTHON_EXE,
+					["-X", "utf8", "-B", mwPy, sub, ...args, `--project=${projectDir}`],
+					{ cwd: projectDir },
+				);
+				const output = result.code === 0 ? result.stdout : `${result.stdout}${result.stderr}`;
+				ctx.ui.notify(
+					output.trim() || `UE 持续开发框架安装退出码：${result.code}`,
+					result.code === 0 ? "info" : "error",
+				);
+				return;
+			}
+
 			if (sub === "partition") {
 				// Partition-workspace config (mw.py partition set/show/clear/on/off) —
 				// thin wrapper, Python stays the single source of parsing and validation.
@@ -5621,7 +5647,7 @@ export function registerMwCommands(
 			}
 
 			ctx.ui.notify(
-				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | thinking show|set <default|role> <level>|clear <default|role|all> | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | pm-state compact --key <k> --summary <file> [--apply <sha256>] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
+				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | ue-continue-develop-frame install | model show|set|clear|set-fallback|clear-fallback | thinking show|set <default|role> <level>|clear <default|role|all> | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | pm-state compact --key <k> --summary <file> [--apply <sha256>] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
 				"warning",
 			);
 		},

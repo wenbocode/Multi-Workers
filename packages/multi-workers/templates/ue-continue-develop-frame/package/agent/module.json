@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "module": "{{MODULE}}",
+  "source_roots": [
+    "Source"
+  ],
+  "design_status": "draft",
+  "design_sections": [
+    "模块职责与环境",
+    "静态结构及依赖",
+    "数据模型与接口契约",
+    "主要 Flow",
+    "生命周期",
+    "持久化、失败与可观察结果",
+    "AST 辅助及设计验证",
+    "设计更新规则"
+  ],
+  "ue": {
+    "default_map": "/Engine/Maps/Entry",
+    "cases": {}
+  }
+}

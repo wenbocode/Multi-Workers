@@ -33,6 +33,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -14310,9 +14311,103 @@ def cmd_review_split(args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_install_cli(_args: argparse.Namespace) -> int:
+    if os.name != "nt":
+        print("[mw install-cli] Windows launcher only", file=sys.stderr)
+        return 2
+    directory = pathlib.Path(__file__).resolve().parents[2] / ".mw/bin"
+    launcher = directory / "mw.cmd"
+    content = (
+        '@echo off\r\n'
+        'setlocal DisableDelayedExpansion\r\n'
+        'python -B "%~dp0..\\..\\packages\\multi-workers\\mw.py" %*\r\n'
+        'exit /b %errorlevel%\r\n'
+    ).encode("ascii")
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            with launcher.open("xb") as stream:
+                stream.write(content)
+        except FileExistsError:
+            if launcher.read_bytes() != content:
+                raise ValueError(f"Refusing to overwrite existing launcher: {launcher}") from None
+    except (OSError, ValueError) as exc:
+        print(f"[mw install-cli] {exc}", file=sys.stderr)
+        return 1
+    print(f"[mw install-cli] {launcher}")
+    found = shutil.which("mw.cmd")
+    if not found or pathlib.Path(found).resolve() != launcher.resolve():
+        print(f"[mw install-cli] Put {directory} first on PATH, then open a new terminal.")
+    return 0
+
+
+def cmd_ue_continue_develop_frame_install(args: argparse.Namespace) -> int:
+    try:
+        project, _ = mw_common.resolve_control_root(args.project, require_control=False)
+        config = mw_common.load_target_config(project)
+        if config["mode"] != "dual":
+            raise ValueError(f"需要 dual 工作区；当前模式为 {config['mode']}")
+        game = pathlib.Path(mw_common.workspace_root(config)).resolve()
+        plugins = (game / "Plugins").resolve()
+        if not game.is_dir() or not plugins.is_relative_to(game) or plugins == game:
+            raise ValueError(f"无效的 Game/Plugins 目录：{plugins}")
+        module = pathlib.Path(args.module or "Plugins/ue-continue-develop-frame")
+        target = (game / module).resolve()
+        if module.anchor or not target.is_relative_to(plugins) or target == plugins:
+            raise ValueError("--module 必须是 Game/Plugins 下的相对路径")
+        if args.module is not None and not target.is_dir():
+            raise ValueError(f"插件目录不存在：{target}")
+        logs = project / ".mw" / "ue-continue-develop-frame"
+        logs.mkdir(parents=True, exist_ok=True)
+        log_path = pathlib.Path(tempfile.mkdtemp(prefix="install-", dir=logs)) / "run.log"
+    except (OSError, ValueError, mw_common.ControlRootError, mw_common.TargetConfigError) as exc:
+        print(f"[mw ue-continue-develop-frame] {exc}")
+        return 2
+
+    installer = _SCRIPT_DIR / "templates/ue-continue-develop-frame/install.py"
+    source = "src" if (target / "src").is_dir() and not (target / "Source").is_dir() else "Source"
+    install = [str(installer), "--target", str(target), "--name", args.name or target.name]
+    for source_root in args.source_root or [source]:
+        install.extend(("--source-root", source_root))
+    stages = [("安装", install), ("规范包检查", [str(target / "agent/gates/package_gate.py")])]
+    with log_path.open("wb") as log:
+        for stage, argv in stages:
+            log.write(f"\n=== {stage} ===\n".encode("utf-8"))
+            log.flush()
+            try:
+                result = subprocess.run([sys.executable, "-X", "utf8", "-B", *argv], stdout=log, stderr=log)
+            except OSError as exc:
+                log.write(f"{exc}\n".encode("utf-8"))
+                failed = True
+            else:
+                failed = result.returncode != 0
+            if failed:
+                break
+        else:
+            print(f"已安装到 {target}。完整规范包检查通过（目录复现、Ask 完整性、Python 测试）。")
+            return 0
+
+    with log_path.open("rb") as log:
+        log.seek(max(0, log_path.stat().st_size - 4000))
+        tail = log.read().decode("utf-8", errors="replace").strip()
+    print(f"{stage}失败：{target}\n完整日志：{log_path}\n{tail}")
+    return 1
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Multi-Workers service manager")
     sub = parser.add_subparsers(dest="subcommand", required=True)
+
+    sub.add_parser("install-cli", help="Register the Windows mw command in the checkout bin directory")
+    frame = sub.add_parser("ue-continue-develop-frame", help="Install the UE continuous development frame")
+    frame_sub = frame.add_subparsers(dest="frame_action", required=True)
+    install = frame_sub.add_parser("install", help="Install into a module or plugin root")
+    install.add_argument("--project", default=".", metavar="DIR",
+                         help="MW control workspace (defaults to the current directory)")
+    install.add_argument("--module", metavar="PATH", help="Existing plugin path relative to dual Game, e.g. Plugins/MyPlugin")
+    install.add_argument("--name", help="Module name (defaults to the target directory name)")
+    install.add_argument("--source-root", action="append", metavar="PATH",
+                         help="Module-relative source root (repeatable, defaults to Source or src)")
 
     pm_state_p = sub.add_parser("pm-state", help="Manage complete-SDD PM handoff state")
     pm_state_sub = pm_state_p.add_subparsers(required=True)
@@ -15336,5 +15431,7 @@ if __name__ == "__main__":
         "rag": cmd_rag,
         "run-detached": console_run.cmd_run_detached,
         "pm-state": pm_state.cmd_compact,
+        "ue-continue-develop-frame": cmd_ue_continue_develop_frame_install,
+        "install-cli": cmd_install_cli,
     }
     sys.exit(dispatch[args.subcommand](args))

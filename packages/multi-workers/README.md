@@ -78,6 +78,8 @@ python mw.py <子命令>
 | `stop` / `status` | 停止 / 查看服务 |
 | `doctor [--json] [--fix]` | 全链路诊断：服务、代理端口、日志、队列、凭据、bundle、target、pi shellPath |
 | `bootstrap` | 新机器一键安装（见上） |
+| `install-cli` | 在 Windows 的 MW checkout 下注册 `.mw/bin/mw.cmd`。一次添加该目录到 PATH 后可直接运行 `mw`。 |
+| `ue-continue-develop-frame install [--project DIR] [--module PATH]` | 将[UE 持续开发框架](templates/ue-continue-develop-frame/README.md)安装到 dual 项目的 Game/Plugins，并自动执行规范包检查。也可在 Pi 执行 `/mw ue-continue-develop-frame install`。 |
 | `init [--no-framework]` | 在 `--project` 目录安装[协作模板](templates/AGENTS.md)。已有 `AGENTS.md` 时保留原文，追加一次 MW 章节。`--no-framework` 仅跳过 AgenticTask 框架安装 |
 | `build [--install]` | esbuild 重建扩展 bundle（无 bash 依赖、cwd 无关）；`--install` 同时装到全局扩展目录并重建 pi dist |
 | `setup` | 一次性机器初始化：克隆框架 + 全局装扩展 + 自动填充 pi `shellPath`（Windows；幂等，不覆盖已配置值） |

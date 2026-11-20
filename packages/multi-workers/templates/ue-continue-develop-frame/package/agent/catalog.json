@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "terms": [
+    {
+      "term_id": "T-ASK",
+      "path": "agent/ask.py",
+      "symbol": "query",
+      "definition": "模块规范包的渐进式查询函数",
+      "unit": ""
+    }
+  ],
+  "testcases": [],
+  "gates": [
+    {
+      "gate_id": "G-ASK",
+      "term_id": "T-ASK",
+      "requirement": "UE 注册无漏登记且 testcase 影响面有 gate 覆盖；目录可复现；Ask 与 Python 协议测试通过",
+      "case_id": "",
+      "selection": "always",
+      "trigger": "模块开发基础回归",
+      "runner": "agent/gates/package_gate.py",
+      "args": "[]",
+      "artifacts": "stdout/stderr; exit code"
+    },
+    {
+      "gate_id": "G-DESIGN",
+      "term_id": "T-ASK",
+      "requirement": "设计、Flow、AST 与 v2 基线通过；变更有绑定当前输入及基线的工程记录，证据文件摘要有效",
+      "case_id": "",
+      "selection": "always",
+      "trigger": "模块开发基础回归",
+      "runner": "agent/gates/design_gate.py",
+      "args": "[]",
+      "artifacts": "stdout/stderr; exit code"
+    }
+  ]
+}
