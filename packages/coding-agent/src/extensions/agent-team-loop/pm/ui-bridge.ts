@@ -2,6 +2,7 @@ import { createHash as hashPmState } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { VERSION } from "../../../config.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
@@ -103,6 +104,7 @@ import {
 	ASK_DECISION_PARAMETERS,
 	type DecisionLifecycleEnvelope,
 	type LifecycleRunner,
+	probeDecisionCapabilities,
 	writeDecisionLifecycle,
 } from "./decision-tool.ts";
 import { formatDispatchAlarm, recordDispatchAlarm } from "./pm-orchestrator.ts";
@@ -4605,7 +4607,19 @@ export async function runMwModelCommand(
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
 export const MW_COMMAND_DESCRIPTION =
-	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / ue-continue-develop-frame install / model / thinking / decide / rag / stats / pm-state compact / run-detached / ack / trim [task] / replan [task]";
+	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / runtime / doctor / update / target / partition / ue-continue-develop-frame install / model / thinking / decide / rag / stats / pm-state compact / run-detached / ack / trim [task] / replan [task]";
+
+const loadedExtension = (() => {
+	try {
+		const file = fileURLToPath(import.meta.url);
+		return {
+			path: file,
+			sha256: hashPmState("sha256").update(fs.readFileSync(file)).digest("hex"),
+		};
+	} catch {
+		return null;
+	}
+})();
 
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
@@ -5382,6 +5396,13 @@ export function registerMwCommands(
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const trimmed = _args.trim();
 			const sub = trimmed.split(/\s+/)[0] ?? "status";
+
+			if (sub === "runtime") {
+				const python = findMwPy();
+				const capabilities = await probeDecisionCapabilities(python);
+				ctx.ui.notify(JSON.stringify({ pid: process.pid, loadedExtension, python, capabilities }, null, 2), "info");
+				return;
+			}
 
 			if (sub === "trim") {
 				if (!startTrim) ctx.ui.notify("当前窗口没有 MW PM 的 key 索引。", "warning");

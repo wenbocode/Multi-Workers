@@ -53,6 +53,65 @@ def test_nested_material_and_unquoted_line_citation(tmp_path: Path) -> None:
     assert result["evidence_sources"][0]["text"] == "observed result\n"
 
 
+def test_explicit_evidence_ignores_future_filename_and_adjacent_chinese_prose(tmp_path: Path) -> None:
+    (tmp_path / "proof.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    original = state({
+        "task_requirements": "本轮生成 `canonical59-refusals.json`。",
+        "worker_execution": "writer，无旧预算。证据.old.json、proof.py:2,3。",
+    }, "report")
+    with pytest.raises(sources.SourceMaterialError) as failed:
+        sources.prepare_source_state(original, tmp_path)
+    assert failed.value.diagnostics[0]["code"] == "evidence-file-unresolved"
+    assert "evidence_sources" not in sources.prepare_source_state(original, tmp_path, evidence_refs=[])
+    [source] = sources.prepare_source_state(original, tmp_path, evidence_refs=[{
+        "field": "material.report.worker_execution", "path": "proof.py",
+        "lines": {"start": 2, "end": 3},
+    }])["evidence_sources"]
+    assert source["text"].splitlines() == ["two", "three"]
+    assert source["references"] == ["material.report.worker_execution"]
+
+
+def test_explicit_bad_ranges_and_missing_files_are_reported_together(tmp_path: Path) -> None:
+    (tmp_path / "proof.md").write_text("line\n" * 21, encoding="utf-8")
+    refs = [
+        {"field": "material.pm_decision_background", "path": "proof.md", "lines": {"start": 8, "end": 24}},
+        {"field": "material.pm_decision_background", "path": "missing.md"},
+    ]
+    original = state("依据", "pm_decision_background")
+    with pytest.raises(sources.SourceMaterialError) as failed:
+        sources.prepare_source_state(original, tmp_path, evidence_refs=refs)
+    assert failed.value.diagnostics == [
+        {"field": "material.pm_decision_background", "code": "evidence-range-out-of-bounds",
+         "path": "proof.md", "requested_lines": {"start": 8, "end": 24}, "file_line_count": 21},
+        {"field": "material.pm_decision_background", "code": "evidence-file-unresolved", "path": "missing.md"},
+    ]
+    refs[0]["lines"] = {"start": 9, "end": 21}
+    [source] = sources.prepare_source_state(original, tmp_path, evidence_refs=refs[:1])["evidence_sources"]
+    assert source["line_range"] == [9, 21]
+
+
+def test_explicit_references_do_not_grant_read_scope(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    ref = {"field": "material.review_evidence", "path": str(outside)}
+    with pytest.raises(sources.SourceMaterialError, match="outside the configured read roots") as failed:
+        sources.prepare_source_state(state("evidence"), project, evidence_refs=[ref])
+    assert "path" not in failed.value.diagnostics[0]
+
+
+def test_explicit_binding_hints_are_bounded_and_omit_unsafe_labels() -> None:
+    material = {"a": ["observed"] * 70, "embedded\nlabel": "omit", "空格 label": "omit"}
+    with pytest.raises(sources.SourceMaterialError) as refused:
+        sources.explicit_references(material, {}, [{"field": "a", "path": "file.md"}])
+    assert refused.value.allowed_fields is not None
+    assert len(refused.value.allowed_fields) == 64
+    assert refused.value.allowed_fields_truncated
+    assert "material.a[0]" in refused.value.allowed_fields
+    assert all(field.startswith("material.a[") for field in refused.value.allowed_fields)
+
+
 @pytest.mark.parametrize("pattern", ["{private,secret}/**", "@(private|secret)/**", "!public/**"])
 def test_unsupported_target_firewall_pattern_refuses_before_source_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pattern: str,

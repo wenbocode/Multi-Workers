@@ -6,11 +6,39 @@ import datetime
 import json
 import os
 import pathlib
+import re
 import sys
 import uuid
 from collections.abc import Mapping
 
 import decision
+
+
+def recall_input_block(project: pathlib.Path, logical_id: str, dp: str,
+                       key: str, task_key: str | None) -> dict | None:
+    if not re.fullmatch(r"[0-9a-f-]{36}", logical_id):
+        return None
+    directory = project / ".agenticdoc" / "_autopilot" / "dp-blocked"
+    try:
+        event_id = (directory / "by-logical-id" / logical_id).read_text(encoding="utf-8")
+        if not re.fullmatch(r"[0-9a-f-]{36}", event_id):
+            return None
+        event = json.loads((directory / f"{event_id}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (
+        isinstance(event, dict)
+        and (event.get("logical_id"), event.get("dp"), event.get("key"), event.get("task_key"))
+        == (logical_id, dp, key, task_key)
+        and event.get("reason") in ("input-incomplete", "budget-exhausted")
+        and isinstance(event.get("input_diagnostics"), dict)
+        and event["input_diagnostics"].get("stage") == "evidence-preparation"
+        and event["input_diagnostics"].get("transport") == "not-sent"
+        and isinstance(event["input_diagnostics"].get("issues"), list)
+        and all(isinstance(issue, dict) for issue in event["input_diagnostics"]["issues"])
+    ):
+        return event
+    return None
 
 
 def record(
@@ -60,6 +88,8 @@ def record(
                 for issue in issues[:8] if isinstance(issue, Mapping)
             ] if isinstance(issues, list) else [],
         }
+        if isinstance(result.get("input_diagnostics"), Mapping):
+            event["input_diagnostics"] = result["input_diagnostics"]
         directory.mkdir(parents=True, exist_ok=True)
         with temporary.open("x", encoding="utf-8", newline="\n") as stream:
             json.dump(event, stream, ensure_ascii=True)
@@ -74,4 +104,15 @@ def record(
             pass
         print(f"[mw decide] could not record DP block ({type(exc).__name__})", file=sys.stderr)
         return None
+    logical_id = event["logical_id"]
+    if (source == "mw-decide-run" and stage == "request" and "input_diagnostics" in event
+            and isinstance(logical_id, str) and re.fullmatch(r"[0-9a-f-]{36}", logical_id)):
+        index = directory / "by-logical-id"
+        try:
+            index.mkdir(exist_ok=True)
+            with (index / logical_id).open("x", encoding="utf-8") as stream:
+                stream.write(event_id)
+        except OSError:
+            # The public receipt remains valid even if the replay lookup cannot be saved.
+            pass
     return event_id

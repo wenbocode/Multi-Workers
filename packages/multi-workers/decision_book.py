@@ -59,6 +59,7 @@ BOOK_TOP_LEVEL_KEYS: tuple[str, ...] = (
     "meta",
     "context",
     "notes",
+    "evidence_refs",
 )
 
 #: 旧合同的顶层键：出现即拒绝（历史只读，不恢复旧调用）。
@@ -1131,9 +1132,18 @@ def _check_evidence(
     evidence = notes.get("evidence") if isinstance(notes.get("evidence"), Mapping) else {}
     root = resolve_repo_root(project_dir, repo_root)
     issues: list[Issue] = []
+    explicit_fields: set[str] = set()
+    if "evidence_refs" in book:
+        try:
+            refs = decision_material_sources.explicit_references(
+                book.get("material"), book.get("preparation"), book["evidence_refs"]
+            )
+        except decision_material_sources.SourceMaterialError as exc:
+            return [Issue("book-evidence", field, detail) for field, detail in exc.issues]
+        explicit_fields = {ref.field.removeprefix("material.") for ref in refs if ref.field.startswith("material.")}
     required = required_state_paths(dp_id)
     for path in required:
-        if path not in evidence:
+        if path not in evidence and path not in explicit_fields:
             issues.append(
                 Issue(
                     "book-evidence",
@@ -1162,6 +1172,9 @@ def _check_evidence(
                     "evidence is still the scaffold placeholder; provide path:line or a command",
                 )
             )
+            continue
+        if "evidence_refs" in book and not reference.startswith("cmd:"):
+            issues.append(Issue("book-evidence", entry_path, "move file evidence to evidence_refs"))
             continue
         problem = _evidence_problem(reference, root, redactor=redactor)
         if problem is not None:
@@ -1267,6 +1280,7 @@ def _check_budget(
             dp_id, projected, dict(preparation or {}), decision_points.questions_map(dp_id),
             project_dir=project_dir, limits=resolved,
             source_references=(book.get("notes") or {}).get("evidence"),
+            evidence_refs=book.get("evidence_refs"),
         )
     except decision_material_sources.SourceMaterialError as exc:
         return [
@@ -1369,7 +1383,7 @@ def _check_secrets(
     """
     issues: list[Issue] = []
     seen: set[str] = set()
-    for layer in ("material", "preparation", "context", "meta", "notes"):
+    for layer in ("material", "preparation", "context", "meta", "notes", "evidence_refs"):
         if layer not in book:
             continue
         for path, text in _iter_secret_texts(book[layer], layer, redactor):
@@ -1440,6 +1454,7 @@ def book_meta(book: Mapping[str, Any], path: pathlib.Path | str, *, root: pathli
         "file_sha256": book_sha256(source),
         "evidence": dict(evidence),
         "decision_point": book.get("decision_point"),
+        **({"evidence_refs": book["evidence_refs"]} if "evidence_refs" in book else {}),
     }
 
 

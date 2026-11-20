@@ -28,6 +28,11 @@ import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
 import { readTaskType } from "../shared/task-frontmatter.ts";
 import {
+	type DecisionInputDiagnostics,
+	formatInputDiagnostics,
+	readInputDiagnostics,
+} from "./decision-input-diagnostics.ts";
+import {
 	AGENT_TASK_STATE_SCHEMA,
 	copyTaskState,
 	isTaskStateSnapshot,
@@ -226,6 +231,8 @@ export interface AskDecisionUnavailable {
 	/** State fields the registry requires and this call site could not supply
 	 * (names only, L0). Only present on a zero-spawn `input-incomplete` refusal. */
 	missing_fields?: string[];
+	input_diagnostics?: DecisionInputDiagnostics;
+	original_blocked_event_id?: string;
 }
 
 export type AskDecisionPayload = AskDecisionAvailable | AskDecisionUnavailable;
@@ -374,6 +381,13 @@ export interface DecisionToolEnvelope {
 	context?: Record<string, unknown>;
 	material: Record<string, unknown>;
 	meta: DecisionToolMeta;
+	evidence_refs?: DecisionEvidenceRef[];
+}
+
+interface DecisionEvidenceRef {
+	field: string;
+	path: string;
+	lines?: { start: number; end: number };
 }
 
 /** True when `dp` is one the PM alone may prepare (checkpoint / sign-off). */
@@ -619,6 +633,7 @@ export interface SignRequest {
 	key: string;
 	input: string;
 	timeoutMs: number;
+	explicitEvidence?: boolean;
 }
 
 /** Injectable sign runner (tests stub this; production spawns the CLI). */
@@ -637,6 +652,9 @@ export function buildSignArgv(mwPy: string, key: string, projectDir: string): st
 export const runSignMw: SignRunner = async (request) => {
 	const mwPy = findMwPy();
 	if (!mwPy) return { status: null, stdout: "", stderr: "", error: "mw.py not found", timedOut: false };
+	if (request.explicitEvidence && !(await probeDecisionCapabilities(mwPy)).explicitEvidence) {
+		return unsupportedEvidenceReply();
+	}
 	return spawnWithTimeout([PYTHON_EXE, ...buildSignArgv(mwPy, request.key, request.projectDir)], {
 		timeoutMs: request.timeoutMs,
 		stdin: request.input,
@@ -803,6 +821,7 @@ export interface DecideRunRequest {
 	 * under `mw decide run <dp> --stdin` (design §4.1). The legacy 21 dps keep
 	 * the pre-existing `--request-file` + `{state}` path byte-identical. */
 	viaStdin?: boolean;
+	explicitEvidence?: boolean;
 }
 
 /** Injectable runner (tests replace this; production uses {@link runDecideMw}). */
@@ -839,6 +858,9 @@ export const runDecideMw: DecideRunner = async (request, signal) => {
 		return { status: 2, stdout: "", stderr: refused ?? "preparation required", timedOut: false };
 	const mwPy = findMwPy();
 	if (!mwPy) return { status: null, stdout: "", stderr: "", error: "mw.py not found", timedOut: false };
+	if (request.explicitEvidence && !(await probeDecisionCapabilities(mwPy, signal)).explicitEvidence) {
+		return unsupportedEvidenceReply();
+	}
 	if (request.viaStdin === true) {
 		return spawnWithTimeout([PYTHON_EXE, ...buildDecideArgv(mwPy, request)], {
 			timeoutMs: request.timeoutMs,
@@ -945,6 +967,7 @@ export interface AskDecisionInput {
 	parentDecisionRef?: string;
 	preparation?: DecisionPreparation;
 	context?: Record<string, unknown>;
+	evidenceRefs?: DecisionEvidenceRef[];
 	/** Points at the previous `logical_id` when this call retries another one. */
 	retryOf?: string | null;
 	taskBefore?: TaskStateSnapshot;
@@ -958,15 +981,49 @@ export interface AskDecisionInput {
 	signal?: AbortSignal;
 }
 
-function jsonText(payload: AskDecisionPayload | { gate_route: ReturnType<typeof resolvePmGateRoute> }): string {
+function jsonText(payload: unknown): string {
 	return JSON.stringify(payload);
+}
+
+export async function probeDecisionCapabilities(mwPy: string | null, signal?: AbortSignal) {
+	if (!mwPy) return { explicitEvidence: false, inputDiagnostics: false };
+	const raw = await spawnWithTimeout([PYTHON_EXE, "-X", "utf8", mwPy, "decide", "capabilities"], {
+		timeoutMs: 5000,
+		signal,
+	});
+	const reply = raw.status === 0 ? parseDecisionJson(raw.stdout) : undefined;
+	return { explicitEvidence: reply?.evidence_refs === 1, inputDiagnostics: reply?.input_diagnostics === 1 };
+}
+
+function unsupportedEvidenceReply(): RawDecideResult {
+	return {
+		status: 2,
+		stderr: "",
+		timedOut: false,
+		stdout: jsonText({
+			available: false,
+			reason: "input-incomplete",
+			problems: ["input-incomplete: explicit evidence protocol unsupported"],
+			input_diagnostics: {
+				stage: "evidence-preparation",
+				transport: "not-sent",
+				truncated: false,
+				issues: [{ field: "evidence_refs", code: "evidence-protocol-unsupported" }],
+			},
+		}),
+	};
 }
 
 function unavailable(
 	reason: string,
 	dp: string,
 	spawned: boolean,
-	extra: { escalated_reason?: string; missing_fields?: string[] } = {},
+	extra: {
+		escalated_reason?: string;
+		missing_fields?: string[];
+		input_diagnostics?: DecisionInputDiagnostics;
+		original_blocked_event_id?: string;
+	} = {},
 ): AskDecisionOutcome {
 	const payload: AskDecisionUnavailable = {
 		available: false,
@@ -977,7 +1034,15 @@ function unavailable(
 	if (extra.missing_fields !== undefined && extra.missing_fields.length > 0) {
 		payload.missing_fields = extra.missing_fields;
 	}
-	return { payload, text: `${jsonText(payload)}\n${unavailableDirective(reason, dp)}`, spawned };
+	if (extra.input_diagnostics) payload.input_diagnostics = extra.input_diagnostics;
+	if (extra.original_blocked_event_id) payload.original_blocked_event_id = extra.original_blocked_event_id;
+	return {
+		payload,
+		text:
+			`${jsonText(payload)}\n${unavailableDirective(reason, dp)}` +
+			(extra.input_diagnostics ? `\n${formatInputDiagnostics(extra.input_diagnostics)}` : ""),
+		spawned,
+	};
 }
 
 /**
@@ -1030,9 +1095,13 @@ export async function runAskDecision(input: AskDecisionInput): Promise<AskDecisi
 		input.parentDecisionRef,
 	);
 	if (!prepared.ok) return unavailable(prepared.reason, dp, false, { missing_fields: prepared.missing });
+	const envelope: DecisionToolEnvelope =
+		input.evidenceRefs === undefined
+			? prepared.envelope
+			: { ...prepared.envelope, evidence_refs: input.evidenceRefs };
 	return dp === SIGN_KEY_ID
-		? runSignoffAskDecision(input, dp, prepared.envelope, started)
-		: runMaterialAskDecision(input, dp, prepared.envelope, started);
+		? runSignoffAskDecision(input, dp, envelope, started)
+		: runMaterialAskDecision(input, dp, envelope, started);
 }
 
 /** Diagnostic for a locally refused call (no child ran). */
@@ -1076,7 +1145,15 @@ async function callDecideChild(
 		return {
 			ok: false,
 			outcome: {
-				...unavailable(reason, dp, true, { escalated_reason: escalated }),
+				...unavailable(reason, dp, true, {
+					escalated_reason: escalated,
+					input_diagnostics: readInputDiagnostics(response.input_diagnostics),
+					original_blocked_event_id:
+						typeof response.original_blocked_event_id === "string" &&
+						/^[0-9a-f-]{36}$/.test(response.original_blocked_event_id)
+							? response.original_blocked_event_id
+							: undefined,
+				}),
 				blockedEventId: response.blocked_event_id,
 			},
 		};
@@ -1106,6 +1183,7 @@ async function runMaterialAskDecision(
 		input: JSON.stringify(envelope),
 		timeoutMs: input.timeoutMs ?? ASK_DECISION_TIMEOUT_MS,
 		viaStdin: true,
+		...(envelope.evidence_refs === undefined ? {} : { explicitEvidence: true }),
 	};
 	const called = await callDecideChild(dp, request, input.runner ?? runDecideMw, input.signal);
 	if (!called.ok) return called.outcome;
@@ -1196,6 +1274,7 @@ async function runSignoffAskDecision(
 			key: meta.key,
 			input: JSON.stringify(envelope),
 			timeoutMs: input.timeoutMs ?? ASK_DECISION_TIMEOUT_MS,
+			...(envelope.evidence_refs === undefined ? {} : { explicitEvidence: true }),
 		});
 	} catch {
 		return unavailable("upstream-error", dp, true);
@@ -1225,7 +1304,10 @@ async function runSignoffAskDecision(
 		const refusedOversize = problems.some((item) => item.includes(ASK_DECISION_REASON_INPUT_OVERSIZE));
 		const refusedIncomplete = problems.some((item) => item.includes(ASK_DECISION_REASON_INPUT_INCOMPLETE));
 		const signoffRefusal = (reason: string, escalated_reason?: string): AskDecisionOutcome => ({
-			...unavailable(reason, dp, true, { escalated_reason }),
+			...unavailable(reason, dp, true, {
+				escalated_reason,
+				input_diagnostics: readInputDiagnostics(receipt.input_diagnostics),
+			}),
 			blockedEventId: receipt.blocked_event_id,
 		});
 		if (refusedOversize) {
@@ -1540,6 +1622,31 @@ export const ASK_DECISION_PARAMETERS = Type.Object(
 		),
 		material: MATERIAL_SCHEMA,
 		preparation: PREPARATION_SCHEMA,
+		evidence_refs: Type.Optional(
+			Type.Array(
+				Type.Object(
+					{
+						field: Type.String({ minLength: 1, maxLength: 160 }),
+						path: Type.String({ minLength: 1, maxLength: 1024 }),
+						lines: Type.Optional(
+							Type.Object(
+								{
+									start: Type.Integer({ minimum: 1, maximum: 2147483647 }),
+									end: Type.Integer({ minimum: 1, maximum: 2147483647 }),
+								},
+								{ additionalProperties: false },
+							),
+						),
+					},
+					{ additionalProperties: false },
+				),
+				{
+					maxItems: 64,
+					description:
+						"Explicit existing evidence files and optional inclusive line ranges. Use [] for inline material only.",
+				},
+			),
+		),
 		context: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 		key: Type.Optional(
 			Type.String({
@@ -1678,6 +1785,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				reason: payload.unavailable,
 				escalated_reason: identifier(payload.escalated_reason),
 				issues,
+				...(payload.input_diagnostics ? { input_diagnostics: payload.input_diagnostics } : {}),
 			};
 			try {
 				fs.mkdirSync(directory, { recursive: true });
@@ -1722,6 +1830,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			"available=false means blocked, never guess.",
 		promptGuidelines: [
 			PM_GATE_ROUTING_RULE,
+			"Include evidence_refs in new decisions. Use [] for inline evidence, or list existing files with field, path and optional inclusive lines. Leave planned outputs in the task text. Use input_diagnostics to correct local preparation failures.",
 			"Call ask_decision ONLY with a dp id from the enum and the trigger_id from your task context " +
 				"(<task_key> or <task_key>#ckpt<N>); never invent a dp id, trigger or question id.",
 			'available=false is a terminal answer for this attempt: report "blocked on decision <dp>" and wait ' +
@@ -1791,6 +1900,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				note: params.note,
 				material: params.material,
 				preparation: params.preparation,
+				evidenceRefs: params.evidence_refs,
 				context: params.context,
 				key: requestedKey,
 				taskKey: requestedTask,

@@ -794,6 +794,187 @@ def test_same_logical_id_replays_without_a_second_send(
     assert len(_lifecycle_events(tmp_path)) == before
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        ("task_requirements", "本轮生成 `canonical59-refusals.json`。", "evidence-file-unresolved"),
+        ("pm_decision_background", "依据 `review.md:8-24`。", "evidence-range-out-of-bounds"),
+        ("worker_execution", "writer，证据.old.json、review.md:4,9。", "evidence-file-unresolved"),
+    ],
+)
+def test_source_refusal_returns_concrete_diagnostics_and_replays(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, field: str, value: str, code: str,
+) -> None:
+    (tmp_path / "review.md").write_text("observed\n" * 21, encoding="utf-8")
+    dp = "dp-pm-steer"
+    material = _material(dp)
+    material[field] = value
+    envelope = _envelope(dp, "17c2c45f-84c9-4a6e-9ca1-3ea5087afd95", material=material)
+
+    def never_transport(*args, **kwargs):
+        pytest.fail("invalid evidence reached the decision transport")
+
+    monkeypatch.setattr(mw.decision.DecisionClient, "decide", never_transport)
+    opts = {"stdin": json.dumps(envelope), "stdin_flag": True, "dp": dp,
+            "dp_id": None, "request_file": None, "book": None}
+    rc, first, _ = _invoke("run", tmp_path, monkeypatch, **opts)
+    assert rc == 0, first
+    result = _payload(first)
+    assert not result["available"]
+    diagnostics = result["input_diagnostics"]
+    assert diagnostics["transport"] == "not-sent"
+    assert diagnostics["issues"][0]["field"] == f"material.{field}"
+    assert diagnostics["issues"][0]["code"] == code
+    receipt = tmp_path / ".agenticdoc/_autopilot/dp-blocked" / f'{result["blocked_event_id"]}.json'
+    assert json.loads(receipt.read_text(encoding="utf-8"))["input_diagnostics"] == diagnostics
+    rc, second, _ = _invoke("run", tmp_path, monkeypatch, **opts)
+    assert rc == 0
+    replay = _payload(second)
+    assert not replay["available"] and replay["replayed"]
+    assert replay["original_blocked_event_id"] == result["blocked_event_id"]
+    assert replay["input_diagnostics"] == diagnostics
+
+
+def test_explicit_refs_project_only_declared_file_to_transport(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "review.md").write_text("first\nsecond\nthird\n", encoding="utf-8")
+    dp = "dp-pm-steer"
+    material = _material(dp)
+    material["task_requirements"] = "本轮生成 `canonical59-refusals.json`。"
+    material["worker_execution"] = "writer，证据.old.json、review.md:4,9。"
+    calls = []
+
+    def capture(self, state, questions, dp=None):
+        calls.append(state)
+        return {"available": False, "reason": "timeout", "attempts": 1}
+
+    monkeypatch.setattr(mw.decision.DecisionClient, "decide", capture)
+    envelope = _envelope(dp, "explicit-source-case", material=material, evidence_refs=[{
+        "field": "material.worker_execution", "path": "review.md",
+        "lines": {"start": 2, "end": 3},
+    }])
+    rc, out, _ = _invoke(
+        "run", tmp_path, monkeypatch, stdin=json.dumps(envelope),
+        stdin_flag=True, dp=dp, dp_id=None, request_file=None, book=None,
+    )
+    assert rc == 0, out
+    [model_state] = calls
+    assert "evidence_refs" not in model_state
+    [source] = model_state["evidence_sources"]
+    assert source["text"].splitlines() == ["second", "third"]
+    assert source["references"] == ["material.worker_execution"]
+    envelope["evidence_refs"][0]["lines"] = {"start": 1, "end": 1}
+    rc, replay, _ = _invoke(
+        "run", tmp_path, monkeypatch, stdin=json.dumps(envelope),
+        stdin_flag=True, dp=dp, dp_id=None, request_file=None, book=None,
+    )
+    assert rc == 2
+    assert _payload(replay)["issues"][0]["field"] == "evidence_refs"
+    assert len(calls) == 1
+
+
+def test_renderperformance_qg_evidence_binding_hints_and_replay(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dp = "dp-QG"
+    material = {
+        "review_requirements": "Frame capture requirements and test boundaries",
+        "review_evidence": ["Independent review", "PM readback", "Source anchor 469", "648", "935", "996"],
+        "review_findings": "Four source findings require fixes and independent review",
+        "uncovered_scope": "Editor build, PIE and runtime screenshots",
+    }
+    refs = [
+        {"field": "review_findings", "path": "t002-pm-readback-2026-11-21.md"},
+        {"field": "review_evidence", "path": "review-t002-source.md"},
+        {"field": "review_requirements", "path": "design.md"},
+    ]
+    for ref in refs:
+        (tmp_path / ref["path"]).write_text("Fixture evidence\n", encoding="utf-8")
+    preparation = {
+        "prepared_at": "2026-11-20T17:14:00Z",
+        "basis_catalog": [{
+            "id": "frame-source-f001-f004", "text": "Four findings from the source review",
+            "applies_to": ["fix"],
+            "material_refs": ["review_findings", "review_evidence", "review_requirements"],
+        }],
+    }
+    _write_decide_config(tmp_path, enabled=True)
+    (tmp_path / ".mw/decide-points.json").write_text(
+        json.dumps({"version": 1, "points": {dp: {"enabled": True}}}), encoding="utf-8",
+    )
+    calls = []
+
+    def capture(self, state, questions, dp=None):
+        calls.append(state)
+        return {"available": False, "reason": "timeout", "attempts": 1}
+
+    monkeypatch.setattr(mw.decision.DecisionClient, "decide", capture)
+    envelope = _envelope(
+        dp, "bac38a17-a0f8-4969-b029-0ae10499b628",
+        material=material, preparation=preparation, evidence_refs=refs,
+    )
+
+    def invoke():
+        rc, out, err = _invoke(
+            "run", tmp_path, monkeypatch, stdin=json.dumps(envelope), stdin_flag=True,
+            dp=dp, dp_id=None, request_file=None, book=None,
+        )
+        assert rc == 0, err or out
+        return _payload(out)
+
+    result = invoke()
+    diagnostic = result["input_diagnostics"]
+    assert diagnostic["transport"] == "not-sent"
+    assert [issue["field"] for issue in diagnostic["issues"]] == [f"evidence_refs[{i}].field" for i in range(3)]
+    assert diagnostic["allowed_fields"] == [
+        *[f"material.review_evidence[{i}]" for i in range(6)],
+        "material.review_findings", "material.review_requirements", "material.uncovered_scope",
+        "preparation.basis_catalog[0].text",
+    ]
+    assert diagnostic["allowed_fields_truncated"] is False
+    replay = invoke()
+    assert replay["original_blocked_event_id"] == result["blocked_event_id"]
+    assert replay["input_diagnostics"] == diagnostic
+    assert calls == []
+
+    fixed = ["material.review_findings", "material.review_evidence[0]", "material.review_requirements"]
+    for ref, field in zip(refs, fixed, strict=True):
+        ref["field"] = field
+    envelope["meta"]["logical_id"] = "c9d0f598-d458-43b8-853c-03fa36d93671"
+    invoke()
+    [sent] = calls
+    assert [source["references"] for source in sent["evidence_sources"]] == [[field] for field in fixed]
+
+
+def test_explicit_book_uses_the_same_source_builder(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    dp = "dp-route"
+    material = _material(dp)
+    refs = [
+        {"field": f"material.{field}", "path": "evidence.txt", "lines": {"start": 1, "end": 1}}
+        for field in dpts.REQUIRED_STATE_FIELDS[dp]
+    ]
+    book = _book_file(
+        tmp_path, dp, material=material, meta=_valid_book_meta(dp, "book-explicit-example"),
+        notes={}, evidence_refs=refs,
+    )
+    calls = []
+
+    def capture(self, state, questions, dp=None):
+        calls.append(state)
+        return {"available": False, "reason": "timeout", "attempts": 1}
+
+    monkeypatch.setattr(mw.decision.DecisionClient, "decide", capture)
+    rc, out, err = _invoke(
+        "run", tmp_path, monkeypatch, dp=dp, dp_id=None, request_file=None, book=str(book),
+    )
+    assert rc == 0, err or out
+    [model_state] = calls
+    [source] = model_state["evidence_sources"]
+    assert source["text"].splitlines() == ["line one"]
+    assert source["references"] == [ref["field"] for ref in refs]
+
+
 def test_valid_parent_reference_is_recorded_only_after_ledger_proof(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, fake: FakeCalls
 ) -> None:

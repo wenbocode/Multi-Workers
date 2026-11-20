@@ -27,6 +27,24 @@ import mw_common
 MAX_SOURCE_BYTES = 8 * 1024 * 1024
 MAX_TOTAL_SOURCE_BYTES = 32 * 1024 * 1024
 MAX_SOURCE_REFERENCES = 64
+MAX_DIAGNOSTIC_ISSUES = 8
+MAX_DIAGNOSTIC_FIELDS = 64
+
+_SAFE_DIAGNOSTIC_PATH = re.compile(r"[A-Za-z0-9_./-]{1,240}\Z")
+_SAFE_BINDING_HINT = re.compile(
+    r"(?:material(?:\.[A-Za-z_][A-Za-z0-9_-]*(?:\[[0-9]{1,6}\])*)+"
+    r"|preparation\.basis_catalog\[[0-9]{1,6}\]\.text)\Z"
+)
+_SOURCE_ERROR_CODES = {
+    "referenced file is outside the configured read roots": "evidence-read-denied",
+    "referenced file is excluded by the read-scope deny globs": "evidence-read-denied",
+    "referenced path is not a regular file": "evidence-file-unreadable",
+    "referenced file is unreadable or is not UTF-8 text": "evidence-file-unreadable",
+    "referenced file contains binary/control data": "evidence-file-unreadable",
+    "referenced file is empty": "evidence-file-unreadable",
+    "referenced file exceeds the read limit": "evidence-budget-exceeded",
+    "total cited files exceed the read limit; narrow the citations": "evidence-budget-exceeded",
+}
 
 _REFERENCE = re.compile(
     r"(?P<path>[^\r\n<>|\x00]+?\.[A-Za-z][A-Za-z0-9_.-]*)"
@@ -61,9 +79,21 @@ class SourceMaterialError(ValueError):
     """Field-addressable preparation refusal; messages never contain file text."""
 
     def __init__(self, issues: tuple[tuple[str, str], ...],
-                 file_evidence: list[dict[str, object]] | None = None) -> None:
+                 file_evidence: list[dict[str, object]] | None = None,
+                 diagnostics: list[dict[str, object]] | None = None,
+                 truncated: bool = False,
+                 allowed_fields: list[str] | None = None) -> None:
         self.issues = issues
         self.file_evidence = file_evidence or []
+        self.diagnostics = diagnostics or [
+            {"field": field, "code": (
+                "evidence-budget-exceeded" if detail.startswith("compression-required:")
+                else _SOURCE_ERROR_CODES.get(detail, "evidence-preparation-failed")
+            )} for field, detail in issues
+        ][:MAX_DIAGNOSTIC_ISSUES]
+        self.truncated = truncated or len(issues) > MAX_DIAGNOSTIC_ISSUES
+        self.allowed_fields = None if allowed_fields is None else allowed_fields[:MAX_DIAGNOSTIC_FIELDS]
+        self.allowed_fields_truncated = allowed_fields is not None and len(allowed_fields) > MAX_DIAGNOSTIC_FIELDS
         super().__init__("; ".join(f"{field}: {issue}" for field, issue in issues))
 
 
@@ -88,6 +118,83 @@ class _Snapshot:
     raw: bytes
     lines: list[str]
     sha256: str
+
+
+def explicit_references(material: object, preparation: object, refs: object) -> list[_Reference]:
+    fields = {field for field, _ in _string_leaves(material)}
+    if isinstance(preparation, Mapping) and isinstance(preparation.get("basis_catalog"), list):
+        fields.update(
+            f"preparation.basis_catalog[{index}].text"
+            for index, entry in enumerate(preparation["basis_catalog"])
+            if isinstance(entry, Mapping) and isinstance(entry.get("text"), str)
+        )
+    if not isinstance(refs, list) or len(refs) > MAX_SOURCE_REFERENCES:
+        raise SourceMaterialError((("evidence_refs", "expected at most 64 file references"),),
+                                  diagnostics=[{"field": "evidence_refs", "code": "invalid-evidence-reference"}])
+    found = []
+    issues = []
+    for index, entry in enumerate(refs):
+        label = f"evidence_refs[{index}]"
+        if not isinstance(entry, dict) or not {"field", "path"} <= entry.keys() <= {"field", "path", "lines"}:
+            issues.append((label, "expected field, path and optional lines"))
+            continue
+        field, name = entry["field"], entry["path"]
+        if not isinstance(field, str) or field not in fields:
+            issues.append((label + ".field", "expected an existing material or prepared basis text field"))
+        elif (not isinstance(name, str) or not 1 <= len(name) <= 1024 or name != name.strip()
+              or any(ord(char) < 32 for char in name)
+              or ":" in name.removeprefix(name[:2] if re.match(r"^[A-Za-z]:[\\/]", name) else "")):
+            issues.append((label + ".path", "expected a literal file path"))
+        elif "lines" not in entry:
+            found.append(_Reference(field, name, None, None))
+        else:
+            lines = entry["lines"]
+            if (not isinstance(lines, dict) or lines.keys() != {"start", "end"}
+                    or any(type(value) is not int or not 1 <= value <= 2**31 - 1 for value in lines.values())
+                    or lines["end"] < lines["start"]):
+                issues.append((label + ".lines", "expected a positive, ordered line range"))
+            else:
+                found.append(_Reference(field, name, lines["start"], lines["end"]))
+    if issues:
+        allowed_fields = None
+        if any(field.endswith(".field") for field, _ in issues[:MAX_DIAGNOSTIC_ISSUES]):
+            allowed_fields = sorted(
+                field for field in fields if len(field) <= 160 and _SAFE_BINDING_HINT.fullmatch(field)
+            )
+        raise SourceMaterialError(tuple(issues[:MAX_DIAGNOSTIC_ISSUES]), diagnostics=[
+            {"field": field, "code": "invalid-evidence-reference"}
+            for field, _ in issues[:MAX_DIAGNOSTIC_ISSUES]
+        ], truncated=len(issues) > MAX_DIAGNOSTIC_ISSUES, allowed_fields=allowed_fields)
+    return found
+
+
+def evidence_binding(project: pathlib.Path, dp: str, logical_id: str, refs: list[dict] | None,
+                     *, record: bool = False) -> bool:
+    """Keep the local selectors bound to the original explicit request identity."""
+    identity = hashlib.sha256(json.dumps([dp, logical_id]).encode()).hexdigest()
+    directory = project / ".agenticdoc" / "_autopilot" / "decision-evidence-bindings"
+    binding = directory / identity
+    try:
+        if refs is None:
+            return not binding.exists()
+        digest = hashlib.sha256(json.dumps(refs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if record:
+            directory.mkdir(parents=True, exist_ok=True)
+            with binding.open("x", encoding="ascii") as handle:
+                handle.write(digest)
+                handle.flush()
+                os.fsync(handle.fileno())
+            return True
+        return binding.read_text(encoding="ascii") == digest
+    except (OSError, ValueError, RecursionError):
+        return False
+
+
+def _display_path(path: pathlib.Path, project_root: pathlib.Path) -> str | None:
+    if not _within(path, project_root):
+        return None
+    name = path.relative_to(project_root).as_posix()
+    return name if _SAFE_DIAGNOSTIC_PATH.fullmatch(name) and ".." not in name.split("/") else None
 
 
 def _string_leaves(value: object, field: str = "material") -> list[tuple[str, str]]:
@@ -242,7 +349,11 @@ def _read_source(reference: _Reference, project_root: pathlib.Path,
             dependencies[_path_key(lexical)] = {
                 "path": str(lexical), "canonical_path": None, "sha256": None, "status": "missing",
             }
-        raise SourceMaterialError(((reference.field, "referenced file is missing or cannot be resolved"),)) from exc
+        diagnostic = {"field": reference.field, "code": "evidence-file-unresolved"}
+        if safe and (name := _display_path(lexical, project_root)) is not None:
+            diagnostic["path"] = name
+        raise SourceMaterialError(((reference.field, "referenced file is missing or cannot be resolved"),),
+                                  diagnostics=[diagnostic]) from exc
     # An exact grant must match both identities. A symlink at the granted
     # filename, or another alias pointing to it, grants no extra authority.
     exact_file = any(_path_key(lexical) == _path_key(resolved) == _path_key(file) for file in read_files)
@@ -305,7 +416,15 @@ def _read_source(reference: _Reference, project_root: pathlib.Path,
     start = reference.start if reference.start is not None else 1
     end = reference.end if reference.end is not None else len(lines)
     if start < 1 or end < start or end > len(lines):
-        raise SourceMaterialError(((reference.field, "referenced line range is outside the file or reversed"),))
+        diagnostic = {
+            "field": reference.field, "code": "evidence-range-out-of-bounds",
+            "requested_lines": {"start": start, "end": end},
+            "file_line_count": len(lines),
+        }
+        if (name := _display_path(resolved, project_root)) is not None:
+            diagnostic["path"] = name
+        raise SourceMaterialError(((reference.field, "referenced line range is outside the file or reversed"),),
+                                  diagnostics=[diagnostic])
     selected = lines[start - 1:end]
     identity = json.dumps([_path_key(resolved), sha, start, end], ensure_ascii=False)
     source: dict[str, object] = {
@@ -370,6 +489,7 @@ def prepare_source_state(
     max_state_plus_question_tokens: int = 32768,
     questions: Mapping | None = None,
     source_references: Mapping | None = None,
+    evidence_refs: list[dict] | None = None,
 ) -> dict:
     """Hydrate precise file citations, deduplicate, and fit explicit excerpts.
 
@@ -381,7 +501,11 @@ def prepare_source_state(
     """
     prepared = PreparedSourceState(state)
     prepared.pop("evidence_sources", None)
-    references = _references(prepared.get("material"), source_references, prepared.get("preparation"))
+    references = (
+        _references(prepared.get("material"), source_references, prepared.get("preparation"))
+        if evidence_refs is None
+        else explicit_references(prepared.get("material"), prepared.get("preparation"), evidence_refs)
+    )
     if not references:
         return prepared
     if project_root is None:
@@ -430,12 +554,22 @@ def prepare_source_state(
     source_lines: list[list[str]] = []
     seen: dict[str, int] = {}
     snapshots: dict[str, _Snapshot] = {}
+    failures = []
+    diagnostics = []
+    truncated = False
     for reference in references:
         try:
             source, lines = _read_source(reference, root, roots, deny, snapshots, dependencies, worker_scope, read_files)
         except SourceMaterialError as exc:
-            exc.file_evidence = copy.deepcopy(list(dependencies.values()))
-            raise
+            if not failures or len(failures) < MAX_DIAGNOSTIC_ISSUES:
+                failures.extend(exc.issues)
+                diagnostics.extend(exc.diagnostics)
+            else:
+                truncated = True
+                break
+            if any(field == "evidence_sources" for field, _ in exc.issues):
+                break
+            continue
         source_id = str(source["source_id"])
         if source_id in seen:
             existing = sources[seen[source_id]]["references"]
@@ -446,6 +580,8 @@ def prepare_source_state(
         sources.append(source)
         source_lines.append(lines)
     prepared.file_evidence = copy.deepcopy(list(dependencies.values()))
+    if failures:
+        raise SourceMaterialError(tuple(failures), prepared.file_evidence, diagnostics, truncated)
     prepared["evidence_sources"] = sources
     if _fits(prepared, questions, max_state_bytes, max_total_tokens, max_state_plus_question_tokens):
         return prepared

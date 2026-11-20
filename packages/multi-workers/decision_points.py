@@ -1975,6 +1975,7 @@ def prepared_observation_request(
     project_dir: pathlib.Path | str | None = None,
     limits: Mapping[str, int] | None = None,
     source_references: Mapping | None = None,
+    evidence_refs: list[dict] | None = None,
 ) -> tuple[dict, dict[str, dict]]:
     """One prepared request shape for the real observation and its preview.
 
@@ -1995,6 +1996,7 @@ def prepared_observation_request(
         max_state_plus_question_tokens=int(resolved.get("max_state_plus_question_tokens", 32768)),
         questions=prepared_questions,
         source_references=source_references,
+        evidence_refs=evidence_refs,
     )
     return (
         state,
@@ -6914,6 +6916,7 @@ def _decide_for(
                     "max_state_plus_question_tokens": cfg.max_state_plus_question_tokens,
                 },
                 source_references=(book.get("notes") or {}).get("evidence"),
+                evidence_refs=book.get("evidence_refs"),
             )
         except decision_material_sources.SourceMaterialError as exc:
             capture.material_refused = True

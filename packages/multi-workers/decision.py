@@ -1801,6 +1801,7 @@ class DecisionClient:
         logical_id: str | None = None,
         replay_check: Callable[[str, str], bool] | None = None,
         source_references: Mapping | None = None,
+        evidence_refs: list[dict] | None = None,
     ) -> dict:
         """One choice over legal business-conclusion/prepared-basis pairs.
 
@@ -1987,6 +1988,14 @@ class DecisionClient:
             },
         }
         try:
+            if evidence_refs and secret_hit(
+                _encode_state({"evidence_refs": evidence_refs}).decode("utf-8"),
+                known_secret_redactor(self.cfg, snapshot=self._pinned_credential_snapshot),
+            ):
+                raise protocol.decision_material_sources.SourceMaterialError(
+                    (("evidence_refs", "evidence reference contains credential-looking text"),),
+                    diagnostics=[{"field": "evidence_refs", "code": "invalid-evidence-reference"}],
+                )
             state = protocol.decision_material_sources.prepare_source_state(
                 state,
                 self.cfg.project_root,
@@ -1995,10 +2004,19 @@ class DecisionClient:
                 max_state_plus_question_tokens=self.cfg.max_state_plus_question_tokens,
                 questions=questions,
                 source_references=source_references,
+                evidence_refs=evidence_refs,
             )
         except protocol.decision_material_sources.SourceMaterialError as exc:
             self.last_file_evidence = copy.deepcopy(exc.file_evidence)
-            return self._prepared(
+            if exc.allowed_fields is not None or any("path" in issue for issue in exc.diagnostics):
+                redactor = known_secret_redactor(self.cfg, snapshot=self._pinned_credential_snapshot)
+                for issue in exc.diagnostics:
+                    name = issue.get("path")
+                    if isinstance(name, str) and redactor.redact(name).text != name:
+                        issue.pop("path")
+                if exc.allowed_fields is not None:
+                    exc.allowed_fields = [field for field in exc.allowed_fields if not secret_hit(field, redactor)]
+            result = self._prepared(
                 start,
                 dp=dp,
                 reason=(
@@ -2009,6 +2027,16 @@ class DecisionClient:
                 issues=exc.issues,
                 detail="file evidence preparation failed; no request sent",
             )
+            result["input_diagnostics"] = {
+                "stage": "evidence-preparation",
+                "transport": "not-sent",
+                "issues": exc.diagnostics,
+                "truncated": exc.truncated,
+            }
+            if exc.allowed_fields is not None:
+                result["input_diagnostics"]["allowed_fields"] = exc.allowed_fields
+                result["input_diagnostics"]["allowed_fields_truncated"] = exc.allowed_fields_truncated
+            return result
         self.last_file_evidence = copy.deepcopy(getattr(state, "file_evidence", []))
         # The source text must be checked against the very same credential
         # snapshot the transport uses. A fresh snapshot is local to this call;
