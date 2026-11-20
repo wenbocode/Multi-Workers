@@ -60,6 +60,7 @@ import {
 } from "./decision-followup.ts";
 import { captureDecisionTaskState } from "./decision-task-state.ts";
 import { ASK_DECISION_PARAMETERS, type AskDecisionInput, runAskDecision } from "./decision-tool.ts";
+import { PM_GATE_ROUTING_RULE } from "./gate-route.ts";
 import { isGoalEstablished, readGoal } from "./goal-reader.ts";
 import { StateManager } from "./state-manager.ts";
 import { type DispatchRefusal, dispatchTask } from "./task-dispatcher.ts";
@@ -2422,6 +2423,7 @@ export const PARALLEL_PROTOCOL = [
 	"4. 相位文档（spec.md / design.md）由 PM 自己串行写，不派 worker。",
 	"5. 派发前先看 widget 上的 running worker 数：能并行就不要串行等待；worker 终态回读后立刻补派下一批。",
 	"6. 引用图片/截图/mockup 的任务用 type: vision 派发（视觉角色，worker 读取图片文件并受 image 能力门禁约束）。",
+	PM_GATE_ROUTING_RULE,
 ].join("\n");
 
 const STEER_NEXT = {

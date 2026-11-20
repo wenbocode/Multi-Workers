@@ -34,6 +34,7 @@ import {
 	type TaskStateSnapshot,
 } from "./decision-task-state.ts";
 import { checkFileEvidence, parseFileEvidence } from "./file-evidence-cache.ts";
+import { PM_GATE_ROUTING_RULE, resolvePmGateRoute } from "./gate-route.ts";
 import {
 	canonicalStateBytes,
 	MAX_STRUCTURED_STATE_BYTES,
@@ -957,7 +958,7 @@ export interface AskDecisionInput {
 	signal?: AbortSignal;
 }
 
-function jsonText(payload: AskDecisionPayload): string {
+function jsonText(payload: AskDecisionPayload | { gate_route: ReturnType<typeof resolvePmGateRoute> }): string {
 	return JSON.stringify(payload);
 }
 
@@ -1701,13 +1702,18 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 	// One turn = one retry window: the same dp gets a fresh budget per turn.
 	pi.on("turn_start", () => counter.reset());
 
-	pi.registerTool<typeof ASK_DECISION_PARAMETERS, AskDecisionPayload & { blocked_event_id?: string }>({
+	pi.registerTool<
+		typeof ASK_DECISION_PARAMETERS,
+		| (AskDecisionPayload & { blocked_event_id?: string; gate_route?: ReturnType<typeof resolvePmGateRoute> })
+		| { available: false; gate_route: ReturnType<typeof resolvePmGateRoute> }
+	>({
 		name: ASK_DECISION_TOOL,
 		label: ASK_DECISION_TOOL,
 		description:
 			"Ask the external decision service for a human-style ruling on a gated decision point. " +
 			"Returns ONE line of JSON: {available, decision_id, mode, acted, answers, confidence_source, latency_ms}" +
 			", plus {selection, feedback} on the prepared material path. " +
+			"A direct PM dp-gate-approve lookup returns gate_route only. Follow its instruction. " +
 			"available=false means UNAVAILABLE: the gated action stays blocked — do NOT guess, do NOT work around it, " +
 			'report "blocked on decision <dp>" and stop. The failure line also carries escalated_reason, and for ' +
 			"input-incomplete, missing_fields.",
@@ -1715,6 +1721,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			"ask_decision(dp, trigger, material?, question?, note?) — ask the decision service before a gated action; " +
 			"available=false means blocked, never guess.",
 		promptGuidelines: [
+			PM_GATE_ROUTING_RULE,
 			"Call ask_decision ONLY with a dp id from the enum and the trigger_id from your task context " +
 				"(<task_key> or <task_key>#ckpt<N>); never invent a dp id, trigger or question id.",
 			'available=false is a terminal answer for this attempt: report "blocked on decision <dp>" and wait ' +
@@ -1764,6 +1771,13 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				);
 				return blockedResult(params.dp, refused, "identity-check");
 			}
+			if (initiatorRole === "pm" && params.dp === "dp-gate-approve" && !signal?.aborted) {
+				const details = {
+					available: false as const,
+					gate_route: resolvePmGateRoute(projectDir, requestedKey, params.trigger),
+				};
+				return { content: [{ type: "text", text: jsonText(details) }], details };
+			}
 			const requestedTask = params.task_key ?? workerTaskKey ?? null;
 			if (workerTaskKey !== null && params.task_key !== undefined && params.task_key.trim() !== workerTaskKey) {
 				const refused = refusalOutcome("input-incomplete", params.dp, ["meta.task_key"]);
@@ -1806,6 +1820,20 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 							? ` feedback=${outcome.payload.feedback.stage}:${outcome.payload.feedback.status}`
 							: ""),
 				);
+				if (
+					initiatorRole === "pm" &&
+					params.dp === "dp-route" &&
+					outcome.payload.selection?.id === "dp-gate-approve"
+				) {
+					const gate_route = resolvePmGateRoute(projectDir, requestedKey, params.trigger);
+					return {
+						content: [
+							{ type: "text", text: outcome.text },
+							{ type: "text", text: jsonText({ gate_route }) },
+						],
+						details: { ...outcome.payload, gate_route },
+					};
+				}
 				return { content: [{ type: "text", text: outcome.text }], details: outcome.payload };
 			}
 

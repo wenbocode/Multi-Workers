@@ -65,6 +65,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** P0 defaults off. The framework handler still owns the policy verdict. */
+export function gateApprovalRow(projectDir: string): "on" | "off" | "unreadable" {
+	const file = path.join(projectDir, ".mw", "decide-points.json");
+	let config: unknown;
+	try {
+		config = JSON.parse(fs.readFileSync(file, "utf8"));
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code === "ENOENT" ? "off" : "unreadable";
+	}
+	if (!isRecord(config) || !isRecord(config.points)) return "unreadable";
+	const row = config.points["dp-gate-approve"];
+	if (row === undefined) return "off";
+	if (
+		!isRecord(row) ||
+		(Object.hasOwn(row, "enabled") && typeof row.enabled !== "boolean") ||
+		(Object.hasOwn(row, "mode") && row.mode !== "auto" && row.mode !== "suggest") ||
+		(Object.hasOwn(row, "note") && typeof row.note !== "string") ||
+		(Object.hasOwn(row, "tier") && typeof row.tier !== "string")
+	) {
+		return "unreadable";
+	}
+	return row.enabled === true ? "on" : "off";
+}
+
 function readJsonRecord(file: string): Record<string, unknown> | undefined {
 	try {
 		const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
