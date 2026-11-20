@@ -1,0 +1,23 @@
+{
+  "key": "mw-dp-input-diagnostics",
+  "task": null,
+  "criteria": [
+    "AC-004"
+  ],
+  "argv": [
+    "python",
+    "-B",
+    "E:/gitlite/Multi-Workers/.tmp/mw-dp-input-release.py",
+    "verify"
+  ],
+  "cwd": "E:\\gitlite\\Multi-Workers",
+  "basis": {
+    "contract_sha256": "b4be3b6954c234e1c680cc3c0320f2153ec38f9ce259ce32a34668ea5f7009a6",
+    "source_sha256": "3124ef21867afa8a9f1f8ba47b42fc59a2ac191d1593093a362de9a7611fcab0"
+  },
+  "started": "2026-11-20T16:13:53.677289+00:00",
+  "verdict": "passed",
+  "exit_code": 0,
+  "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-input-diagnostics\\evidence\\codex-pm\\self\\1795191233676253400-2ctfl8p2\\command.log",
+  "finished": "2026-11-20T16:14:07.600099+00:00"
+}

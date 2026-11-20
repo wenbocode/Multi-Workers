@@ -1,0 +1,1415 @@
+--- /dev/null
++++ b/packages/coding-agent/src/extensions/agent-team-loop/pm/decision-input-diagnostics.ts
+@@ -0,0 +1,99 @@
++const messages = {
++	"invalid-evidence-reference": "Use an existing field, a literal path and an optional ordered line range.",
++	"evidence-file-unresolved": "Check the file path relative to the control workspace.",
++	"evidence-range-out-of-bounds": "Choose lines within the file.",
++	"evidence-preparation-failed": "Verify the cited evidence and its read scope.",
++	"evidence-read-denied": "Select evidence within the configured read scope.",
++	"evidence-file-unreadable": "Select a readable UTF-8 evidence file.",
++	"evidence-budget-exceeded": "Use a narrower line range or a smaller evidence file.",
++	"evidence-protocol-unsupported": "Reload using a release with a compatible MW Python CLI.",
++} as const;
++
++type IssueCode = keyof typeof messages;
++
++interface InputIssue {
++	field: string;
++	code: IssueCode;
++	path?: string;
++	requested_lines?: { start: number; end: number };
++	file_line_count?: number;
++}
++
++export interface DecisionInputDiagnostics {
++	stage: "evidence-preparation";
++	transport: "not-sent";
++	issues: InputIssue[];
++	truncated: boolean;
++}
++
++function record(value: unknown): value is Record<string, unknown> {
++	return value !== null && typeof value === "object" && !Array.isArray(value);
++}
++
++function lineNumber(value: unknown): value is number {
++	return typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= 2 ** 31 - 1;
++}
++
++export function readInputDiagnostics(value: unknown): DecisionInputDiagnostics | undefined {
++	if (
++		!record(value) ||
++		value.stage !== "evidence-preparation" ||
++		value.transport !== "not-sent" ||
++		!Array.isArray(value.issues) ||
++		typeof value.truncated !== "boolean"
++	)
++		return undefined;
++	const issues: InputIssue[] = [];
++	for (const item of value.issues.slice(0, 8)) {
++		if (
++			!record(item) ||
++			typeof item.field !== "string" ||
++			!/^(?:material\.[A-Za-z0-9_.[\]-]{1,140}|preparation\.basis_catalog\[\d+\]\.text|evidence_refs(?:\[\d+\](?:\.(?:field|path|lines))?)?|evidence_sources)$/.test(
++				item.field,
++			) ||
++			typeof item.code !== "string" ||
++			!Object.hasOwn(messages, item.code)
++		)
++			continue;
++		const issue: InputIssue = { field: item.field, code: item.code as IssueCode };
++		if (
++			typeof item.path === "string" &&
++			/^[A-Za-z0-9_./-]{1,240}$/.test(item.path) &&
++			!item.path.startsWith("/") &&
++			!item.path.split("/").some((part) => !part || part === ".." || /^sk-/i.test(part))
++		) {
++			issue.path = item.path;
++		}
++		if (
++			record(item.requested_lines) &&
++			lineNumber(item.requested_lines.start) &&
++			lineNumber(item.requested_lines.end)
++		) {
++			issue.requested_lines = { start: item.requested_lines.start, end: item.requested_lines.end };
++		}
++		if (lineNumber(item.file_line_count)) issue.file_line_count = item.file_line_count;
++		issues.push(issue);
++	}
++	if (!issues.length) return undefined;
++	return {
++		stage: "evidence-preparation",
++		transport: "not-sent",
++		issues,
++		truncated: value.truncated || value.issues.length > 8,
++	};
++}
++
++export function formatInputDiagnostics(value: DecisionInputDiagnostics): string {
++	return [
++		"Request was not sent.",
++		...value.issues.map((issue) => {
++			const target = issue.path ? ` (${issue.path})` : "";
++			const range =
++				issue.requested_lines && issue.file_line_count
++					? ` Lines ${issue.requested_lines.start}–${issue.requested_lines.end}, file has ${issue.file_line_count} lines.`
++					: "";
++			return `${issue.field}${target}: ${messages[issue.code]}${range}`;
++		}),
++		...(value.truncated ? ["Additional evidence issues were omitted."] : []),
++	].join("\n");
++}
+--- a/packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts
++++ b/packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts
+@@ -32,6 +32,11 @@
+ import { controlRootFromTaskPath } from "../shared/paths.ts";
+ import { readTaskType } from "../shared/task-frontmatter.ts";
+ import {
++	type DecisionInputDiagnostics,
++	formatInputDiagnostics,
++	readInputDiagnostics,
++} from "./decision-input-diagnostics.ts";
++import {
+ 	AGENT_TASK_STATE_SCHEMA,
+ 	copyTaskState,
+ 	isTaskStateSnapshot,
+@@ -318,6 +323,8 @@
+ 	missing_fields?: string[];
+ 	material_issues?: MaterialIssue[];
+ 	claim_diagnosis?: ClaimDiagnosis;
++	input_diagnostics?: DecisionInputDiagnostics;
++	original_blocked_event_id?: string;
+ }
+ 
+ export type AskDecisionPayload = AskDecisionAvailable | AskDecisionUnavailable;
+@@ -467,6 +474,13 @@
+ 	context?: Record<string, unknown>;
+ 	material: Record<string, unknown>;
+ 	meta: DecisionToolMeta;
++	evidence_refs?: DecisionEvidenceRef[];
++}
++
++interface DecisionEvidenceRef {
++	field: string;
++	path: string;
++	lines?: { start: number; end: number };
+ }
+ 
+ /** True when `dp` is one the PM alone may prepare (checkpoint / sign-off). */
+@@ -712,6 +726,7 @@
+ 	key: string;
+ 	input: string;
+ 	timeoutMs: number;
++	explicitEvidence?: boolean;
+ }
+ 
+ /** Injectable sign runner (tests stub this; production spawns the CLI). */
+@@ -730,6 +745,9 @@
+ export const runSignMw: SignRunner = async (request) => {
+ 	const mwPy = findMwPy();
+ 	if (!mwPy) return { status: null, stdout: "", stderr: "", error: "mw.py not found", timedOut: false };
++	if (request.explicitEvidence && !(await probeDecisionCapabilities(mwPy)).explicitEvidence) {
++		return unsupportedEvidenceReply();
++	}
+ 	return spawnWithTimeout([PYTHON_EXE, ...buildSignArgv(mwPy, request.key, request.projectDir)], {
+ 		timeoutMs: request.timeoutMs,
+ 		stdin: request.input,
+@@ -896,6 +914,7 @@
+ 	 * under `mw decide run <dp> --stdin` (design §4.1). The legacy 21 dps keep
+ 	 * the pre-existing `--request-file` + `{state}` path byte-identical. */
+ 	viaStdin?: boolean;
++	explicitEvidence?: boolean;
+ }
+ 
+ /** Injectable runner (tests replace this; production uses {@link runDecideMw}). */
+@@ -932,6 +951,9 @@
+ 		return { status: 2, stdout: "", stderr: refused ?? "preparation required", timedOut: false };
+ 	const mwPy = findMwPy();
+ 	if (!mwPy) return { status: null, stdout: "", stderr: "", error: "mw.py not found", timedOut: false };
++	if (request.explicitEvidence && !(await probeDecisionCapabilities(mwPy, signal)).explicitEvidence) {
++		return unsupportedEvidenceReply();
++	}
+ 	if (request.viaStdin === true) {
+ 		return spawnWithTimeout([PYTHON_EXE, ...buildDecideArgv(mwPy, request)], {
+ 			timeoutMs: request.timeoutMs,
+@@ -1038,6 +1060,7 @@
+ 	parentDecisionRef?: string;
+ 	preparation?: DecisionPreparation;
+ 	context?: Record<string, unknown>;
++	evidenceRefs?: DecisionEvidenceRef[];
+ 	/** Points at the previous `logical_id` when this call retries another one. */
+ 	retryOf?: string | null;
+ 	taskBefore?: TaskStateSnapshot;
+@@ -1055,6 +1078,35 @@
+ 	return JSON.stringify(payload);
+ }
+ 
++export async function probeDecisionCapabilities(mwPy: string | null, signal?: AbortSignal) {
++	if (!mwPy) return { explicitEvidence: false, inputDiagnostics: false };
++	const raw = await spawnWithTimeout([PYTHON_EXE, "-X", "utf8", mwPy, "decide", "capabilities"], {
++		timeoutMs: 5000,
++		signal,
++	});
++	const reply = raw.status === 0 ? parseDecisionJson(raw.stdout) : undefined;
++	return { explicitEvidence: reply?.evidence_refs === 1, inputDiagnostics: reply?.input_diagnostics === 1 };
++}
++
++function unsupportedEvidenceReply(): RawDecideResult {
++	return {
++		status: 2,
++		stderr: "",
++		timedOut: false,
++		stdout: jsonText({
++			available: false,
++			reason: "input-incomplete",
++			problems: ["input-incomplete: explicit evidence protocol unsupported"],
++			input_diagnostics: {
++				stage: "evidence-preparation",
++				transport: "not-sent",
++				truncated: false,
++				issues: [{ field: "evidence_refs", code: "evidence-protocol-unsupported" }],
++			},
++		}),
++	};
++}
++
+ function unavailable(
+ 	reason: string,
+ 	dp: string,
+@@ -1064,6 +1116,8 @@
+ 		missing_fields?: string[];
+ 		material_issues?: MaterialIssue[];
+ 		material_ref_issues?: MaterialReferenceIssue[];
++		input_diagnostics?: DecisionInputDiagnostics;
++		original_blocked_event_id?: string;
+ 	} = {},
+ ): AskDecisionOutcome {
+ 	const payload: AskDecisionUnavailable = {
+@@ -1076,11 +1130,16 @@
+ 		payload.missing_fields = extra.missing_fields;
+ 	}
+ 	if (extra.material_issues?.length) payload.material_issues = extra.material_issues;
++	if (extra.input_diagnostics) payload.input_diagnostics = extra.input_diagnostics;
++	if (extra.original_blocked_event_id) payload.original_blocked_event_id = extra.original_blocked_event_id;
+ 	return {
+ 		payload,
+ 		text:
+ 			`${jsonText(payload)}\n${unavailableDirective(reason, dp)}` +
+-			(extra.material_ref_issues?.length ? `\nMATERIAL_REFS_DIAGNOSIS: ${jsonText(extra.material_ref_issues)}` : ""),
++			(extra.material_ref_issues?.length
++				? `\nMATERIAL_REFS_DIAGNOSIS: ${jsonText(extra.material_ref_issues)}`
++				: "") +
++			(extra.input_diagnostics ? `\n${formatInputDiagnostics(extra.input_diagnostics)}` : ""),
+ 		spawned,
+ 	};
+ }
+@@ -1140,9 +1199,13 @@
+ 			material_issues: prepared.material_issues,
+ 			material_ref_issues: prepared.material_ref_issues,
+ 		});
++	const envelope: DecisionToolEnvelope =
++		input.evidenceRefs === undefined
++			? prepared.envelope
++			: { ...prepared.envelope, evidence_refs: input.evidenceRefs };
+ 	const outcome = await (dp === SIGN_KEY_ID
+-		? runSignoffAskDecision(input, dp, prepared.envelope, started)
+-		: runMaterialAskDecision(input, dp, prepared.envelope, started));
++		? runSignoffAskDecision(input, dp, envelope, started)
++		: runMaterialAskDecision(input, dp, envelope, started));
+ 	if (
+ 		!outcome.payload.available &&
+ 		outcome.pmTypeFallbackRefused !== true &&
+@@ -1245,7 +1308,15 @@
+ 		return {
+ 			ok: false,
+ 			outcome: {
+-				...unavailable(reason, dp, true, { escalated_reason: escalated }),
++				...unavailable(reason, dp, true, {
++					escalated_reason: escalated,
++					input_diagnostics: readInputDiagnostics(response.input_diagnostics),
++					original_blocked_event_id:
++						typeof response.original_blocked_event_id === "string" &&
++						/^[0-9a-f-]{36}$/.test(response.original_blocked_event_id)
++							? response.original_blocked_event_id
++							: undefined,
++				}),
+ 				blockedEventId: response.blocked_event_id,
+ 				pmTypeFallbackRefused: !ASK_DECISION_PYTHON_REASONS.has(rawReason),
+ 			},
+@@ -1276,6 +1347,7 @@
+ 		input: JSON.stringify(envelope),
+ 		timeoutMs: input.timeoutMs ?? ASK_DECISION_TIMEOUT_MS,
+ 		viaStdin: true,
++		...(envelope.evidence_refs === undefined ? {} : { explicitEvidence: true }),
+ 	};
+ 	const called = await callDecideChild(dp, request, input.runner ?? runDecideMw, input.signal);
+ 	if (!called.ok) return called.outcome;
+@@ -1361,6 +1433,7 @@
+ 			key: meta.key,
+ 			input: JSON.stringify(envelope),
+ 			timeoutMs: input.timeoutMs ?? ASK_DECISION_TIMEOUT_MS,
++			...(envelope.evidence_refs === undefined ? {} : { explicitEvidence: true }),
+ 		});
+ 	} catch {
+ 		return unavailable("upstream-error", dp, true);
+@@ -1390,7 +1463,10 @@
+ 		const refusedOversize = problems.some((item) => item.includes(ASK_DECISION_REASON_INPUT_OVERSIZE));
+ 		const refusedIncomplete = problems.some((item) => item.includes(ASK_DECISION_REASON_INPUT_INCOMPLETE));
+ 		const signoffRefusal = (reason: string, escalated_reason?: string): AskDecisionOutcome => ({
+-			...unavailable(reason, dp, true, { escalated_reason }),
++			...unavailable(reason, dp, true, {
++				escalated_reason,
++				input_diagnostics: readInputDiagnostics(receipt.input_diagnostics),
++			}),
+ 			blockedEventId: receipt.blocked_event_id,
+ 		});
+ 		if (refusedOversize) {
+@@ -1710,6 +1786,31 @@
+ 		),
+ 		material: MATERIAL_SCHEMA,
+ 		preparation: PREPARATION_SCHEMA,
++		evidence_refs: Type.Optional(
++			Type.Array(
++				Type.Object(
++					{
++						field: Type.String({ minLength: 1, maxLength: 160 }),
++						path: Type.String({ minLength: 1, maxLength: 1024 }),
++						lines: Type.Optional(
++							Type.Object(
++								{
++									start: Type.Integer({ minimum: 1, maximum: 2147483647 }),
++									end: Type.Integer({ minimum: 1, maximum: 2147483647 }),
++								},
++								{ additionalProperties: false },
++							),
++						),
++					},
++					{ additionalProperties: false },
++				),
++				{
++					maxItems: 64,
++					description:
++						"Explicit existing evidence files and optional inclusive line ranges. Use [] for inline material only.",
++				},
++			),
++		),
+ 		context: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+ 		key: Type.Optional(
+ 			Type.String({
+@@ -1858,6 +1959,7 @@
+ 				reason: payload.unavailable,
+ 				escalated_reason: identifier(payload.escalated_reason),
+ 				issues,
++				...(payload.input_diagnostics ? { input_diagnostics: payload.input_diagnostics } : {}),
+ 			};
+ 			try {
+ 				fs.mkdirSync(directory, { recursive: true });
+@@ -1902,6 +2004,7 @@
+ 			"gate_route describes local applicability; otherwise available=false means blocked, never guess.",
+ 		promptGuidelines: [
+ 			PM_GATE_ROUTING_RULE,
++			"Include evidence_refs in new decisions. Use [] for inline evidence, or list existing files with field, path and optional inclusive lines. Leave planned outputs in the task text. Use input_diagnostics to correct local preparation failures.",
+ 			PM_TYPE_FALLBACK_DIRECTIVE,
+ 			"Call ask_decision ONLY with a dp id from the enum and the trigger_id from your task context " +
+ 				"(<task_key> or <task_key>#ckpt<N>); never invent a dp id, trigger or question id.",
+@@ -1981,6 +2084,7 @@
+ 				note: params.note,
+ 				material: params.material,
+ 				preparation: params.preparation,
++				evidenceRefs: params.evidence_refs,
+ 				context: params.context,
+ 				key: bound.key,
+ 				taskKey: requestedTask,
+--- a/packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
++++ b/packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
+@@ -2,6 +2,7 @@
+ import * as fs from "node:fs";
+ import * as os from "node:os";
+ import * as path from "node:path";
++import { fileURLToPath } from "node:url";
+ import { Type } from "typebox";
+ import { VERSION } from "../../../config.ts";
+ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
+@@ -56,6 +57,7 @@
+ 	buildMw,
+ 	decideMw,
+ 	doctorMw,
++	findMwPy,
+ 	getMwStatus,
+ 	initMw,
+ 	modelMw,
+@@ -101,6 +103,7 @@
+ 	ASK_DECISION_PARAMETERS,
+ 	type DecisionLifecycleEnvelope,
+ 	type LifecycleRunner,
++	probeDecisionCapabilities,
+ 	writeDecisionLifecycle,
+ } from "./decision-tool.ts";
+ import { formatDispatchAlarm, recordDispatchAlarm } from "./pm-orchestrator.ts";
+@@ -4664,7 +4667,19 @@
+ /** /mw command description (exported so the registration test can assert the
+  * RAG branch stays documented — VC-311). */
+ export const MW_COMMAND_DESCRIPTION =
+-	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / thinking / decide / rag / stats / pm-state compact / run-detached / ack / trim [task] / replan [task] / issue (report|retry|status|update|reply|bind), dev inbox [id]";
++	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / runtime / doctor / update / target / partition / model / thinking / decide / rag / stats / pm-state compact / run-detached / ack / trim [task] / replan [task] / issue (report|retry|status|update|reply|bind), dev inbox [id]";
++
++const loadedExtension = (() => {
++	try {
++		const file = fileURLToPath(import.meta.url);
++		return {
++			path: file,
++			sha256: hashPmState("sha256").update(fs.readFileSync(file)).digest("hex"),
++		};
++	} catch {
++		return null;
++	}
++})();
+ 
+ /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
+  * is narrow, and `rag list` / `rag audit` outputs can be long. */
+@@ -6116,6 +6131,13 @@
+ 			const trimmed = _args.trim();
+ 			const sub = trimmed.split(/\s+/)[0] ?? "status";
+ 
++			if (sub === "runtime") {
++				const python = findMwPy();
++				const capabilities = await probeDecisionCapabilities(python);
++				ctx.ui.notify(JSON.stringify({ pid: process.pid, loadedExtension, python, capabilities }, null, 2), "info");
++				return;
++			}
++
+ 			if (sub === "trim") {
+ 				if (!startTrim) ctx.ui.notify("当前窗口没有 MW PM 的 key 索引。", "warning");
+ 				else startTrim(trimmed.slice(sub.length).trim(), ctx);
+--- /dev/null
++++ b/packages/coding-agent/test/suite/decision-input-diagnostics.test.ts
+@@ -0,0 +1,106 @@
++import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
++import { expect, it, vi } from "vitest";
++import { registerAskDecisionTool } from "../../src/extensions/agent-team-loop/pm/decision-tool.ts";
++import { createHarness, getMessageText } from "./harness.ts";
++
++it("shows a bounded, safe evidence refusal and sends explicit refs in the local envelope", async () => {
++	const evidenceRefs = [
++		{
++			field: "material.decision_object",
++			path: "review.md",
++			lines: { start: 8, end: 24 },
++		},
++	];
++	const runner = vi.fn(async ({ input }: { input: string }) => {
++		expect(JSON.parse(input).evidence_refs).toEqual(evidenceRefs);
++		return {
++			status: 0,
++			timedOut: false,
++			stderr: "",
++			stdout: JSON.stringify({
++				available: false,
++				reason: "input-incomplete",
++				escalated_reason: "input-incomplete",
++				blocked_event_id: "17c2c45f-84c9-4a6e-9ca1-3ea5087afd95",
++				input_diagnostics: {
++					stage: "evidence-preparation",
++					transport: "not-sent",
++					truncated: false,
++					issues: [
++						{
++							field: "material.decision_object",
++							code: "evidence-range-out-of-bounds",
++							path: "review.md",
++							requested_lines: { start: 8, end: 24 },
++							file_line_count: 21,
++							raw_material: "internal request",
++						},
++						{ field: "evidence_refs[1].path", code: "evidence-file-unresolved", path: "E:/private/secret.md" },
++						{ field: "material.question", code: "unrecognized", path: "no-display.md" },
++					],
++				},
++			}),
++		};
++	});
++	const lifecycleRunner = vi.fn();
++	const h = await createHarness({
++		extensionFactories: [
++			(pi) => {
++				registerAskDecisionTool(pi, { key: "fixture", initiatorRole: "pm", runner, lifecycleRunner });
++			},
++		],
++	});
++	try {
++		for (let iteration = 0; iteration < 2; iteration++) {
++			h.setResponses([
++				fauxAssistantMessage(
++					[
++						fauxToolCall("ask_decision", {
++							dp: "dp-route",
++							trigger: "verify-route",
++							material: {
++								decision_actor: "PM",
++								decision_object: "Evidence review",
++								question: "Which entry applies?",
++							},
++							preparation: {
++								prepared_at: "2026-11-20T12:00:00Z",
++								basis_catalog: [
++									{
++										id: "scope",
++										text: "Review the evidence",
++										applies_to: ["dp-pm-steer"],
++										material_refs: ["decision_object"],
++									},
++								],
++							},
++							evidence_refs: evidenceRefs,
++						}),
++					],
++					{ stopReason: "toolUse" },
++				),
++				fauxAssistantMessage("Read the local refusal"),
++			]);
++			await h.session.prompt("Check the route");
++			const result = h.session.messages.filter((message) => message.role === "toolResult").at(-1);
++			const body = getMessageText(result);
++			expect(body).toContain("Lines 8–24, file has 21 lines.");
++			expect(body).toContain("Request was not sent.");
++			expect(body).not.toMatch(/internal request|private\/secret|no-display/);
++			expect(result?.details).toMatchObject({
++				available: false,
++				blocked_event_id: "17c2c45f-84c9-4a6e-9ca1-3ea5087afd95",
++				input_diagnostics: {
++					issues: [
++						{ field: "material.decision_object", code: "evidence-range-out-of-bounds", path: "review.md" },
++						{ field: "evidence_refs[1].path", code: "evidence-file-unresolved" },
++					],
++				},
++			});
++		}
++		expect(runner).toHaveBeenCalledTimes(2);
++		expect(lifecycleRunner).not.toHaveBeenCalled();
++	} finally {
++		h.cleanup();
++	}
++});
+--- a/packages/multi-workers/decision.py
++++ b/packages/multi-workers/decision.py
+@@ -1804,6 +1804,7 @@
+         logical_id: str | None = None,
+         replay_check: Callable[[str, str], bool] | None = None,
+         source_references: Mapping | None = None,
++        evidence_refs: list[dict] | None = None,
+     ) -> dict:
+         """One choice over legal business-conclusion/prepared-basis pairs.
+ 
+@@ -1990,6 +1991,14 @@
+             },
+         }
+         try:
++            if evidence_refs and secret_hit(
++                _encode_state({"evidence_refs": evidence_refs}).decode("utf-8"),
++                known_secret_redactor(self.cfg, snapshot=self._pinned_credential_snapshot),
++            ):
++                raise protocol.decision_material_sources.SourceMaterialError(
++                    (("evidence_refs", "evidence reference contains credential-looking text"),),
++                    diagnostics=[{"field": "evidence_refs", "code": "invalid-evidence-reference"}],
++                )
+             state = protocol.decision_material_sources.prepare_source_state(
+                 state,
+                 self.cfg.project_root,
+@@ -1998,10 +2007,17 @@
+                 max_state_plus_question_tokens=self.cfg.max_state_plus_question_tokens,
+                 questions=questions,
+                 source_references=source_references,
++                evidence_refs=evidence_refs,
+             )
+         except protocol.decision_material_sources.SourceMaterialError as exc:
+             self.last_file_evidence = copy.deepcopy(exc.file_evidence)
+-            return self._prepared(
++            if any("path" in issue for issue in exc.diagnostics):
++                redactor = known_secret_redactor(self.cfg, snapshot=self._pinned_credential_snapshot)
++                for issue in exc.diagnostics:
++                    name = issue.get("path")
++                    if isinstance(name, str) and redactor.redact(name).text != name:
++                        issue.pop("path")
++            result = self._prepared(
+                 start,
+                 dp=dp,
+                 reason=(
+@@ -2012,6 +2028,13 @@
+                 issues=exc.issues,
+                 detail="file evidence preparation failed; no request sent",
+             )
++            result["input_diagnostics"] = {
++                "stage": "evidence-preparation",
++                "transport": "not-sent",
++                "issues": exc.diagnostics,
++                "truncated": exc.truncated,
++            }
++            return result
+         self.last_file_evidence = copy.deepcopy(getattr(state, "file_evidence", []))
+         # The source text must be checked against the very same credential
+         # snapshot the transport uses. A fresh snapshot is local to this call;
+--- a/packages/multi-workers/decision_blocked.py
++++ b/packages/multi-workers/decision_blocked.py
+@@ -6,11 +6,39 @@
+ import json
+ import os
+ import pathlib
++import re
+ import sys
+ import uuid
+ from collections.abc import Mapping
+ 
+ import decision
++
++
++def recall_input_block(project: pathlib.Path, logical_id: str, dp: str,
++                       key: str, task_key: str | None) -> dict | None:
++    if not re.fullmatch(r"[0-9a-f-]{36}", logical_id):
++        return None
++    directory = project / ".agenticdoc" / "_autopilot" / "dp-blocked"
++    try:
++        event_id = (directory / "by-logical-id" / logical_id).read_text(encoding="utf-8")
++        if not re.fullmatch(r"[0-9a-f-]{36}", event_id):
++            return None
++        event = json.loads((directory / f"{event_id}.json").read_text(encoding="utf-8"))
++    except (OSError, ValueError):
++        return None
++    if (
++        isinstance(event, dict)
++        and (event.get("logical_id"), event.get("dp"), event.get("key"), event.get("task_key"))
++        == (logical_id, dp, key, task_key)
++        and event.get("reason") in ("input-incomplete", "budget-exhausted")
++        and isinstance(event.get("input_diagnostics"), dict)
++        and event["input_diagnostics"].get("stage") == "evidence-preparation"
++        and event["input_diagnostics"].get("transport") == "not-sent"
++        and isinstance(event["input_diagnostics"].get("issues"), list)
++        and all(isinstance(issue, dict) for issue in event["input_diagnostics"]["issues"])
++    ):
++        return event
++    return None
+ 
+ 
+ def record(
+@@ -60,6 +88,8 @@
+                 for issue in issues[:8] if isinstance(issue, Mapping)
+             ] if isinstance(issues, list) else [],
+         }
++        if isinstance(result.get("input_diagnostics"), Mapping):
++            event["input_diagnostics"] = result["input_diagnostics"]
+         directory.mkdir(parents=True, exist_ok=True)
+         with temporary.open("x", encoding="utf-8", newline="\n") as stream:
+             json.dump(event, stream, ensure_ascii=True)
+@@ -74,4 +104,15 @@
+             pass
+         print(f"[mw decide] could not record DP block ({type(exc).__name__})", file=sys.stderr)
+         return None
++    logical_id = event["logical_id"]
++    if (source == "mw-decide-run" and stage == "request" and "input_diagnostics" in event
++            and isinstance(logical_id, str) and re.fullmatch(r"[0-9a-f-]{36}", logical_id)):
++        index = directory / "by-logical-id"
++        try:
++            index.mkdir(exist_ok=True)
++            with (index / logical_id).open("x", encoding="utf-8") as stream:
++                stream.write(event_id)
++        except OSError:
++            # The public receipt remains valid even if the replay lookup cannot be saved.
++            pass
+     return event_id
+--- a/packages/multi-workers/decision_book.py
++++ b/packages/multi-workers/decision_book.py
+@@ -59,6 +59,7 @@
+     "meta",
+     "context",
+     "notes",
++    "evidence_refs",
+ )
+ 
+ #: 旧合同的顶层键：出现即拒绝（历史只读，不恢复旧调用）。
+@@ -1134,9 +1135,18 @@
+     evidence = notes.get("evidence") if isinstance(notes.get("evidence"), Mapping) else {}
+     root = resolve_repo_root(project_dir, repo_root)
+     issues: list[Issue] = []
++    explicit_fields: set[str] = set()
++    if "evidence_refs" in book:
++        try:
++            refs = decision_material_sources.explicit_references(
++                book.get("material"), book.get("preparation"), book["evidence_refs"]
++            )
++        except decision_material_sources.SourceMaterialError as exc:
++            return [Issue("book-evidence", field, detail) for field, detail in exc.issues]
++        explicit_fields = {ref.field.removeprefix("material.") for ref in refs if ref.field.startswith("material.")}
+     required = required_state_paths(dp_id)
+     for path in required:
+-        if path not in evidence:
++        if path not in evidence and path not in explicit_fields:
+             issues.append(
+                 Issue(
+                     "book-evidence",
+@@ -1165,6 +1175,9 @@
+                     "evidence is still the scaffold placeholder; provide path:line or a command",
+                 )
+             )
++            continue
++        if "evidence_refs" in book and not reference.startswith("cmd:"):
++            issues.append(Issue("book-evidence", entry_path, "move file evidence to evidence_refs"))
+             continue
+         problem = _evidence_problem(reference, root, redactor=redactor)
+         if problem is not None:
+@@ -1270,6 +1283,7 @@
+             dp_id, projected, dict(preparation or {}), decision_points.questions_map(dp_id),
+             project_dir=project_dir, limits=resolved,
+             source_references=(book.get("notes") or {}).get("evidence"),
++            evidence_refs=book.get("evidence_refs"),
+         )
+     except decision_material_sources.SourceMaterialError as exc:
+         return [
+@@ -1372,7 +1386,7 @@
+     """
+     issues: list[Issue] = []
+     seen: set[str] = set()
+-    for layer in ("material", "preparation", "context", "meta", "notes"):
++    for layer in ("material", "preparation", "context", "meta", "notes", "evidence_refs"):
+         if layer not in book:
+             continue
+         for path, text in _iter_secret_texts(book[layer], layer, redactor):
+@@ -1443,6 +1457,7 @@
+         "file_sha256": book_sha256(source),
+         "evidence": dict(evidence),
+         "decision_point": book.get("decision_point"),
++        **({"evidence_refs": book["evidence_refs"]} if "evidence_refs" in book else {}),
+     }
+ 
+ 
+--- a/packages/multi-workers/decision_material_sources.py
++++ b/packages/multi-workers/decision_material_sources.py
+@@ -27,6 +27,19 @@
+ MAX_SOURCE_BYTES = 8 * 1024 * 1024
+ MAX_TOTAL_SOURCE_BYTES = 32 * 1024 * 1024
+ MAX_SOURCE_REFERENCES = 64
++MAX_DIAGNOSTIC_ISSUES = 8
++
++_SAFE_DIAGNOSTIC_PATH = re.compile(r"[A-Za-z0-9_./-]{1,240}\Z")
++_SOURCE_ERROR_CODES = {
++    "referenced file is outside the configured read roots": "evidence-read-denied",
++    "referenced file is excluded by the read-scope deny globs": "evidence-read-denied",
++    "referenced path is not a regular file": "evidence-file-unreadable",
++    "referenced file is unreadable or is not UTF-8 text": "evidence-file-unreadable",
++    "referenced file contains binary/control data": "evidence-file-unreadable",
++    "referenced file is empty": "evidence-file-unreadable",
++    "referenced file exceeds the read limit": "evidence-budget-exceeded",
++    "total cited files exceed the read limit; narrow the citations": "evidence-budget-exceeded",
++}
+ 
+ _REFERENCE = re.compile(
+     r"(?P<path>[^\r\n<>|\x00]+?\.[A-Za-z][A-Za-z0-9_.-]*)"
+@@ -61,9 +74,18 @@
+     """Field-addressable preparation refusal; messages never contain file text."""
+ 
+     def __init__(self, issues: tuple[tuple[str, str], ...],
+-                 file_evidence: list[dict[str, object]] | None = None) -> None:
++                 file_evidence: list[dict[str, object]] | None = None,
++                 diagnostics: list[dict[str, object]] | None = None,
++                 truncated: bool = False) -> None:
+         self.issues = issues
+         self.file_evidence = file_evidence or []
++        self.diagnostics = diagnostics or [
++            {"field": field, "code": (
++                "evidence-budget-exceeded" if detail.startswith("compression-required:")
++                else _SOURCE_ERROR_CODES.get(detail, "evidence-preparation-failed")
++            )} for field, detail in issues
++        ][:MAX_DIAGNOSTIC_ISSUES]
++        self.truncated = truncated or len(issues) > MAX_DIAGNOSTIC_ISSUES
+         super().__init__("; ".join(f"{field}: {issue}" for field, issue in issues))
+ 
+ 
+@@ -88,6 +110,78 @@
+     raw: bytes
+     lines: list[str]
+     sha256: str
++
++
++def explicit_references(material: object, preparation: object, refs: object) -> list[_Reference]:
++    fields = {field for field, _ in _string_leaves(material)}
++    if isinstance(preparation, Mapping) and isinstance(preparation.get("basis_catalog"), list):
++        fields.update(
++            f"preparation.basis_catalog[{index}].text"
++            for index, entry in enumerate(preparation["basis_catalog"])
++            if isinstance(entry, Mapping) and isinstance(entry.get("text"), str)
++        )
++    if not isinstance(refs, list) or len(refs) > MAX_SOURCE_REFERENCES:
++        raise SourceMaterialError((("evidence_refs", "expected at most 64 file references"),),
++                                  diagnostics=[{"field": "evidence_refs", "code": "invalid-evidence-reference"}])
++    found = []
++    issues = []
++    for index, entry in enumerate(refs):
++        label = f"evidence_refs[{index}]"
++        if not isinstance(entry, dict) or not {"field", "path"} <= entry.keys() <= {"field", "path", "lines"}:
++            issues.append((label, "expected field, path and optional lines"))
++            continue
++        field, name = entry["field"], entry["path"]
++        if not isinstance(field, str) or field not in fields:
++            issues.append((label + ".field", "expected an existing material or prepared basis text field"))
++        elif (not isinstance(name, str) or not 1 <= len(name) <= 1024 or name != name.strip()
++              or any(ord(char) < 32 for char in name)
++              or ":" in name.removeprefix(name[:2] if re.match(r"^[A-Za-z]:[\\/]", name) else "")):
++            issues.append((label + ".path", "expected a literal file path"))
++        elif "lines" not in entry:
++            found.append(_Reference(field, name, None, None))
++        else:
++            lines = entry["lines"]
++            if (not isinstance(lines, dict) or lines.keys() != {"start", "end"}
++                    or any(type(value) is not int or not 1 <= value <= 2**31 - 1 for value in lines.values())
++                    or lines["end"] < lines["start"]):
++                issues.append((label + ".lines", "expected a positive, ordered line range"))
++            else:
++                found.append(_Reference(field, name, lines["start"], lines["end"]))
++    if issues:
++        raise SourceMaterialError(tuple(issues[:MAX_DIAGNOSTIC_ISSUES]), diagnostics=[
++            {"field": field, "code": "invalid-evidence-reference"}
++            for field, _ in issues[:MAX_DIAGNOSTIC_ISSUES]
++        ], truncated=len(issues) > MAX_DIAGNOSTIC_ISSUES)
++    return found
++
++
++def evidence_binding(project: pathlib.Path, dp: str, logical_id: str, refs: list[dict] | None,
++                     *, record: bool = False) -> bool:
++    """Keep the local selectors bound to the original explicit request identity."""
++    identity = hashlib.sha256(json.dumps([dp, logical_id]).encode()).hexdigest()
++    directory = project / ".agenticdoc" / "_autopilot" / "decision-evidence-bindings"
++    binding = directory / identity
++    try:
++        if refs is None:
++            return not binding.exists()
++        digest = hashlib.sha256(json.dumps(refs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
++        if record:
++            directory.mkdir(parents=True, exist_ok=True)
++            with binding.open("x", encoding="ascii") as handle:
++                handle.write(digest)
++                handle.flush()
++                os.fsync(handle.fileno())
++            return True
++        return binding.read_text(encoding="ascii") == digest
++    except (OSError, ValueError, RecursionError):
++        return False
++
++
++def _display_path(path: pathlib.Path, project_root: pathlib.Path) -> str | None:
++    if not _within(path, project_root):
++        return None
++    name = path.relative_to(project_root).as_posix()
++    return name if _SAFE_DIAGNOSTIC_PATH.fullmatch(name) and ".." not in name.split("/") else None
+ 
+ 
+ def _string_leaves(value: object, field: str = "material") -> list[tuple[str, str]]:
+@@ -242,7 +336,11 @@
+             dependencies[_path_key(lexical)] = {
+                 "path": str(lexical), "canonical_path": None, "sha256": None, "status": "missing",
+             }
+-        raise SourceMaterialError(((reference.field, "referenced file is missing or cannot be resolved"),)) from exc
++        diagnostic = {"field": reference.field, "code": "evidence-file-unresolved"}
++        if safe and (name := _display_path(lexical, project_root)) is not None:
++            diagnostic["path"] = name
++        raise SourceMaterialError(((reference.field, "referenced file is missing or cannot be resolved"),),
++                                  diagnostics=[diagnostic]) from exc
+     # An exact grant must match both identities. A symlink at the granted
+     # filename, or another alias pointing to it, grants no extra authority.
+     exact_file = any(_path_key(lexical) == _path_key(resolved) == _path_key(file) for file in read_files)
+@@ -305,7 +403,15 @@
+     start = reference.start if reference.start is not None else 1
+     end = reference.end if reference.end is not None else len(lines)
+     if start < 1 or end < start or end > len(lines):
+-        raise SourceMaterialError(((reference.field, "referenced line range is outside the file or reversed"),))
++        diagnostic = {
++            "field": reference.field, "code": "evidence-range-out-of-bounds",
++            "requested_lines": {"start": start, "end": end},
++            "file_line_count": len(lines),
++        }
++        if (name := _display_path(resolved, project_root)) is not None:
++            diagnostic["path"] = name
++        raise SourceMaterialError(((reference.field, "referenced line range is outside the file or reversed"),),
++                                  diagnostics=[diagnostic])
+     selected = lines[start - 1:end]
+     identity = json.dumps([_path_key(resolved), sha, start, end], ensure_ascii=False)
+     source: dict[str, object] = {
+@@ -370,6 +476,7 @@
+     max_state_plus_question_tokens: int = 32768,
+     questions: Mapping | None = None,
+     source_references: Mapping | None = None,
++    evidence_refs: list[dict] | None = None,
+ ) -> dict:
+     """Hydrate precise file citations, deduplicate, and fit explicit excerpts.
+ 
+@@ -381,7 +488,11 @@
+     """
+     prepared = PreparedSourceState(state)
+     prepared.pop("evidence_sources", None)
+-    references = _references(prepared.get("material"), source_references, prepared.get("preparation"))
++    references = (
++        _references(prepared.get("material"), source_references, prepared.get("preparation"))
++        if evidence_refs is None
++        else explicit_references(prepared.get("material"), prepared.get("preparation"), evidence_refs)
++    )
+     if not references:
+         return prepared
+     if project_root is None:
+@@ -430,12 +541,22 @@
+     source_lines: list[list[str]] = []
+     seen: dict[str, int] = {}
+     snapshots: dict[str, _Snapshot] = {}
++    failures = []
++    diagnostics = []
++    truncated = False
+     for reference in references:
+         try:
+             source, lines = _read_source(reference, root, roots, deny, snapshots, dependencies, worker_scope, read_files)
+         except SourceMaterialError as exc:
+-            exc.file_evidence = copy.deepcopy(list(dependencies.values()))
+-            raise
++            if not failures or len(failures) < MAX_DIAGNOSTIC_ISSUES:
++                failures.extend(exc.issues)
++                diagnostics.extend(exc.diagnostics)
++            else:
++                truncated = True
++                break
++            if any(field == "evidence_sources" for field, _ in exc.issues):
++                break
++            continue
+         source_id = str(source["source_id"])
+         if source_id in seen:
+             existing = sources[seen[source_id]]["references"]
+@@ -446,6 +567,8 @@
+         sources.append(source)
+         source_lines.append(lines)
+     prepared.file_evidence = copy.deepcopy(list(dependencies.values()))
++    if failures:
++        raise SourceMaterialError(tuple(failures), prepared.file_evidence, diagnostics, truncated)
+     prepared["evidence_sources"] = sources
+     if _fits(prepared, questions, max_state_bytes, max_total_tokens, max_state_plus_question_tokens):
+         return prepared
+--- a/packages/multi-workers/decision_playground.py
++++ b/packages/multi-workers/decision_playground.py
+@@ -775,6 +775,7 @@
+                     reviewed_questions or decision_points.questions_map(point),
+                     project_dir=self.control_root, limits=request_limits,
+                     source_references=(book.get("notes") or {}).get("evidence"),
++                    evidence_refs=book.get("evidence_refs"),
+                 )
+             except decision_material_sources.SourceMaterialError as exc:
+                 issues.extend(
+--- a/packages/multi-workers/decision_points.py
++++ b/packages/multi-workers/decision_points.py
+@@ -1975,6 +1975,7 @@
+     project_dir: pathlib.Path | str | None = None,
+     limits: Mapping[str, int] | None = None,
+     source_references: Mapping | None = None,
++    evidence_refs: list[dict] | None = None,
+ ) -> tuple[dict, dict[str, dict]]:
+     """One prepared request shape for the real observation and its preview.
+ 
+@@ -1995,6 +1996,7 @@
+         max_state_plus_question_tokens=int(resolved.get("max_state_plus_question_tokens", 32768)),
+         questions=prepared_questions,
+         source_references=source_references,
++        evidence_refs=evidence_refs,
+     )
+     return (
+         state,
+@@ -6914,6 +6916,7 @@
+                     "max_state_plus_question_tokens": cfg.max_state_plus_question_tokens,
+                 },
+                 source_references=(book.get("notes") or {}).get("evidence"),
++                evidence_refs=book.get("evidence_refs"),
+             )
+         except decision_material_sources.SourceMaterialError as exc:
+             capture.material_refused = True
+--- a/packages/multi-workers/mw.py
++++ b/packages/multi-workers/mw.py
+@@ -980,6 +980,7 @@
+     "meta",
+     "context",
+     "parent_decision_ref",
++    "evidence_refs",
+ )
+ 
+ 
+@@ -1646,6 +1647,8 @@
+     material: Mapping | None = None,
+     preparation: Mapping | None = None,
+     source_references: Mapping | None = None,
++    evidence_refs: list[dict] | None = None,
++    replay_block: dict | None = None,
+ ) -> dict:
+     """The honest response for an already-started logical id (no model call)."""
+     last = linked[-1] if linked else {}
+@@ -1687,11 +1690,18 @@
+         "business_decisions": int(last.get("business_decisions") or 0),
+     }
+     result.update(_decide_feedback_fields([]))
++    if not linked and replay_block is not None:
++        result.update({
++            "reason": replay_block["reason"],
++            "escalated_reason": replay_block["escalated_reason"],
++            "input_diagnostics": replay_block["input_diagnostics"],
++            "original_blocked_event_id": replay_block["event_id"],
++        })
+     if linked and control_root is not None and isinstance(last.get("decision_id"), str):
+         try:
+-            source_required = bool(decision_points.decision_material_sources._references(
+-                material, source_references, preparation
+-            ))
++            source_required = bool(evidence_refs) if evidence_refs is not None else bool(
++                decision_points.decision_material_sources._references(material, source_references, preparation)
++            )
+             dependencies = _decide_replay_file_dependencies(control_root, last["decision_id"])
+             if source_required and not dependencies:
+                 raise decision_file_evidence.FileEvidenceError("original source dependency snapshot is missing")
+@@ -1766,6 +1776,7 @@
+     book_state: dict | None = None,
+     book_cfg: decision.DecisionConfig | None = None,
+     book_credential_snapshot: object = None,
++    evidence_refs: list[dict] | None = None,
+ ) -> int:
+     """One prepared (T11/T23) request: active id -> contract -> replay -> send.
+ 
+@@ -1782,8 +1793,17 @@
+     stage = "registry-check"
+     cfg = book_cfg
+     credential_snapshot = book_credential_snapshot
++    if book_meta is not None and "evidence_refs" in book_meta:
++        evidence_refs = book_meta["evidence_refs"]
+ 
+     def emit(result: dict) -> None:
++        if "input_diagnostics" in result:
++            diagnostic = result["input_diagnostics"]
++            redactor = decision.known_secret_redactor(cfg, snapshot=credential_snapshot)
++            for issue in diagnostic["issues"]:
++                name = issue.get("path")
++                if name is not None and (not isinstance(name, str) or redactor.redact(name).text != name):
++                    issue.pop("path")
+         if result.get("available") is False:
+             _decide_audit_block(
+                 control_root, stage, result, meta=meta,
+@@ -1899,11 +1919,19 @@
+     if start is not None:
+         # Same logical id: answer from the recorded fact, never a new send.
+         stage = "replay"
++        if not decision_points.decision_material_sources.evidence_binding(
++            control_root, dp, str(logical_id), evidence_refs,
++        ):
++            return refuse("input-incomplete", issues=(("evidence_refs", "original selectors differ or cannot be verified"),))
+         emit(
+             _decide_replayed_payload(
+                 dp, str(logical_id), linked, mode=mode, control_root=control_root,
+                 material=material, preparation=preparation,
+                 source_references=book_meta.get("evidence") if isinstance(book_meta, Mapping) else None,
++                evidence_refs=evidence_refs,
++                replay_block=decision_blocked.recall_input_block(
++                    control_root, str(logical_id), dp, meta.key, meta.task_key,
++                ),
+             ),
+         )
+         return 0
+@@ -1920,11 +1948,19 @@
+         except OSError:
+             linked = []
+         stage = "replay"
++        if not decision_points.decision_material_sources.evidence_binding(
++            control_root, dp, str(logical_id), evidence_refs,
++        ):
++            return refuse("input-incomplete", issues=(("evidence_refs", "original selectors differ or cannot be verified"),))
+         emit(
+             _decide_replayed_payload(
+                 dp, str(logical_id), linked, mode=mode, control_root=control_root,
+                 material=material, preparation=preparation,
+                 source_references=book_meta.get("evidence") if isinstance(book_meta, Mapping) else None,
++                evidence_refs=evidence_refs,
++                replay_block=decision_blocked.recall_input_block(
++                    control_root, str(logical_id), dp, meta.key, meta.task_key,
++                ),
+             ),
+         )
+         return 0
+@@ -1946,6 +1982,10 @@
+         )
+         emit(result)
+         return 2
++    if evidence_refs is not None and not decision_points.decision_material_sources.evidence_binding(
++        control_root, dp, str(logical_id), evidence_refs, record=True,
++    ):
++        return refuse("record-start-failed", detail="could not record file evidence selectors; no request sent")
+ 
+     trigger = decision_points.Trigger.from_mapping(
+         material, trigger_id=str(logical_id), key=meta.key, task_key=meta.task_key
+@@ -1973,6 +2013,7 @@
+             actor_role=_decide_protocol_actor_role(verified_role),
+             logical_id=str(logical_id),
+             **({"source_references": book_meta.get("evidence")} if book_meta is not None else {}),
++            **({"evidence_refs": evidence_refs} if evidence_refs is not None else {}),
+         )
+     except decision.DecisionInputError as exc:
+         return refuse(
+@@ -2056,6 +2097,8 @@
+         "prepared_at": request_result.get("prepared_at"),
+     }
+     result.update(capture_fields)
++    if "input_diagnostics" in request_result:
++        result["input_diagnostics"] = request_result["input_diagnostics"]
+     file_evidence = getattr(client, "last_file_evidence", None)
+     result["file_evidence"] = [dict(dependency) for dependency in (file_evidence or [])]
+     if book_meta is not None:
+@@ -2160,6 +2203,17 @@
+         )
+         return 2
+     assert material is not None and preparation is not None and meta is not None
++    evidence_refs = payload.get("evidence_refs")
++    if "evidence_refs" in payload and not isinstance(evidence_refs, list):
++        failure = _decide_request_failure(dp, getattr(meta, "logical_id", None), "input-incomplete",
++                                         detail="evidence_refs must be an array")
++        failure["input_diagnostics"] = {
++            "stage": "evidence-preparation", "transport": "not-sent",
++            "issues": [{"field": "evidence_refs", "code": "invalid-evidence-reference"}],
++            "truncated": False,
++        }
++        _decide_print_refusal(project_dir, failure, as_json)
++        return 2
+     return _decide_run_prepared(
+         args,
+         project_dir,
+@@ -2169,6 +2223,7 @@
+         context=context,
+         meta=meta,
+         parent_ref=parent_ref,
++        evidence_refs=evidence_refs,
+     )
+ 
+ 
+@@ -6224,11 +6279,17 @@
+     retry_id = getattr(args, "retry_write", None)
+     payload = None
+     preparation = None
++    evidence_refs = None
+     if getattr(args, "stdin", False):
+         payload, err = _decide_read_envelope_json(args)
+         if err:
+             return _decide_sign_refusal(key_dir_path, as_json, [err], logical_id=retry_id)
+         assert payload is not None
++        evidence_refs = payload.get("evidence_refs")
++        if "evidence_refs" in payload and not isinstance(evidence_refs, list):
++            return _decide_sign_refusal(
++                key_dir_path, as_json, ["input-incomplete: evidence_refs must be an array"], logical_id=retry_id
++            )
+         material, preparation, admission_meta, context, parent_ref, err = (
+             _decide_prepared_envelope(payload)
+         )
+@@ -6505,6 +6566,7 @@
+             response = client.request_prepared(
+                 point.id, material, preparation,
+                 actor_role="pm", logical_id=meta.logical_id,
++                **({"evidence_refs": evidence_refs} if evidence_refs is not None else {}),
+             )
+         except decision.DecisionInputError as exc:
+             return _decide_sign_refusal(
+@@ -6533,6 +6595,7 @@
+             return _decide_sign_refusal(
+                 key_dir_path, as_json, problems, logical_id=meta.logical_id,
+                 file_evidence=file_evidence,
++                input_diagnostics=response.get("input_diagnostics"),
+             )
+         conclusion = response.get("choice")
+         if conclusion not in decision_signoff_result.CONCLUSIONS:
+@@ -6653,6 +6716,7 @@
+ def _decide_sign_refusal(
+     key_dir_path: pathlib.Path, as_json: bool, problems: list[str], *, logical_id: str | None,
+     file_evidence: list[dict] | None = None,
++    input_diagnostics: dict | None = None,
+ ) -> int:
+     for problem in problems:
+         print(f"[mw decide sign] {problem}", file=sys.stderr)
+@@ -6666,6 +6730,7 @@
+         "second_approval": 0,
+         "problems": list(problems),
+         **({"file_evidence": file_evidence} if file_evidence else {}),
++        **({"input_diagnostics": input_diagnostics} if input_diagnostics is not None else {}),
+     }
+     _decide_sign_audit_block(key_dir_path, payload, problems)
+     _decide_print(payload, as_json)
+@@ -6684,6 +6749,7 @@
+             "decision_id": payload.get("decision_id"),
+             "reason": payload["signoff_status"],
+             "detail": " | ".join(problems),
++            "input_diagnostics": payload.get("input_diagnostics"),
+         },
+     )
+     if event_id is not None:
+@@ -7082,8 +7148,11 @@
+     this command raises: the client normalises runtime failures and the config
+     read is fail-soft.
+     """
++    action = getattr(args, "decide_action", None)
++    if action == "capabilities":
++        _decide_print({"evidence_refs": 1, "input_diagnostics": 1}, True)
++        return 0
+     project_dir = pathlib.Path(args.project).resolve()
+-    action = getattr(args, "decide_action", None)
+     if action == "run":
+         return _decide_run(args, project_dir)
+     if action == "lifecycle":
+@@ -15067,6 +15136,7 @@
+         help="Decision service: run a decision point, probe transports, show config, write config",
+     )
+     decide_sub = decide_p.add_subparsers(dest="decide_action", required=True)
++    decide_sub.add_parser("capabilities", help="Report supported local decision request and diagnostic protocols")
+     decide_run_p = decide_sub.add_parser(
+         "run", help="Ask one decision point (JSON request on stdin or --request-file; state is never argv)"
+     )
+--- a/packages/multi-workers/test_dp_consolidation_cli.py
++++ b/packages/multi-workers/test_dp_consolidation_cli.py
+@@ -794,6 +794,114 @@
+     assert len(_lifecycle_events(tmp_path)) == before
+ 
+ 
++@pytest.mark.parametrize(
++    ("field", "value", "code"),
++    [
++        ("task_requirements", "本轮生成 `canonical59-refusals.json`。", "evidence-file-unresolved"),
++        ("pm_decision_background", "依据 `review.md:8-24`。", "evidence-range-out-of-bounds"),
++        ("worker_execution", "writer，证据.old.json、review.md:4,9。", "evidence-file-unresolved"),
++    ],
++)
++def test_source_refusal_returns_concrete_diagnostics_and_replays(
++    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, field: str, value: str, code: str,
++) -> None:
++    (tmp_path / "review.md").write_text("observed\n" * 21, encoding="utf-8")
++    dp = "dp-pm-steer"
++    material = _material(dp)
++    material[field] = value
++    envelope = _envelope(dp, "17c2c45f-84c9-4a6e-9ca1-3ea5087afd95", material=material)
++
++    def never_transport(*args, **kwargs):
++        pytest.fail("invalid evidence reached the decision transport")
++
++    monkeypatch.setattr(mw.decision.DecisionClient, "decide", never_transport)
++    opts = {"stdin": json.dumps(envelope), "stdin_flag": True, "dp": dp,
++            "dp_id": None, "request_file": None, "book": None}
++    rc, first, _ = _invoke("run", tmp_path, monkeypatch, **opts)
++    assert rc == 0, first
++    result = _payload(first)
++    assert not result["available"]
++    diagnostics = result["input_diagnostics"]
++    assert diagnostics["transport"] == "not-sent"
++    assert diagnostics["issues"][0]["field"] == f"material.{field}"
++    assert diagnostics["issues"][0]["code"] == code
++    receipt = tmp_path / ".agenticdoc/_autopilot/dp-blocked" / f'{result["blocked_event_id"]}.json'
++    assert json.loads(receipt.read_text(encoding="utf-8"))["input_diagnostics"] == diagnostics
++    rc, second, _ = _invoke("run", tmp_path, monkeypatch, **opts)
++    assert rc == 0
++    replay = _payload(second)
++    assert not replay["available"] and replay["replayed"]
++    assert replay["original_blocked_event_id"] == result["blocked_event_id"]
++    assert replay["input_diagnostics"] == diagnostics
++
++
++def test_explicit_refs_project_only_declared_file_to_transport(
++    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    (tmp_path / "review.md").write_text("first\nsecond\nthird\n", encoding="utf-8")
++    dp = "dp-pm-steer"
++    material = _material(dp)
++    material["task_requirements"] = "本轮生成 `canonical59-refusals.json`。"
++    material["worker_execution"] = "writer，证据.old.json、review.md:4,9。"
++    calls = []
++
++    def capture(self, state, questions, dp=None):
++        calls.append(state)
++        return {"available": False, "reason": "timeout", "attempts": 1}
++
++    monkeypatch.setattr(mw.decision.DecisionClient, "decide", capture)
++    envelope = _envelope(dp, "explicit-source-case", material=material, evidence_refs=[{
++        "field": "material.worker_execution", "path": "review.md",
++        "lines": {"start": 2, "end": 3},
++    }])
++    rc, out, _ = _invoke(
++        "run", tmp_path, monkeypatch, stdin=json.dumps(envelope),
++        stdin_flag=True, dp=dp, dp_id=None, request_file=None, book=None,
++    )
++    assert rc == 0, out
++    [model_state] = calls
++    assert "evidence_refs" not in model_state
++    [source] = model_state["evidence_sources"]
++    assert source["text"].splitlines() == ["second", "third"]
++    assert source["references"] == ["material.worker_execution"]
++    envelope["evidence_refs"][0]["lines"] = {"start": 1, "end": 1}
++    rc, replay, _ = _invoke(
++        "run", tmp_path, monkeypatch, stdin=json.dumps(envelope),
++        stdin_flag=True, dp=dp, dp_id=None, request_file=None, book=None,
++    )
++    assert rc == 2
++    assert _payload(replay)["issues"][0]["field"] == "evidence_refs"
++    assert len(calls) == 1
++
++
++def test_explicit_book_uses_the_same_source_builder(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
++    dp = "dp-route"
++    material = _material(dp)
++    refs = [
++        {"field": f"material.{field}", "path": "evidence.txt", "lines": {"start": 1, "end": 1}}
++        for field in dpts.REQUIRED_STATE_FIELDS[dp]
++    ]
++    book = _book_file(
++        tmp_path, dp, material=material, meta=_valid_book_meta(dp, "book-explicit-example"),
++        notes={}, evidence_refs=refs,
++    )
++    calls = []
++
++    def capture(self, state, questions, dp=None):
++        calls.append(state)
++        return {"available": False, "reason": "timeout", "attempts": 1}
++
++    monkeypatch.setattr(mw.decision.DecisionClient, "decide", capture)
++    rc, out, err = _invoke(
++        "run", tmp_path, monkeypatch, dp=dp, dp_id=None, request_file=None, book=str(book),
++    )
++    assert rc == 0, err or out
++    [model_state] = calls
++    [source] = model_state["evidence_sources"]
++    assert source["text"].splitlines() == ["line one"]
++    assert source["references"] == [ref["field"] for ref in refs]
++
++
+ def test_valid_parent_reference_is_recorded_only_after_ledger_proof(
+     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, fake: FakeCalls
+ ) -> None:
+--- a/packages/multi-workers/test_decision_material_sources.py
++++ b/packages/multi-workers/test_decision_material_sources.py
+@@ -51,6 +51,54 @@
+     (tmp_path / "proof.txt").write_text("observed result\n", encoding="utf-8", newline="")
+     result = sources.prepare_source_state(state({"current_state": "actual proof.txt:1 supports it"}, "background"), tmp_path)
+     assert result["evidence_sources"][0]["text"] == "observed result\n"
++
++
++def test_explicit_evidence_ignores_future_filename_and_adjacent_chinese_prose(tmp_path: Path) -> None:
++    (tmp_path / "proof.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
++    original = state({
++        "task_requirements": "本轮生成 `canonical59-refusals.json`。",
++        "worker_execution": "writer，无旧预算。证据.old.json、proof.py:2,3。",
++    }, "report")
++    with pytest.raises(sources.SourceMaterialError) as failed:
++        sources.prepare_source_state(original, tmp_path)
++    assert failed.value.diagnostics[0]["code"] == "evidence-file-unresolved"
++    assert "evidence_sources" not in sources.prepare_source_state(original, tmp_path, evidence_refs=[])
++    [source] = sources.prepare_source_state(original, tmp_path, evidence_refs=[{
++        "field": "material.report.worker_execution", "path": "proof.py",
++        "lines": {"start": 2, "end": 3},
++    }])["evidence_sources"]
++    assert source["text"].splitlines() == ["two", "three"]
++    assert source["references"] == ["material.report.worker_execution"]
++
++
++def test_explicit_bad_ranges_and_missing_files_are_reported_together(tmp_path: Path) -> None:
++    (tmp_path / "proof.md").write_text("line\n" * 21, encoding="utf-8")
++    refs = [
++        {"field": "material.pm_decision_background", "path": "proof.md", "lines": {"start": 8, "end": 24}},
++        {"field": "material.pm_decision_background", "path": "missing.md"},
++    ]
++    original = state("依据", "pm_decision_background")
++    with pytest.raises(sources.SourceMaterialError) as failed:
++        sources.prepare_source_state(original, tmp_path, evidence_refs=refs)
++    assert failed.value.diagnostics == [
++        {"field": "material.pm_decision_background", "code": "evidence-range-out-of-bounds",
++         "path": "proof.md", "requested_lines": {"start": 8, "end": 24}, "file_line_count": 21},
++        {"field": "material.pm_decision_background", "code": "evidence-file-unresolved", "path": "missing.md"},
++    ]
++    refs[0]["lines"] = {"start": 9, "end": 21}
++    [source] = sources.prepare_source_state(original, tmp_path, evidence_refs=refs[:1])["evidence_sources"]
++    assert source["line_range"] == [9, 21]
++
++
++def test_explicit_references_do_not_grant_read_scope(tmp_path: Path) -> None:
++    project = tmp_path / "project"
++    project.mkdir()
++    outside = tmp_path / "outside.md"
++    outside.write_text("outside", encoding="utf-8")
++    ref = {"field": "material.review_evidence", "path": str(outside)}
++    with pytest.raises(sources.SourceMaterialError, match="outside the configured read roots") as failed:
++        sources.prepare_source_state(state("evidence"), project, evidence_refs=[ref])
++    assert "path" not in failed.value.diagnostics[0]
+ 
+ 
+ @pytest.mark.parametrize("pattern", ["{private,secret}/**", "@(private|secret)/**", "!public/**"])
+--- a/packages/multi-workers/docs/prepared-decisions.md
++++ b/packages/multi-workers/docs/prepared-decisions.md
+@@ -32,6 +32,19 @@
+ the selected wire ID. Question versions distinguish the prepared protocol.
+ 
+ ## File citations include readable content
++
++New prepared requests can declare an `evidence_refs` array. Each item supplies
++an existing `field` such as `material.worker_execution`, a literal `path`,
++and optional inclusive `lines` with integer `start` and `end`. An empty
++array uses inline material exclusively. When this field is present, prose,
++backticks, Markdown links and planned output names do not trigger file reads.
++Use the structured list for new requests and for corrected requests that
++previously inferred a path from prose.
++
++Decision books can use the same top-level list. Existing file citations in
++`notes.evidence` must be moved to the explicit list. Non-file command provenance
++may remain in `notes.evidence`. Requests and books without the explicit list
++keep their existing citation rules.
+ 
+ The framework resolves precise local file citations in business material,
+ decision-book `notes.evidence`, and explicit citations in prepared basis text,
+@@ -154,6 +167,13 @@
+ event IDs. If the tool receives a receipt ID from its MW child, it uses that ID
+ for the initial call. A later blocked replay gets its own receipt.
+ 
++Evidence preparation refusals carry `input_diagnostics` in CLI JSON and
++`ask_decision`. The tool displays the field and a repair hint, with safe path
++and line information when available. `transport: not-sent` records a local
++refusal before transport. The local capabilities command is
++`mw decide capabilities`. In a loaded PM window, `/mw runtime` shows the
++loaded extension hash and the selected Python entry's capabilities.
++
+ From the control project root, list the latest blocks in PowerShell.
+ 
+ ```powershell
