@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 import decision
+import decision_evidence_policy
 import decision_source_scope
 import mw_common
 
@@ -216,7 +217,8 @@ def _read_source(reference: _Reference, project_root: pathlib.Path,
                  roots: list[pathlib.Path], deny: list[str],
                  snapshots: dict[str, _Snapshot],
                  dependencies: dict[str, dict[str, object]],
-                 worker_scope: decision_source_scope.WorkerSourceScope | None = None) -> tuple[dict[str, object], list[str]]:
+                 worker_scope: decision_source_scope.WorkerSourceScope | None = None,
+                 read_files: tuple[pathlib.Path, ...] = ()) -> tuple[dict[str, object], list[str]]:
     raw_path = pathlib.Path(reference.path.replace("\\", "/"))
     candidate = raw_path if raw_path.is_absolute() else project_root / raw_path
     if worker_scope is not None:
@@ -231,7 +233,8 @@ def _read_source(reference: _Reference, project_root: pathlib.Path,
     except (OSError, RuntimeError) as exc:
         try:
             loose = candidate.resolve()
-            safe = any(_within(loose, root) for root in roots)
+            safe = (any(_within(loose, root) for root in roots)
+                    or any(_path_key(lexical) == _path_key(loose) == _path_key(file) for file in read_files))
             safe = safe and not _denied(lexical, roots, deny) and not _denied(loose, roots, deny)
         except (OSError, RuntimeError):
             safe = False
@@ -240,7 +243,10 @@ def _read_source(reference: _Reference, project_root: pathlib.Path,
                 "path": str(lexical), "canonical_path": None, "sha256": None, "status": "missing",
             }
         raise SourceMaterialError(((reference.field, "referenced file is missing or cannot be resolved"),)) from exc
-    if not any(_within(resolved, root) for root in roots):
+    # An exact grant must match both identities. A symlink at the granted
+    # filename, or another alias pointing to it, grants no extra authority.
+    exact_file = any(_path_key(lexical) == _path_key(resolved) == _path_key(file) for file in read_files)
+    if not any(_within(resolved, root) for root in roots) and not exact_file:
         raise SourceMaterialError(((reference.field, "referenced file is outside the configured read roots"),))
     if _denied(lexical, roots, deny) or _denied(resolved, roots, deny):
         raise SourceMaterialError(((reference.field, "referenced file is excluded by the read-scope deny globs"),))
@@ -414,13 +420,19 @@ def prepare_source_state(
     except SourceMaterialError as exc:
         exc.file_evidence = copy.deepcopy(list(dependencies.values()))
         raise
+    try:
+        read_files = decision_evidence_policy.load_read_files(root, dependencies)
+    except (decision_evidence_policy.EvidencePolicyError, OSError, ValueError, RuntimeError) as exc:
+        message = str(exc) if isinstance(exc, decision_evidence_policy.EvidencePolicyError) else "decision evidence policy cannot be resolved"
+        raise SourceMaterialError((("evidence_sources", message),),
+                                  file_evidence=copy.deepcopy(list(dependencies.values()))) from exc
     sources: list[dict[str, object]] = []
     source_lines: list[list[str]] = []
     seen: dict[str, int] = {}
     snapshots: dict[str, _Snapshot] = {}
     for reference in references:
         try:
-            source, lines = _read_source(reference, root, roots, deny, snapshots, dependencies, worker_scope)
+            source, lines = _read_source(reference, root, roots, deny, snapshots, dependencies, worker_scope, read_files)
         except SourceMaterialError as exc:
             exc.file_evidence = copy.deepcopy(list(dependencies.values()))
             raise

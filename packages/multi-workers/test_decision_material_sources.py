@@ -337,8 +337,10 @@ def test_unreadable_source_refuses_without_contents(tmp_path: Path, monkeypatch:
 def test_replay_dependencies_are_local_only_and_include_scope_config(tmp_path: Path) -> None:
     (tmp_path / "report.md").write_bytes(b"actual\n")
     prepared = sources.prepare_source_state(state("report.md"), tmp_path)
-    assert len(prepared.file_evidence) == 2
-    config, source = prepared.file_evidence
+    assert len(prepared.file_evidence) == 3
+    config, policy, source = prepared.file_evidence
+    assert policy == {"path": str(tmp_path / ".mw" / "decision-evidence.yml"), "canonical_path": None,
+                      "sha256": None, "status": "missing"}
     assert config == {"path": str(tmp_path / ".agenticdoc" / "target.yml"), "canonical_path": None,
                       "sha256": None, "status": "missing"}
     assert source["path"] == source["canonical_path"] == str(tmp_path / "report.md")
@@ -354,7 +356,7 @@ def test_missing_source_dependency_is_authorized_but_outside_path_is_not(tmp_pat
     }
     with pytest.raises(sources.SourceMaterialError) as outside:
         sources.prepare_source_state(state("../missing.md"), tmp_path)
-    assert len(outside.value.file_evidence) == 1
+    assert len(outside.value.file_evidence) == 2
 
 
 def test_invalid_utf8_source_still_has_hash_for_replay_invalidation(tmp_path: Path) -> None:

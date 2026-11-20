@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
 # 64 citations + target config + Worker card + exact-file evidence policy.
-MAX_DEPENDENCIES = 66
+MAX_DEPENDENCIES = 67
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _STATUSES = ("missing", "unreadable", "oversized")
 

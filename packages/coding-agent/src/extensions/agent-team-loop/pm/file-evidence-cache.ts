@@ -5,8 +5,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
-// 64 citations + target config + Worker card.
-const MAX_DEPENDENCIES = 66;
+// 64 citations + target config + Worker card + exact-file evidence policy.
+const MAX_DEPENDENCIES = 67;
 const SHA256 = /^[a-f0-9]{64}$/;
 
 export interface FileEvidenceDependency {

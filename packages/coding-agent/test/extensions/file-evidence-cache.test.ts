@@ -58,6 +58,13 @@ describe("authorized file evidence freshness", () => {
 		expect(parseFileEvidence({ file_evidence: [] })).toEqual([]);
 	});
 
+	it("accepts all 67 source/config/card dependencies but refuses an unbounded array", () => {
+		const file = path.resolve("safe.md");
+		const dependency: FileEvidenceDependency = { path: file, canonical_path: null, sha256: null, status: "missing" };
+		expect(parseFileEvidence({ file_evidence: Array.from({ length: 67 }, () => dependency) })).toHaveLength(67);
+		expect(parseFileEvidence({ file_evidence: Array.from({ length: 68 }, () => dependency) })).toBeNull();
+	});
+
 	it("detects missing-to-created dependencies without reading newly authorized contents", () => {
 		const root = project();
 		const file = path.join(root, "report.md");
