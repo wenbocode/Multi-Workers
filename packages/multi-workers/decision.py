@@ -570,7 +570,20 @@ class DecisionConfig:
 # ---------------------------------------------------------------------------
 
 _CRED_ENV_SUFFIXES = ("_API_KEY", "_TOKEN", "_KEY", "_SECRET", "_PASSWORD")
-_BEARER_RE = re.compile(r"(?i)(bearer\s+)[^\s,;\"']+")
+_BEARER_RE = re.compile(
+    r"""
+    (
+        \bauthorization(?:\\?["'`])?\s*[:=]\s*(?:\\?["'`])?bearer\s+
+        | bearer\s+
+          (?!
+              (?:header|\[REDACTED_HEADER_TERM\])
+              (?=$|[\s,;"'`)\u3400-\u9fff，。；：！？、）】]|\.(?=$|[\s"']))
+          )
+    )
+    [^\s,;"']+
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 _SK_RE = re.compile(r"\bsk-[A-Za-z0-9._\-]{6,}")
 
 
