@@ -14,6 +14,7 @@ import {
 	MwContextPolicyError,
 	type NativeCompactionPlan,
 } from "./context-controller.ts";
+import { projectFileHistoryMessages, projectNativeFileHistory } from "./context-file-history.ts";
 import {
 	CONTEXT_POLICY_FIELDS,
 	type ContextPolicyField,
@@ -67,7 +68,14 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 	const compactModelsBySignal = new WeakMap<AbortSignal, { provider: string; id: string }>();
 	const contextFor = (ctx: ExtensionContext, pending?: Context["messages"][number]): Context => {
 		const active = new Set(pi.getActiveTools());
-		const messages = convertToLlm(buildSessionContext(ctx.sessionManager.getBranch()).messages);
+		const branch = ctx.sessionManager.getBranch();
+		const messages = convertToLlm(
+			projectFileHistoryMessages(
+				buildSessionContext(branch).messages,
+				branch,
+				resolveContextPolicy(location).compaction.fileHistoryMaxBytes,
+			),
+		);
 		return {
 			systemPrompt: ctx.getSystemPrompt(),
 			messages: pending ? [...messages, pending] : messages,
@@ -261,8 +269,16 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 		if (event.message.stopReason === "error" || event.message.stopReason === "aborted") return;
 		if (event.toolResults.length || ctx.hasPendingMessages()) await plan(ctx);
 	});
-	pi.on("context", (_event, ctx) => {
+	pi.on("context", (event, ctx) => {
 		install(ctx);
+		if (event.messages)
+			return {
+				messages: projectFileHistoryMessages(
+					event.messages,
+					ctx.sessionManager.getBranch(),
+					resolveContextPolicy(location).compaction.fileHistoryMaxBytes,
+				),
+			};
 	});
 	pi.on("model_select", (_event, ctx) => {
 		install(ctx);
@@ -288,6 +304,25 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 				return { cancel: true };
 			}
 		}
+		if (event.preparation && event.branchEntries) {
+			const previous = event.branchEntries
+				.slice()
+				.reverse()
+				.find((entry) => entry.type === "compaction");
+			if (previous?.type === "compaction" && event.preparation.previousSummary === previous.summary)
+				event.preparation.previousSummary = projectNativeFileHistory(previous, 0);
+			// This preparation is transient; native generation still owns full fileOps and persistence.
+			event.preparation.messagesToSummarize = projectFileHistoryMessages(
+				event.preparation.messagesToSummarize,
+				event.branchEntries,
+				0,
+			);
+			event.preparation.turnPrefixMessages = projectFileHistoryMessages(
+				event.preparation.turnPrefixMessages,
+				event.branchEntries,
+				0,
+			);
+		}
 		nativeSummarySignals.add(event.signal);
 		if (states.get(ctx.modelRegistry)?.pending) automaticNativeSummarySignals.add(event.signal);
 		// Pin this compaction's selection, including retries; edits apply to the next compaction.
@@ -300,6 +335,12 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 	pi.on("session_before_tree", (event, ctx) => {
 		install(ctx);
 		if (event.preparation.userWantsSummary) {
+			const entries = event.preparation.entriesToSummarize;
+			for (let index = 0; index < (entries?.length ?? 0); index++) {
+				const entry = entries[index];
+				if (entry.type === "compaction" || entry.type === "branch_summary")
+					entries[index] = { ...entry, summary: projectNativeFileHistory(entry, 0) };
+			}
 			nativeSummarySignals.add(event.signal);
 			nativeSummarySignalsByRegistry.set(ctx.modelRegistry, event.signal);
 		}
@@ -307,7 +348,7 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 }
 
 export const CONTEXT_COMMAND_USAGE =
-	"Usage: /mw context compact-model [provider/model|clear] | show [--type TYPE] [--json] | set <field> <value> --global|--project [--type TYPE] | clear <field|type> --global|--project [--type TYPE]";
+	"Usage: /mw context compact-model [provider/model|clear] | show [--type TYPE] [--json] | set-file-history-max-bytes <bytes> --global|--project [--type TYPE] | clear-file-history-max-bytes --global|--project [--type TYPE] | set <field> <value> --global|--project [--type TYPE] | clear <field|type> --global|--project [--type TYPE]";
 
 /** User-command only: workers may inspect their policy, but cannot change it. */
 export async function runContextCommand(
@@ -319,7 +360,11 @@ export async function runContextCommand(
 ): Promise<void> {
 	try {
 		const tokens = args.trim().split(/\s+/).filter(Boolean);
-		const action = tokens.shift() ?? "show";
+		let action = tokens.shift() ?? "show";
+		if (action === "set-file-history-max-bytes" || action === "clear-file-history-max-bytes") {
+			action = action === "set-file-history-max-bytes" ? "set" : "clear";
+			tokens.unshift("compaction.fileHistoryMaxBytes");
+		}
 		if (action === "compact-model") {
 			const [value, extra] = tokens;
 			if (extra || value?.startsWith("--")) throw new Error(CONTEXT_COMMAND_USAGE);
@@ -414,7 +459,11 @@ export async function runContextCommand(
 		}
 		const report = {
 			...policy,
-			compaction: { enabled: policy.compaction.enabled, triggerRatio: policy.compaction.triggerRatio },
+			compaction: {
+				enabled: policy.compaction.enabled,
+				triggerRatio: policy.compaction.triggerRatio,
+				fileHistoryMaxBytes: policy.compaction.fileHistoryMaxBytes,
+			},
 			generationOwner: "pi-native-compaction",
 			summaryGeneration: NATIVE_SUMMARY_POLICY,
 			compactModel: {

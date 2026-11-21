@@ -18,7 +18,7 @@ import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../../src/core/agent-session.ts";
 import { completeSummarization } from "../../src/core/compaction/compaction.ts";
-import { SUMMARIZATION_SYSTEM_PROMPT } from "../../src/core/compaction/utils.ts";
+import { formatFileOperations, SUMMARIZATION_SYSTEM_PROMPT } from "../../src/core/compaction/utils.ts";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -265,6 +265,8 @@ async function nativeHarness(
 		baseToolsOverride: Object.fromEntries(tools.map((tool) => [tool.name, tool])),
 		initialActiveToolNames: tools.map((tool) => tool.name),
 	});
+	// Match createAgentSession's context-event wiring when constructing Agent directly.
+	agent.transformContext = (messages) => session.extensionRunner.emitContext(messages);
 	nativeSessions.push(session);
 	return { ...h, agentSession: session, settings };
 }
@@ -373,6 +375,131 @@ describe("context provider integration", () => {
 						[CONTEXT_CHECKPOINT_TYPE, CONTEXT_COMPACTION_USAGE_TYPE].includes(entry.customType),
 				),
 		).toHaveLength(0);
+	});
+
+	it.each(["manual", "automatic"])(
+		"%s compaction keeps full file history locally and bounds continuation across resume",
+		async (mode) => {
+			const manager = SessionManager.create(project, path.join(directory, "large-file-history"));
+			manager.appendMessage({ role: "user", content: "original task", timestamp: 0 });
+			manager.appendMessage(assistant());
+			const kept = manager.appendMessage({ role: "user", content: "continue original task", timestamp: 1 });
+			const readFiles = Array.from(
+				{ length: 2000 },
+				(_, index) => `historical/${index}/${"long-path/".repeat(12)}read.ts`,
+			).sort();
+			const modifiedFiles = ["src/current-change.ts"];
+			manager.appendCompaction(
+				`Original goal and constraints${formatFileOperations(readFiles, modifiedFiles)}`,
+				kept,
+				100000,
+				{ readFiles, modifiedFiles },
+			);
+			for (const message of history().messages) manager.appendMessage(message);
+			let summaries = 0;
+			const requests: Context[] = [];
+			const respond = (request: Context) => {
+				if (request.systemPrompt?.startsWith(SUMMARIZATION_SYSTEM_PROMPT)) {
+					summaries++;
+					expect(JSON.stringify(request.messages)).toContain("Original goal and constraints");
+					expect(JSON.stringify(request.messages)).not.toMatch(/<read-files>|<modified-files>|historical\/1999/);
+					return assistant([{ type: "text", text: "Preserved goal, current changes and next steps" }]);
+				}
+				requests.push(request);
+				return assistant();
+			};
+			const first = await nativeHarness(respond, manager);
+			if (mode === "manual") await first.agentSession.compact();
+			await first.agentSession.prompt("continue after compaction");
+			expect(summaries).toBe(1);
+			expect(requests).toHaveLength(1);
+			expect(JSON.stringify(requests[0].messages)).toContain("2000 read-only, 1 modified");
+			expect(JSON.stringify(requests[0].messages)).not.toContain(readFiles[0]);
+			expect(JSON.stringify(requests[0].messages)).toContain(readFiles.at(-1));
+			const compaction = manager
+				.getEntries()
+				.filter((entry) => entry.type === "compaction")
+				.at(-1);
+			expect(compaction?.details).toEqual({ readFiles, modifiedFiles });
+			expect(compaction?.summary).toContain(readFiles.at(-1));
+			const file = manager.getSessionFile();
+			if (!file) throw new Error("missing file history session");
+			const reopened = SessionManager.open(file);
+			expect(
+				reopened
+					.getEntries()
+					.filter((entry) => entry.type === "compaction")
+					.at(-1),
+			).toEqual(compaction);
+			const resumed = await nativeHarness(respond, reopened);
+			await resumed.agentSession.prompt("continue after resume");
+			expect(summaries).toBe(1);
+			expect(JSON.stringify(requests.at(-1)?.messages)).toContain("Preserved goal, current changes and next steps");
+			expect(JSON.stringify(requests.at(-1)?.messages)).not.toContain(readFiles[0]);
+		},
+	);
+
+	it("applies configurable file history limits immediately and reports their source through set/show/clear", async () => {
+		const h = await harness(() => assistant());
+		const kept = h.session.appendMessage({ role: "user", content: "task", timestamp: 0 });
+		const filePath = "a".repeat(2000);
+		h.session.appendCompaction(`Task summary${formatFileOperations([filePath], [])}`, kept, 10000, {
+			readFiles: [filePath],
+			modifiedFiles: [],
+		});
+		const event = { messages: h.session.buildSessionContext().messages };
+		expect(JSON.stringify(await h.emit("context", event))).toContain("<read-files>");
+		await runContextCommand(h.pi, h.ctx, project, "set-file-history-max-bytes 1024 --project", {
+			homeDir: home,
+		});
+		expect(JSON.stringify(await h.emit("context", event))).not.toContain("<read-files>");
+		await runContextCommand(h.pi, h.ctx, project, "show --json", { homeDir: home });
+		const report = vi.mocked(h.ctx.ui.notify).mock.calls.at(-1)?.[0];
+		if (typeof report !== "string") throw new Error("missing context report");
+		expect(JSON.parse(report)).toMatchObject({
+			compaction: { fileHistoryMaxBytes: 1024 },
+			sources: { "compaction.fileHistoryMaxBytes": { scope: "project", level: "defaults" } },
+		});
+		await runContextCommand(h.pi, h.ctx, project, "clear-file-history-max-bytes --project", {
+			homeDir: home,
+		});
+		expect(JSON.stringify(await h.emit("context", event))).toContain("<read-files>");
+		await runContextCommand(h.pi, h.ctx, project, "set-file-history-max-bytes 0 --global", { homeDir: home });
+		expect(JSON.stringify(await h.emit("context", event))).not.toContain("<read-files>");
+		const globalFile = path.join(home, ".mw/context.json");
+		const original = fs.readFileSync(globalFile, "utf8");
+		await runContextCommand(h.pi, h.ctx, project, "set-file-history-max-bytes 99999 --global", {
+			homeDir: home,
+			taskFile: "worker-task",
+		});
+		expect(fs.readFileSync(globalFile, "utf8")).toBe(original);
+		expect(vi.mocked(h.ctx.ui.notify).mock.calls.at(-1)?.[0]).toContain("Workers may only show context policy");
+		expect(h.session.buildSessionContext().messages).toEqual(event.messages);
+	});
+
+	it("excludes old file inventories from native tree summarization without changing stored entries", async () => {
+		const manager = SessionManager.create(project, path.join(directory, "tree-file-history"));
+		const target = manager.appendMessage({ role: "user", content: "original task", timestamp: 0 });
+		manager.appendMessage(assistant());
+		const kept = manager.appendMessage({ role: "user", content: "branch work", timestamp: 1 });
+		const readFiles = ["historical-path/".repeat(20000)];
+		manager.appendCompaction(`Important branch goal${formatFileOperations(readFiles, [])}`, kept, 100000, {
+			readFiles,
+			modifiedFiles: [],
+		});
+		manager.appendMessage(assistant([{ type: "text", text: "current branch progress" }]));
+		const stored = structuredClone(manager.getEntries());
+		let summaries = 0;
+		const h = await nativeHarness((request) => {
+			summaries++;
+			expect(request.systemPrompt).toBe(SUMMARIZATION_SYSTEM_PROMPT);
+			expect(JSON.stringify(request.messages)).toContain("Important branch goal");
+			expect(JSON.stringify(request.messages)).not.toMatch(/<read-files>|historical-path/);
+			return assistant([{ type: "text", text: "Preserved branch goal and progress" }]);
+		}, manager);
+		expect((await h.agentSession.navigateTree(target, { summarize: true })).cancelled).toBe(false);
+		expect(summaries).toBe(1);
+		for (const entry of stored) expect(manager.getEntry(entry.id)).toEqual(entry);
 	});
 
 	it("real AgentSession recovers a truncated summary after a parallel tool batch using separate limit=1 leases", async () => {

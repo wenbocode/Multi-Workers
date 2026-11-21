@@ -6,9 +6,12 @@ import { acquireLock } from "./file-lock.ts";
 import { controlRootFromTaskPath } from "./paths.ts";
 import { readTaskType } from "./task-frontmatter.ts";
 
+export const DEFAULT_FILE_HISTORY_MAX_BYTES = 4096;
+
 export interface ContextCompactionPolicy {
 	enabled: boolean;
 	triggerRatio: number;
+	fileHistoryMaxBytes: number;
 	targetRatio: number;
 	keepRecentTokens: number;
 	maxSummaryTokens: number;
@@ -19,6 +22,7 @@ export const CONTEXT_POLICY_FIELDS = [
 	"maxTokens",
 	"compaction.enabled",
 	"compaction.triggerRatio",
+	"compaction.fileHistoryMaxBytes",
 	"compaction.targetRatio",
 	"compaction.keepRecentTokens",
 	"compaction.maxSummaryTokens",
@@ -88,6 +92,7 @@ const DEFAULTS = {
 	compaction: {
 		enabled: true,
 		triggerRatio: 0.8,
+		fileHistoryMaxBytes: DEFAULT_FILE_HISTORY_MAX_BYTES,
 		targetRatio: 0.5,
 		keepRecentTokens: 20000,
 		maxSummaryTokens: 4096,
@@ -140,6 +145,8 @@ function validateValue(field: ContextPolicyField, value: unknown, filePath: stri
 	if (field === "compaction.enabled") valid = typeof value === "boolean";
 	else if (field === "compaction.targetRatio" || field === "compaction.triggerRatio")
 		valid = typeof value === "number" && Number.isFinite(value) && value > 0 && value < 1;
+	else if (field === "compaction.fileHistoryMaxBytes")
+		valid = typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 	else valid = typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 	if (!valid) throw new ContextPolicyError("MW_CONTEXT_CONFIG_INVALID", filePath, location, "invalid policy value");
 }

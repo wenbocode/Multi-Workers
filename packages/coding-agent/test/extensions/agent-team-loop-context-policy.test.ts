@@ -55,6 +55,7 @@ describe("context policy resolution", () => {
 			expect(policy.compaction).toEqual({
 				enabled: true,
 				triggerRatio: 0.8,
+				fileHistoryMaxBytes: 4096,
 				targetRatio: 0.5,
 				keepRecentTokens: 20000,
 				maxSummaryTokens: 4096,
@@ -86,6 +87,36 @@ describe("context policy resolution", () => {
 		expect(resolveContextPolicy({ controlRoot, homeDir, taskType: "coding" }).maxTokens).toBe(256000);
 	});
 
+	it("inherits the file history byte limit through all layers and permits zero for local-only history", async () => {
+		write(globalPath, {
+			version: 1,
+			defaults: { compaction: { fileHistoryMaxBytes: 8192 } },
+			types: { coding: { compaction: { fileHistoryMaxBytes: 2048 } } },
+		});
+		write(projectPath, {
+			version: 1,
+			defaults: { compaction: { fileHistoryMaxBytes: 1024 } },
+			types: { coding: { compaction: { fileHistoryMaxBytes: 0 } } },
+		});
+		const location = { controlRoot, homeDir, taskType: "coding" };
+		expect(resolveContextPolicy(location).compaction.fileHistoryMaxBytes).toBe(0);
+		for (const [scope, type, inherited] of [
+			["project", "coding", 1024],
+			["project", undefined, 2048],
+			["global", "coding", 8192],
+			["global", undefined, 4096],
+		] as const) {
+			const policy = await updateContextPolicy({
+				...location,
+				scope,
+				type,
+				field: "compaction.fileHistoryMaxBytes",
+				operation: "clear",
+			});
+			expect(policy.compaction.fileHistoryMaxBytes).toBe(inherited);
+		}
+	});
+
 	it("resolves every field separately through all four layers and sequential clear operations", async () => {
 		write(globalPath, {
 			version: 1,
@@ -103,6 +134,7 @@ describe("context policy resolution", () => {
 		expect(policy.compaction).toEqual({
 			enabled: false,
 			triggerRatio: 0.7,
+			fileHistoryMaxBytes: 4096,
 			targetRatio: 0.4,
 			keepRecentTokens: 20000,
 			maxSummaryTokens: 3000,
@@ -241,6 +273,9 @@ describe("context policy invalid inputs and atomic updates", () => {
 		['{"version":1,"defaults":{"compaction":null}}', "defaults.compaction"],
 		['{"version":1,"defaults":{"compaction":{"enabled":"false"}}}', "compaction.enabled"],
 		['{"version":1,"defaults":{"compaction":{"keepRecentTokens":0}}}', "keepRecentTokens"],
+		['{"version":1,"defaults":{"compaction":{"fileHistoryMaxBytes":-1}}}', "fileHistoryMaxBytes"],
+		['{"version":1,"defaults":{"compaction":{"fileHistoryMaxBytes":1.5}}}', "fileHistoryMaxBytes"],
+		['{"version":1,"defaults":{"compaction":{"fileHistoryMaxBytes":true}}}', "fileHistoryMaxBytes"],
 		['{"version":1,"defaults":{"compaction":{"maxSummaryTokens":-1}}}', "maxSummaryTokens"],
 		['{"version":1,"defaults":{"compaction":{"timeoutMs":true}}}', "timeoutMs"],
 		['{"version":1,"defaults":{"compaction":{"targetRatio":0}}}', "targetRatio"],

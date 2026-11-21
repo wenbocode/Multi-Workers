@@ -49,6 +49,10 @@
 /mw context set maxTokens 200000 --project --type coding
 /mw context set compaction.enabled false --project
 /mw context set compaction.triggerRatio 0.75 --project
+/mw context set-file-history-max-bytes 4096 --global
+/mw context set-file-history-max-bytes 1024 --project --type coding
+/mw context set-file-history-max-bytes 0 --project
+/mw context clear-file-history-max-bytes --project
 /mw context clear maxTokens --project --type coding
 /mw context clear compaction.enabled --project
 /mw context clear type --global --type coding
@@ -56,9 +60,9 @@
 
 变更必须恰好指定 `--global` 或 `--project`；不写 `--type` 就操作该作用域的 defaults。`clear <字段>` 只移除选定覆盖，恢复下层继承；`clear type` 移除选定类型的整条覆盖，保留其他类型。全局文件缺失时执行 clear 会先显式保存初始文档再清除指定项，因此类型删除可以持久生效。worker 仅允许 show，不能通过任务回答调高预算。
 
-show 给出实际类型、控制根、配置/模型/有效窗口、inputBudget、自动压缩状态和逐字段来源，并以 summaryGeneration 汇总摘要恢复策略。MW 负责 maxTokens、compaction.enabled 和 compaction.triggerRatio；摘要准备、保留近期历史、保存和重建使用 pi 原生流程。MW 在原生摘要的 provider 边界单独关闭 thinking，并为输出额度设置下述下限和有限恢复。旧文件中的 targetRatio、keepRecentTokens、maxSummaryTokens、timeoutMs 显示为旧生成字段，不影响当前触发和生成；设置这些旧字段会拒绝，clear 仍可用于清理历史覆盖。不会自动修改用户现有配置文件。
+show 给出实际类型、控制根、配置/模型/有效窗口、inputBudget、自动压缩状态和逐字段来源，并以 summaryGeneration 汇总摘要恢复策略。MW 负责 maxTokens、compaction.enabled、compaction.triggerRatio 和 compaction.fileHistoryMaxBytes；摘要准备、保留近期历史、保存和重建使用 pi 原生流程。MW 在原生摘要的 provider 边界单独关闭 thinking，并为输出额度设置下述下限和有限恢复。旧文件中的 targetRatio、keepRecentTokens、maxSummaryTokens、timeoutMs 显示为旧生成字段，不影响当前触发和生成；设置这些旧字段会拒绝，clear 仍可用于清理历史覆盖。不会自动修改用户现有配置文件。
 
-配置采用 version=1，拒绝未知字段、非法 JSON、非对象 types、布尔/字符串数值、非正安全整数。触发比例必须满足 `0 < triggerRatio < 1`，旧 targetRatio 不再限制 triggerRatio。读取接受一个前置 UTF8 BOM；写入为无 BOM UTF8，使用同目录独占锁和临时文件原子替换。锁冲突不会偷锁，损坏或不可读文件不会回退到旧的宽松快照。
+配置采用 version=1，拒绝未知字段、非法 JSON、非对象 types、布尔/字符串数值和非法整数。token/超时字段须为正安全整数；fileHistoryMaxBytes 为非负安全整数，单位为 UTF-8 字节。触发比例必须满足 `0 < triggerRatio < 1`，旧 targetRatio 不再限制 triggerRatio。读取接受一个前置 UTF8 BOM；写入为无 BOM UTF8，使用同目录独占锁和临时文件原子替换。锁冲突不会偷锁，损坏或不可读文件不会回退到旧的宽松快照。
 
 每次业务/摘要请求前重新读取策略。修改影响后续请求，不取消已经发出的请求；摘要结束后在业务发送前再次读取并复核。合法数值也可能不适合当前模型或输出预算，此时请求仍会被拒绝。
 
@@ -83,6 +87,12 @@ E/R/S/B 与估算值均可诊断。输出预留或固定 system/tools/任务锚�
 本地 Codex 计入与实际请求同源的完整 JSON 包装，并另预留 16384 CLI 附加提示估算。**本地 CLI 不接受调用方 maxTokens 作为解码硬上限**：这里是外层保守预算，不能保证 CLI 内部精确窗口或输出截断。不同 provider 的 tokenizer 无法由此精确预知，服务端 overflow 防护继续保留。
 
 ## 自动压缩、恢复与失败
+
+自动文件清单的 `compaction.fileHistoryMaxBytes` 默认 **4096 字节（4 KiB）**，通过 `set-file-history-max-bytes <字节数> --global|--project [--type TYPE]` 设置，通过 `clear-file-history-max-bytes` 恢复继承，show 查询有效值和来源。通用 `set compaction.fileHistoryMaxBytes` 入口也使用相同校验。它约束原生摘要自动追加的 `<read-files>` 和 `<modified-files>` 清单合计体积，包含标签和分隔符；超过上限时优先保留最近访问的路径，淘汰最旧路径，附文件数量及本地会话条目引用。0 表示所有清单只留本地。不会按路径字符串中途截断，也不截断任务摘要正文。
+
+访问顺序从本地会话中的 read/write/edit 工具调用还原，同一路径再次访问会更新顺序；未找到原始调用的旧路径优先淘汰。单条路径连同标签都放不下时只留本地，其余可容纳路径仍按最近访问顺序选入。原生 details 的字母排序不被当成访问顺序。
+
+再次生成 compact/tree 摘要时，旧的自动清单从输入中排除，避免模型反复总结历史路径。投影只作用于能与原生 details 精确核对的自动清单，也处理历史重复区块；普通用户消息、正文中的文件引用和扩展自定义摘要保持不变。原生会话 summary 及 details.readFiles/modifiedFiles 仍完整保存在本地，已有会话文件无需改写；重开后同样应用上限。预算估算与实际业务上下文使用同一投影。此项不保证解决由摘要正文、近期消息或模型输出预留引起的其他超预算。
 
 达到 Trigger 且自动压缩开启时，MW 请求 pi 在首请求前或完整工具批次结束后的安全边界执行原生 compact。压缩使用与手动 `/compact` 相同的原生准备、提示词、生成、持久化和活动上下文恢复，不再要求 MW 六字段 JSON，也不再生成新的 MW checkpoint。
 
