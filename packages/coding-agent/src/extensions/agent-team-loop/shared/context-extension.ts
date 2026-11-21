@@ -64,6 +64,7 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 	const nativeSummarySignals = new WeakSet<AbortSignal>();
 	const automaticNativeSummarySignals = new WeakSet<AbortSignal>();
 	const nativeAttempts = new WeakMap<AbortSignal, { attemptId: string; attemptStartedAt: string }>();
+	const compactModelsBySignal = new WeakMap<AbortSignal, { provider: string; id: string }>();
 	const contextFor = (ctx: ExtensionContext, pending?: Context["messages"][number]): Context => {
 		const active = new Set(pi.getActiveTools());
 		const messages = convertToLlm(buildSessionContext(ctx.sessionManager.getBranch()).messages);
@@ -108,7 +109,7 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 			automaticNativeSummarySignals,
 			nativeSummaryModel: (signal) => {
 				if (!nativeAttempts.has(signal)) return undefined;
-				const selected = windowCompactModels.get(ctx.modelRegistry);
+				const selected = compactModelsBySignal.get(signal);
 				if (!selected) return undefined;
 				const model = ctx.modelRegistry.find(selected.provider, selected.id);
 				if (!model) throw new MwContextPolicyError("SUMMARY_MODEL_UNAVAILABLE");
@@ -289,6 +290,9 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 		}
 		nativeSummarySignals.add(event.signal);
 		if (states.get(ctx.modelRegistry)?.pending) automaticNativeSummarySignals.add(event.signal);
+		// Pin this compaction's selection, including retries; edits apply to the next compaction.
+		const selected = windowCompactModels.get(ctx.modelRegistry);
+		if (selected) compactModelsBySignal.set(event.signal, selected);
 		nativeAttempts.set(event.signal, { attemptId: randomUUID(), attemptStartedAt: new Date().toISOString() });
 		nativeSummarySignalsByRegistry.set(ctx.modelRegistry, event.signal);
 		return undefined;
@@ -322,8 +326,6 @@ export async function runContextCommand(
 			if (value) {
 				if (options.taskFile || process.env.PI_WORKER_TASK)
 					throw new Error("Workers may only show the compact model");
-				if (!ctx.isIdle())
-					throw new Error("Wait for the current operation to finish before changing the compact model");
 				if (value === "clear") windowCompactModels.delete(ctx.modelRegistry);
 				else {
 					const separator = value.indexOf("/");

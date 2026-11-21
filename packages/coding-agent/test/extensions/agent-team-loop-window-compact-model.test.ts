@@ -52,6 +52,12 @@ async function fixture(contextWindow = 100000) {
 				api = pi;
 				registerModelConcurrency(pi);
 				registerContextPolicy(pi, { controlRoot: root, homeDir: path.join(root, "home") });
+				pi.registerCommand("mw", {
+					handler: (args, ctx) =>
+						runContextCommand(pi, ctx, root, args.slice("context".length).trim(), {
+							homeDir: path.join(root, "home"),
+						}),
+				});
 			},
 		],
 	});
@@ -101,10 +107,8 @@ async function fixture(contextWindow = 100000) {
 	h.session.agent.streamFunction = h.session.modelRuntime.streamSimple.bind(h.session.modelRuntime);
 	await h.session.bindExtensions({});
 	const command = async (args: string) => {
-		if (!api) throw new Error("extension API not installed");
-		const ctx = h.session.extensionRunner.createCommandContext();
-		const notify = vi.spyOn(ctx.ui, "notify");
-		await runContextCommand(api, ctx, root, args, { homeDir: path.join(root, "home") });
+		const notify = vi.spyOn(h.session.extensionRunner.getUIContext(), "notify");
+		await h.session.prompt(`/mw context ${args}`);
 		return notify.mock.calls.at(-1)?.[0] ?? "";
 	};
 	const history = (size = 9000) => {
@@ -116,11 +120,12 @@ async function fixture(contextWindow = 100000) {
 	target.setResponses(
 		Array.from({ length: 10 }, () => fauxAssistantMessage("Complete task summary with remaining work.")),
 	);
-	return { h, target, calls, command, history };
+	if (!api) throw new Error("extension API not installed");
+	return { h, api, target, calls, command, history };
 }
 
 describe("window compact model", () => {
-	it("keeps the prior selection on auth failure, during a run and in worker mode", async () => {
+	it("keeps the prior selection on auth failure and in worker mode", async () => {
 		const { h, command } = await fixture();
 		await command("compact-model compact-fixture/summary/model");
 		const registry = h.session.extensionRunner.getModelRegistry();
@@ -128,13 +133,84 @@ describe("window compact model", () => {
 		expect(await command("compact-model faux/same-provider-summary")).toBe(
 			"Compact model authentication unavailable",
 		);
-		const idle = vi.spyOn(h.session, "isIdle", "get").mockReturnValue(false);
-		expect(await command("compact-model clear")).toContain("Wait for the current operation");
-		idle.mockRestore();
 		vi.stubEnv("PI_WORKER_TASK", "worker-task");
 		expect(await command("compact-model clear")).toBe("Workers may only show the compact model");
 		expect(await command("compact-model")).toContain("compact-fixture/summary/model source=window");
 	});
+
+	it("sets and clears the compact model through commands while a real task is running", async () => {
+		const { h, command } = await fixture();
+		let release = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		h.setResponses([
+			async () => {
+				await gate;
+				return fauxAssistantMessage("Task completed");
+			},
+		]);
+		const run = h.session.prompt("Work");
+		try {
+			await vi.waitFor(() => expect(h.faux.state.callCount).toBe(1));
+			expect(h.session.isIdle).toBe(false);
+			expect(await command("compact-model compact-fixture/summary/model")).toContain("source=window");
+			expect(await command("compact-model clear")).toContain("faux/task-model source=task");
+			expect(h.session.isIdle).toBe(false);
+			expect(h.session.model?.id).toBe("task-model");
+		} finally {
+			release();
+			await run;
+		}
+		expect(h.session.isIdle).toBe(true);
+	});
+
+	it.each(["task", "window"] as const)(
+		"keeps the %s model for every request in a compaction, then applies the new selection",
+		async (initial) => {
+			const { h, api, target, calls, command, history } = await fixture();
+			if (initial === "window") await command("compact-model compact-fixture/summary/model");
+			history();
+			const sourceModels: string[] = [];
+			let changed = false;
+			api.on("session_before_compact", async () => {
+				if (!changed) {
+					changed = true;
+					if (initial === "window") expect(await command("compact-model clear")).toContain("source=task");
+					expect(await command("compact-model faux/same-provider-summary")).toContain("source=window");
+				}
+			});
+			let truncated = false;
+			const responses = Array.from({ length: 4 }, () => () => {
+				if (!truncated) {
+					truncated = true;
+					// A short summary forces another request with the same compaction signal.
+					return fauxAssistantMessage("short", { stopReason: "length" });
+				}
+				return fauxAssistantMessage("Complete summary preserving the task and remaining work.");
+			});
+			target.setResponses(responses);
+			h.setResponses(
+				responses.map((response) => async (_ctx, _options, _state, model) => {
+					sourceModels.push(model.id);
+					return response();
+				}),
+			);
+			await h.session.compact();
+			expect(changed).toBe(true);
+			if (initial === "window") {
+				expect(calls.map((call) => call.model.id)).toEqual(["summary/model", "summary/model"]);
+				expect(sourceModels).toEqual([]);
+			} else {
+				expect(sourceModels).toEqual(["task-model", "task-model"]);
+				expect(calls).toEqual([]);
+			}
+			history();
+			await h.session.compact();
+			expect(sourceModels.at(-1)).toBe("same-provider-summary");
+			expect(h.session.model?.id).toBe("task-model");
+		},
+	);
 
 	it("fails without committing or falling back when the selected model leaves the catalog", async () => {
 		const { h, calls, command, history } = await fixture();
