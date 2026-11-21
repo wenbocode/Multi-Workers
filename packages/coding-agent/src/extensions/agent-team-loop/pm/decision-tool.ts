@@ -48,6 +48,7 @@ import {
 	prepareDecisionEnvelope,
 	validateStructuredState,
 } from "./triage-client.ts";
+import { canPmSelectType, PM_TYPE_FALLBACK_DIRECTIVE } from "./type-fallback.ts";
 
 /** Registered tool name (referenced by `activeToolsForType` wiring in index.ts). */
 export const ASK_DECISION_TOOL = "ask_decision";
@@ -224,7 +225,7 @@ export interface DecisionSignoffResult {
 export interface AskDecisionUnavailable {
 	available: false;
 	unavailable: string;
-	action: typeof ASK_DECISION_BLOCKED_ACTION;
+	action: typeof ASK_DECISION_BLOCKED_ACTION | "pm-select-type";
 	/** The child's own escalation verdict (`decision_points.ESCALATED_REASONS`,
 	 * 7 values) passed through verbatim. `unavailable` keeps the frozen legacy
 	 * transport vocabulary; the two coexist, neither is folded into the other
@@ -243,6 +244,7 @@ export type AskDecisionPayload = AskDecisionAvailable | AskDecisionUnavailable;
 /** Result of one tool attempt: the payload plus the exact text handed back. */
 export interface AskDecisionOutcome {
 	blockedEventId?: unknown;
+	pmTypeFallbackRefused?: boolean;
 	payload: AskDecisionPayload;
 	/** Single-line JSON, plus the fixed directive line when unavailable. */
 	text: string;
@@ -1111,9 +1113,27 @@ export async function runAskDecision(input: AskDecisionInput): Promise<AskDecisi
 		input.evidenceRefs === undefined
 			? prepared.envelope
 			: { ...prepared.envelope, evidence_refs: input.evidenceRefs };
-	return dp === SIGN_KEY_ID
+	const outcome = await (dp === SIGN_KEY_ID
 		? runSignoffAskDecision(input, dp, envelope, started)
-		: runMaterialAskDecision(input, dp, envelope, started);
+		: runMaterialAskDecision(input, dp, envelope, started));
+	if (
+		!outcome.payload.available &&
+		outcome.pmTypeFallbackRefused !== true &&
+		canPmSelectType({
+			projectDir: input.projectDir,
+			dp,
+			key: input.key,
+			role,
+			reason: outcome.payload.unavailable,
+			material: input.material,
+			preparation: input.preparation,
+			context: input.context,
+		})
+	) {
+		outcome.payload.action = "pm-select-type";
+		outcome.text = `${jsonText(outcome.payload)}\n${PM_TYPE_FALLBACK_DIRECTIVE}`;
+	}
+	return outcome;
 }
 
 /** Diagnostic for a locally refused call (no child ran). */
@@ -1167,6 +1187,7 @@ async function callDecideChild(
 							: undefined,
 				}),
 				blockedEventId: response.blocked_event_id,
+				pmTypeFallbackRefused: !ASK_DECISION_PYTHON_REASONS.has(rawReason),
 			},
 		};
 	}
@@ -1847,6 +1868,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			"available=false means blocked, never guess.",
 		promptGuidelines: [
 			PM_GATE_ROUTING_RULE,
+			PM_TYPE_FALLBACK_DIRECTIVE,
 			"Include evidence_refs in new decisions. Use [] for inline evidence, or list existing files with field, path and optional inclusive lines. Leave planned outputs in the task text. Use input_diagnostics to correct local preparation failures.",
 			"Call ask_decision ONLY with a dp id from the enum and the trigger_id from your task context " +
 				"(<task_key> or <task_key>#ckpt<N>); never invent a dp id, trigger or question id.",
@@ -1964,6 +1986,9 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				}
 				return { content: [{ type: "text", text: outcome.text }], details: outcome.payload };
 			}
+
+			if (outcome.payload.action === "pm-select-type")
+				return { content: [{ type: "text", text: outcome.text }], details: outcome.payload };
 
 			const reason = outcome.payload.unavailable;
 			const escalated =

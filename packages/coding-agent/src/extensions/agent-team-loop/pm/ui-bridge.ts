@@ -128,6 +128,8 @@ import {
 	triageDispatchEnvelope,
 } from "./triage-client.ts";
 
+import { canPmSelectType } from "./type-fallback.ts";
+
 export { captureDecisionTaskState };
 
 /** Owner key for a worker task. Explicit key wins (deliberate choice — the
@@ -1915,7 +1917,6 @@ export function planDispatchFrontmatter(input: {
 	const headLines = [`type: ${input.taskType}`];
 	if (input.phase !== undefined && input.phase.length > 0) headLines.push(`phase: ${input.phase}`);
 	if (imagesField !== undefined) headLines.push(`images: ${imagesField}`);
-	const typeLines = `${headLines.join("\n")}\n`;
 
 	// The value that will actually run: an explicit request wins, else the
 	// configured role default (which the launcher would pick next). Either way
@@ -2005,28 +2006,58 @@ export function planDispatchFrontmatter(input: {
 	if (governed && triage) {
 		if (!triage.result.available || !triage.result.basis) {
 			const reason = triage.result.reason ?? "bad-response";
-			const detail = [
-				"input-incomplete",
-				"input-oversize",
-				"role-forbidden",
-				"upstream-error",
-				"entry-unavailable",
-				"provider-unavailable",
-				"budget-exhausted",
-				"timeout",
-				"bad-response",
-				"disabled",
-				"unavailable",
-			].includes(reason)
-				? reason
-				: "unavailable";
-			return {
-				ok: false,
-				triage,
-				message: `dp-w-type blocked (${detail}). Use dispatch_worker with the claimed key, original card and decision_preparation containing the PM's prepared basis.`,
-			};
+			const built =
+				input.dp1 === undefined
+					? undefined
+					: buildDp1DecisionMaterial({
+							...input.dp1,
+							taskType: input.taskType,
+							imagesRequired: imagesRequested,
+						});
+			const eligible =
+				!triage.result.available &&
+				built?.ok &&
+				canPmSelectType({
+					projectDir: input.cwd,
+					dp: DP1_ID,
+					key: input.dp1?.key,
+					role: "pm",
+					reason,
+					material: built.material,
+					preparation: input.dp1?.preparation,
+				});
+			const basis = eligible
+				? input.dp1?.preparation?.basis_catalog.find((item) => item.applies_to.includes(input.taskType))
+				: undefined;
+			if (basis) {
+				const provenance = { source: "pm", type: input.taskType, reason, basis };
+				headLines.push(`type-selection: ${JSON.stringify(provenance)}`);
+				triage.stateTrace += `\n[TYPE_SELECTION] ${JSON.stringify(provenance)}`;
+				triage.receipt = `[triage] ${JSON.stringify(provenance)}`;
+			} else {
+				const detail = [
+					"input-incomplete",
+					"input-oversize",
+					"role-forbidden",
+					"upstream-error",
+					"entry-unavailable",
+					"provider-unavailable",
+					"budget-exhausted",
+					"timeout",
+					"bad-response",
+					"disabled",
+					"unavailable",
+				].includes(reason)
+					? reason
+					: "unavailable";
+				return {
+					ok: false,
+					triage,
+					message: `dp-w-type blocked (${detail}). Use dispatch_worker with the claimed key, original card and decision_preparation containing the PM's prepared basis.`,
+				};
+			}
 		}
-		if (triage.result.triage_type !== input.taskType)
+		if (triage.result.available && triage.result.triage_type !== input.taskType)
 			return {
 				ok: false,
 				triage,
@@ -2055,7 +2086,7 @@ export function planDispatchFrontmatter(input: {
 	if (!requested) {
 		return {
 			ok: true,
-			frontmatter: typeLines,
+			frontmatter: `${headLines.join("\n")}\n`,
 			echo: configured
 				? `model: dispatch.yml ${role}=${configured}`
 				: `model: route default (no dispatch.yml ${role} default)`,
@@ -2068,7 +2099,7 @@ export function planDispatchFrontmatter(input: {
 	if (configured && requested === configured) {
 		return {
 			ok: true,
-			frontmatter: typeLines,
+			frontmatter: `${headLines.join("\n")}\n`,
 			echo: `model: dispatch.yml ${role}=${configured} (requested value matches the configured default; not pinned)`,
 			triage,
 		};
