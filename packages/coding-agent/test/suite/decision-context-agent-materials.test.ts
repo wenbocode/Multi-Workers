@@ -1490,10 +1490,19 @@ it("checks the current PM window's live claim on each ask and receipt", async ()
 			[selfRow.replace("active", "idle"), KEY],
 		]) {
 			fs.writeFileSync(indexFile, index, "utf8");
-			expect(payloadOf(await call(ASK_DECISION_TOOL, { ...args, key }))).toMatchObject({
-				available: false,
-				missing_fields: ["meta.key"],
-			});
+			const refused = payloadOf(await call(ASK_DECISION_TOOL, { ...args, key })) as unknown as Record<
+				string,
+				unknown
+			>;
+			// A claim/key-binding refusal is a local identity check, NOT a missing
+			// MATERIAL field: meta.key is no longer listed in missing_fields. The
+			// independent claim_diagnosis carries the stable reason + safe next step.
+			expect(refused).toMatchObject({ available: false, unavailable: "input-incomplete" });
+			expect(refused.missing_fields).toBeUndefined();
+			const diagnosis = refused.claim_diagnosis as { reason: string; message: string; recovery: string };
+			expect(typeof diagnosis.reason).toBe("string");
+			expect(diagnosis.message).toContain("meta.key");
+			expect(typeof diagnosis.recovery).toBe("string");
 			expect(fs.readdirSync(stub.seenDir)).toEqual([]);
 		}
 		fs.writeFileSync(indexFile, `${selfRow}\n${foreign}`, "utf8");
@@ -1509,7 +1518,12 @@ it("checks the current PM window's live claim on each ask and receipt", async ()
 			stage: "executed",
 			action: "record",
 		});
-		expect(receipt).toContain("meta.key");
+		// The flipped index leaves no row for the claimed key: the receipt is
+		// refused locally with the same independent diagnosis (reason key-not-found),
+		// never a `missing_fields: [meta.key]` prompt and never a lifecycle write.
+		expect(receipt).toContain("claim_diagnosis");
+		expect(receipt).toContain("key-not-found");
+		expect(receipt).not.toContain('"missing_fields"');
 		expect(fs.readdirSync(stub.seenDir)).toEqual(prior);
 	} finally {
 		process.chdir(cwd);

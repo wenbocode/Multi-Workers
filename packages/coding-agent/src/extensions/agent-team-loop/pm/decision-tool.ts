@@ -12,12 +12,13 @@ import * as path from "node:path";
 import { type TLiteral, Type } from "typebox";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import {
-	claimedPmKey,
 	type DecisionPreparation,
 	decisionActorAllowed,
 	decisionIdRefusal,
+	inspectPmClaim,
 	type MaterialIssue,
 	type MaterialReferenceIssue,
+	type PmClaimReason,
 	type PreparedBasis,
 	selectedDecisionBasis,
 	validateDecisionMaterial,
@@ -116,6 +117,90 @@ export const ASK_DECISION_REASON_INPUT_OVERSIZE = "input-oversize";
 /** Fixed phrase every unavailable payload carries (spec AC-005: no default
  * action, no guessing). */
 export const ASK_DECISION_GUESS_DIRECTIVE = "不要自行猜测";
+
+// ── Claim-refusal diagnosis (mw-decision-claim-diagnostics) ──────────────────
+
+/** Stable machine reason carried ONLY by a local claim/key-binding refusal.
+ *  PmClaimReason comes from the single inspectPmClaim pass; the two extra codes
+ *  are the tool's own worker/role identity branches (never a PM claim reason,
+ *  so a non-PM window is never told to re-claim or wait for a PM claim). */
+export type ClaimDiagnosisReason = PmClaimReason | "worker-key-mismatch" | "unknown-role";
+
+/** Independent, OPTIONAL diagnosis attached only to the ask/receipt claim
+ *  refusals. It never enters the model material or metadata schema. */
+export interface ClaimDiagnosis {
+	reason: ClaimDiagnosisReason;
+	message: string;
+	recovery: string;
+}
+
+/** Structured result of one boundKey call: the gate value plus the diagnosis
+ *  produced by the SAME single read. Diagnosis is present exactly when the
+ *  binding was refused (key === undefined); success carries no diagnosis leak. */
+export type BoundKeyResult = { key: string; diagnosis?: undefined } | { key: undefined; diagnosis: ClaimDiagnosis };
+
+/** Common safety constraints reused by every reason-specific diagnosis: no
+ *  foreign owner/key list, no absolute path, no raw exception, no extra
+ *  MATERIAL field and no local recovery action. The two index-level reasons
+ *  keep their separate, precise unknown boundaries below; `meta.key` is named
+ *  only to say it is NOT a material field to add. */
+export const CLAIM_DIAGNOSIS_MESSAGE =
+	"这是本地身份核验未成立，不是审核正文漏填 meta.key；不得把 meta.key 写进 material，" +
+	"不得重复提交、抢占认领、自行 re-claim、写索引或更换 CLI 绕过。";
+
+/** PM reasons stop this round and wait for human coordination. This is human
+ *  guidance only; the diagnosis never performs a reclaim or an index write. */
+export const CLAIM_DIAGNOSIS_RECOVERY =
+	'安全下一步：本轮停止，上报 "blocked on decision <dp>" 并等待人工或当前持有窗口协调；' +
+	"由人工协调后按框架正常 claim/switch 流程重建本窗口 active 认领（或等待持有窗口释放），" +
+	"或带外修复协调索引后由正常流程继续；available:false 为本轮终态，" +
+	"诊断不自动重试、不强制接管、不补 material、不写索引、不放宽权限。";
+
+const WORKER_KEY_MISMATCH_RECOVERY =
+	'安全下一步：本轮停止，上报 "blocked on decision <dp>"；' +
+	"由所属 PM 核对原 task 卡 ownerKey、请求 key 与派发身份；" +
+	"available:false 为本轮终态，不补 material、不写索引、不放宽权限。";
+
+const UNKNOWN_ROLE_RECOVERY =
+	'安全下一步：本轮停止，上报 "blocked on decision <dp>"；' +
+	"由所属 PM 核对注册窗口角色与 task 卡 type 的派发身份；" +
+	"available:false 为本轮终态，不补 material、不写索引、不放宽权限。";
+
+/** Short reason-specific facts, never a second authorization verdict. The
+ *  empty/unparseable case names exactly the three states the reader cannot
+ *  distinguish; the unreadable case names the thrown read without raw errors. */
+const CLAIM_DIAGNOSIS_EXPLANATIONS: Readonly<Record<ClaimDiagnosisReason, string>> = {
+	ok: "认领校验未通过：未取得唯一有效绑定。",
+	"index-unreadable":
+		"PM 认领校验未通过：本次索引读取抛出异常，底层原因 unknown；" +
+		"该状态不等同于索引缺失、空文件或含无法解析的数据行，也不输出异常内容。",
+	"index-empty-or-unparseable":
+		"PM 认领校验未通过：本次索引读取未取得可用数据；" +
+		"索引缺失、空文件或含无法解析的数据行，仅据本次结果无法区分，具体状态 unknown，不得据空结果猜测具体原因。",
+	"invalid-key": "PM 认领校验未通过：解析到的 key 名称不符合现有注册约束。",
+	"ambiguous-claim": "PM 认领校验未通过：满足本次判定的 active 认领或同名 key 行不唯一，无法解析出唯一绑定。",
+	"key-not-found": "PM 认领校验未通过：请求 key 在已解析索引行中不存在。",
+	"key-inactive": "PM 认领校验未通过：请求 key 对应行不是 active。",
+	"foreign-owner": "PM 认领校验未通过：请求 key 对应的 active 行由另一窗口持有。",
+	"no-active-claim": "PM 认领校验未通过：已解析索引中没有本窗口唯一 active 认领。",
+	"worker-key-mismatch":
+		"worker 身份来自 task 卡：请求 key 与卡路径派生的 ownerKey 不一致，本次卡/请求 key 绑定未成立。",
+	"unknown-role": "注册窗口角色或 task 卡 type 未识别，本次身份不能归属到有效 worker/PM 分支。",
+};
+
+const CLAIM_DIAGNOSIS_RECOVERIES: Readonly<Record<ClaimDiagnosisReason, string>> = {
+	ok: CLAIM_DIAGNOSIS_RECOVERY,
+	"index-unreadable": CLAIM_DIAGNOSIS_RECOVERY,
+	"index-empty-or-unparseable": CLAIM_DIAGNOSIS_RECOVERY,
+	"invalid-key": CLAIM_DIAGNOSIS_RECOVERY,
+	"ambiguous-claim": CLAIM_DIAGNOSIS_RECOVERY,
+	"key-not-found": CLAIM_DIAGNOSIS_RECOVERY,
+	"key-inactive": CLAIM_DIAGNOSIS_RECOVERY,
+	"foreign-owner": CLAIM_DIAGNOSIS_RECOVERY,
+	"no-active-claim": CLAIM_DIAGNOSIS_RECOVERY,
+	"worker-key-mismatch": WORKER_KEY_MISMATCH_RECOVERY,
+	"unknown-role": UNKNOWN_ROLE_RECOVERY,
+};
 
 // ── Roles and per-dp permissions (AC-006 / AC-010) ──────────────────────────
 
@@ -223,6 +308,9 @@ export interface DecisionSignoffResult {
 }
 
 export interface AskDecisionUnavailable {
+	/** Independent diagnosis for a LOCAL claim/key-binding refusal only. Never
+	 * present on the default unavailable payload or the pm-select-type path. */
+	claim_diagnosis?: ClaimDiagnosis;
 	available: false;
 	unavailable: string;
 	action: typeof ASK_DECISION_BLOCKED_ACTION | "pm-select-type";
@@ -1141,6 +1229,37 @@ export function refusalOutcome(reason: string, dp: string, missing?: string[]): 
 	return unavailable(reason, dp, false, { missing_fields: missing });
 }
 
+/** Build one reason-specific diagnosis from the stable reason union. Worker
+ *  and unknown-role recoveries are card/identity checks, never PM claim advice. */
+export function claimDiagnosis(reason: ClaimDiagnosisReason): ClaimDiagnosis {
+	return {
+		reason,
+		message: `${CLAIM_DIAGNOSIS_MESSAGE}${CLAIM_DIAGNOSIS_EXPLANATIONS[reason]}`,
+		recovery: CLAIM_DIAGNOSIS_RECOVERIES[reason],
+	};
+}
+
+/** Zero-spawn claim refusal. Built here (NOT through unavailable()) so the
+ *  DEFAULT unavailable payload and the pm-select-type three-key payload stay
+ *  byte-for-byte unchanged; only these two branches carry claim_diagnosis. The
+ *  generic no-guessing directive is kept and the supplied diagnosis's own
+ *  message/recovery are appended verbatim. */
+export function claimRefusalOutcome(dp: string, diagnosis: ClaimDiagnosis): AskDecisionOutcome {
+	const reason = ASK_DECISION_REASON_INPUT_INCOMPLETE;
+	const payload: AskDecisionUnavailable = {
+		available: false,
+		unavailable: reason,
+		action: ASK_DECISION_BLOCKED_ACTION,
+		claim_diagnosis: diagnosis,
+	};
+	return {
+		payload,
+		text:
+			`${jsonText(payload)}\n${unavailableDirective(reason, dp)}\n` + `${diagnosis.message}\n${diagnosis.recovery}`,
+		spawned: false,
+	};
+}
+
 interface ChildCallFailure {
 	ok: false;
 	outcome: AskDecisionOutcome;
@@ -1734,6 +1853,7 @@ export interface DecisionReceiptDetails {
 	stage: string;
 	status: DecisionFeedbackResult["status"] | "refused";
 	unavailable?: string;
+	claim_diagnosis?: ClaimDiagnosis;
 }
 
 /**
@@ -1775,11 +1895,16 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 		? initiatorRoleFromWorkerTask(resolvedTaskPath)
 		: (options.initiatorRole ?? "unknown");
 
-	function boundKey(requested: string | undefined): string | undefined {
-		if (ownerKey !== undefined)
-			return requested === undefined || requested.trim() === ownerKey ? ownerKey : undefined;
-		if (initiatorRole !== "pm") return undefined;
-		return claimedPmKey(projectDir, requested);
+	function boundKey(requested: string | undefined): BoundKeyResult {
+		if (ownerKey !== undefined) {
+			const matches = requested === undefined || requested.trim() === ownerKey;
+			return matches ? { key: ownerKey } : { key: undefined, diagnosis: claimDiagnosis("worker-key-mismatch") };
+		}
+		if (initiatorRole !== "pm") return { key: undefined, diagnosis: claimDiagnosis("unknown-role") };
+		const inspection = inspectPmClaim(projectDir, requested);
+		return inspection.key !== undefined
+			? { key: inspection.key }
+			: { key: undefined, diagnosis: claimDiagnosis(inspection.reason) };
 	}
 
 	const counter = createDecisionBlockCounter();
@@ -1862,7 +1987,11 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			"A direct PM dp-gate-approve lookup returns gate_route only. Follow its instruction. " +
 			"available=false means UNAVAILABLE: the gated action stays blocked — do NOT guess, do NOT work around it, " +
 			'report "blocked on decision <dp>" and stop. The failure line also carries escalated_reason, and for ' +
-			"input-incomplete, missing_fields.",
+			"input-incomplete, missing_fields. A claim/key-binding refusal instead carries claim_diagnosis " +
+			"(reason/message/recovery) with a reason-specific safe next step: worker/unknown-role diagnoses " +
+			"do not advise PM claim/switch; it is a local identity check failure, NOT a missing MATERIAL field — " +
+			"do NOT add meta.key to material, do NOT retry, preempt or re-claim, and do NOT write the index; " +
+			"it is terminal for this round.",
 		promptSnippet:
 			"ask_decision(dp, trigger, material?, question?, note?) — ask the decision service before a gated action; " +
 			"available=false means blocked, never guess.",
@@ -1875,7 +2004,9 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			'available=false is a terminal answer for this attempt: report "blocked on decision <dp>" and wait ' +
 				"for a human. Repeating the same call in one turn is cut off by the retry breaker.",
 			"unavailable=input-incomplete reports material_issues for invalid material, including UTF-8 byte counts and declared limits; " +
-				"a missing field is never filled by inference.",
+				"a missing field is never filled by inference. EXCEPT a claim_diagnosis refusal (a claim/key-binding " +
+				"failure): meta.key is NOT a material field to add — never supplement material, retry, preempt or " +
+				're-claim; report "blocked on decision <dp>" and stop, since available=false is terminal for this round.',
 			"note is an L0/L1 summary (<=600 bytes): no credentials, no user quotes, no absolute paths, no code.",
 			"mode=suggest only archives an advisory row; acted is the service's verdict and never your own " +
 				"inference from the mode.",
@@ -1907,19 +2038,21 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				const refused = refusalOutcome(invalidDp, params.dp);
 				return blockedResult(params.dp, refused, "registry-check");
 			}
-			const requestedKey = boundKey(params.key);
-			if (requestedKey === undefined) {
+			const bound = boundKey(params.key);
+			if (bound.key === undefined) {
 				// A window never decides under another key: the association must stay
 				// exact instead of being rewritten by a model parameter (AC-010).
-				const refused = refusalOutcome("input-incomplete", params.dp, ["meta.key"]);
+				// The reason is from the SAME single inspectPmClaim read as the gate.
+				const refused = claimRefusalOutcome(params.dp, bound.diagnosis);
 				appendDecisionTrace(
 					tracePath,
 					`[DECISION_UNAVAILABLE] ${new Date().toISOString()} dp=${params.dp} trigger=${params.trigger} ` +
-						"reason=input-incomplete field=meta.key count=1 max=" +
+						`reason=input-incomplete claim_reason=${bound.diagnosis.reason} count=1 max=` +
 						`${ASK_DECISION_MAX_BLOCKED_PER_TURN} role=${initiatorRole}`,
 				);
 				return blockedResult(params.dp, refused, "identity-check");
 			}
+			const requestedKey = bound.key;
 			if (initiatorRole === "pm" && params.dp === "dp-gate-approve" && !signal?.aborted) {
 				const details = {
 					available: false as const,
@@ -2050,8 +2183,12 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				reason: string,
 				dp: string | null,
 				missing?: string[],
+				claim?: ClaimDiagnosis,
 			): { content: Array<{ type: "text"; text: string }>; details: DecisionReceiptDetails } => {
-				const refused = refusalOutcome(reason, dp ?? "unknown", missing);
+				const refused =
+					claim !== undefined
+						? claimRefusalOutcome(dp ?? "unknown", claim)
+						: refusalOutcome(reason, dp ?? "unknown", missing);
 				return {
 					content: [{ type: "text", text: refused.text }],
 					details: {
@@ -2060,13 +2197,21 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 						stage: params.stage,
 						status: "refused",
 						unavailable: reason,
+						...(claim !== undefined ? { claim_diagnosis: claim } : {}),
 					},
 				};
 			};
 			const known = asked.get(params.decision_id);
 			if (known === undefined) return refusal(ASK_DECISION_REASON_UNKNOWN_DECISION, null);
-			if (boundKey(known.meta.key) !== known.meta.key)
-				return refusal(ASK_DECISION_REASON_INPUT_INCOMPLETE, known.dp, ["meta.key"]);
+			const boundReceipt = boundKey(known.meta.key);
+			if (boundReceipt.key !== known.meta.key) {
+				// A valid binding can only equal the stored key; otherwise it is
+				// undefined and carries the single-read diagnosis. The string case
+				// is an unreachable defensive fallback, never a fabricated claim.
+				const diagnosis: ClaimDiagnosis =
+					boundReceipt.key === undefined ? boundReceipt.diagnosis : claimDiagnosis("worker-key-mismatch");
+				return refusal(ASK_DECISION_REASON_INPUT_INCOMPLETE, known.dp, undefined, diagnosis);
+			}
 			if (
 				params.task_after !== undefined &&
 				(known.meta.task_key === null || !isTaskStateSnapshot(params.task_after))

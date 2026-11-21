@@ -23,7 +23,7 @@ import * as path from "node:path";
 import { DECIDE_REGISTRY, DECIDE_REGISTRY_RETIRED, type DecideRegistryField } from "./decide-registry.generated.ts";
 
 import { currentClaimId } from "./implementation-gate.ts";
-import { IndexStore, keyNameRefusal, normalizeKey } from "./index-store.ts";
+import { IndexAuthorityError, type IndexEntry, IndexStore, keyNameRefusal, normalizeKey } from "./index-store.ts";
 import { agenticdocRoot } from "./paths.ts";
 
 /** The three knobs of AC-016. Order is frozen (parity with Python). */
@@ -499,8 +499,59 @@ export function selectedDecisionBasis(
 	return prep.basis_catalog.find((item) => item.id === basisId && item.applies_to.includes(choice));
 }
 
-/** Resolve only an unambiguous live claim of this PM process, on every call. */
-export function claimedPmKey(projectDir: string, requested?: string): string | undefined {
+/** Stable machine reason for one PM claim inspection. `ok` means a unique,
+ *  valid, self-owned active claim resolved; every other value is the exact
+ *  failing observation from the SAME single readAuthorityRows/evaluate pass that produced
+ *  `key === undefined`. The two index-level reasons deliberately do NOT claim a
+ *  precision the reader cannot have: missing or empty authority yields no rows,
+ *  and an unsupported row refuses the entire snapshot. Both are reported as
+ *  index-empty-or-unparseable; other read errors are reported as unreadable. */
+export type PmClaimReason =
+	| "ok"
+	| "index-unreadable"
+	| "index-empty-or-unparseable"
+	| "invalid-key"
+	| "ambiguous-claim"
+	| "key-not-found"
+	| "key-inactive"
+	| "foreign-owner"
+	| "no-active-claim";
+
+export interface PmClaimInspection {
+	/** The resolved key — byte-for-byte the value the legacy claimedPmKey returns. */
+	key: string | undefined;
+	/** Why `key` resolved (ok) or the exact observation behind undefined. */
+	reason: PmClaimReason;
+}
+
+/** Label a failed eligible-set evaluation using ONLY the same rows snapshot.
+ *  This NEVER re-reads the index and NEVER re-runs the authorization verdict —
+ *  the verdict is already fixed as undefined at every call site; the observations
+ *  below only name a stable reason for the local refusal diagnosis. */
+function classifyIneligibleClaim(
+	rows: readonly IndexEntry[],
+	self: string,
+	requested: string | undefined,
+	eligibleCount: number,
+): PmClaimReason {
+	if (eligibleCount > 1) return "ambiguous-claim";
+	if (rows.length === 0) return "index-empty-or-unparseable";
+	const scoped =
+		requested === undefined ? rows : rows.filter((row) => normalizeKey(requested) === normalizeKey(row.key));
+	if (requested !== undefined && scoped.length === 0) return "key-not-found";
+	if (requested === undefined) return "no-active-claim";
+	if (scoped.some((row) => row.status === "active" && row.claimId !== self)) return "foreign-owner";
+	if (scoped.some((row) => row.status !== "active")) return "key-inactive";
+	return "no-active-claim";
+}
+
+/** Resolve the live claim AND its reason from ONE IndexStore.readAuthorityRows snapshot.
+ *  This is the single authority: claimedPmKey delegates to it (value-equal),
+ *  and the PM decision tool reads `.reason` for the refusal diagnosis. The
+ *  filter, normalizeKey, exact `===` claimId comparison, keyNameRefusal and the
+ *  duplicate-key-row count are the original predicate, unchanged — only the
+ *  return shape is richer. */
+export function inspectPmClaim(projectDir: string, requested?: string): PmClaimInspection {
 	try {
 		const self = currentClaimId();
 		const rows = new IndexStore(agenticdocRoot(projectDir)).readAuthorityRows();
@@ -510,12 +561,26 @@ export function claimedPmKey(projectDir: string, requested?: string): string | u
 				row.claimId === self &&
 				(requested === undefined || normalizeKey(requested) === normalizeKey(row.key)),
 		);
-		if (eligible.length !== 1) return undefined;
+		if (eligible.length !== 1)
+			return { key: undefined, reason: classifyIneligibleClaim(rows, self, requested, eligible.length) };
 		const key = eligible[0].key;
-		if (keyNameRefusal(key) || rows.filter((row) => normalizeKey(row.key) === normalizeKey(key)).length !== 1)
-			return undefined;
-		return key;
-	} catch {
-		return undefined;
+		if (keyNameRefusal(key)) return { key: undefined, reason: "invalid-key" };
+		if (rows.filter((row) => normalizeKey(row.key) === normalizeKey(key)).length !== 1)
+			return { key: undefined, reason: "ambiguous-claim" };
+		return { key, reason: "ok" };
+	} catch (error) {
+		const reason =
+			error instanceof IndexAuthorityError && error.code === "unsupported-authority-row"
+				? "index-empty-or-unparseable"
+				: "index-unreadable";
+		return { key: undefined, reason };
 	}
+}
+
+/** Resolve only an unambiguous live claim of this PM process, on every call.
+ *  Value-compatible wrapper over inspectPmClaim: every input returns exactly
+ *  the string/undefined the legacy predicate returned (all four existing
+ *  consumers and canPmSelectType keep their `=== key` behavior). */
+export function claimedPmKey(projectDir: string, requested?: string): string | undefined {
+	return inspectPmClaim(projectDir, requested).key;
 }
