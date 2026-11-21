@@ -33,7 +33,11 @@ assert "features.shell_tool=false" in args and "read-only" in args
 assert "OPENAI_API_KEY" not in os.environ and "PI_WORKER_TASK" not in os.environ
 result = {"text": json.dumps({"cwd": os.getcwd(), "context": context}), "tool_calls": []}
 if mode == "tool":
-    result = {"text": "", "tool_calls": [{"name": "read", "arguments": '{"path":"hello.txt"}'}]}
+    schema = json.loads(pathlib.Path(args[args.index("--output-schema") + 1]).read_text(encoding="utf-8"))
+    assert schema["properties"]["tool_calls"]["items"]["properties"]["arguments"] == {"$ref": "#/$defs/object"}
+    result = {"text": "", "tool_calls": [{"name": "read", "arguments": {
+        "members": [{"key": "path", "value": r"E:\\gitlite\\new\\test.txt"}]
+    }}]}
 pathlib.Path(args[args.index("--output-last-message") + 1]).write_text(json.dumps(result), encoding="utf-8")
 print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 12, "cached_input_tokens": 2, "output_tokens": 3}}))
 '''
@@ -96,7 +100,7 @@ def test_http_context_and_independent_cli(server):
 def test_tool_round_trip(server):
     _, events = post(server, request("tool"))
     tool = events[-1]["toolCalls"][0]
-    assert tool["name"] == "read" and tool["arguments"] == {"path": "hello.txt"}
+    assert tool["name"] == "read" and tool["arguments"] == {"path": r"E:\gitlite\new\test.txt"}
     following = request("continue")
     following["context"]["messages"].insert(0, {
         "role": "toolResult", "toolCallId": tool["id"], "toolName": "read",
@@ -106,11 +110,26 @@ def test_tool_round_trip(server):
     assert json.loads(events[-1]["text"])["context"] == following["context"]
 
 
+def test_single_encoding_preserves_tool_values():
+    command = "a" * 641 + r'\d+\s+ "E:\new\tests" \\server\share' + "\r\n中文"
+    members = [{"key": "members", "value": [command, 1.5, False, None, [], {"members": []}]}]
+    result = {"text": "", "tool_calls": [{"name": "read", "arguments": {
+        "members": [{"key": "payload", "value": {"members": members}}]
+    }}]}
+    parsed = relay.parse_result(json.dumps(result), request())
+    assert parsed["toolCalls"][0]["arguments"] == {
+        "payload": {"members": [command, 1.5, False, None, [], {}]}
+    }
+
+
 @pytest.mark.parametrize("result", [
     {"text": "", "tool_calls": []},
-    {"text": "", "tool_calls": [{"name": "unknown", "arguments": "{}"}]},
-    {"text": "", "tool_calls": [{"name": "read", "arguments": "[]"}]},
+    {"text": "", "tool_calls": [{"name": "unknown", "arguments": {"members": []}}]},
     {"text": "", "tool_calls": [{"name": "read", "arguments": "broken"}]},
+    {"text": "", "tool_calls": [{"name": "read", "arguments": []}]},
+    {"text": "", "tool_calls": [{"name": "read", "arguments": {"members": [{"key": "x"}]}}]},
+    {"text": "", "tool_calls": [{"name": "read", "arguments": {"members": [{"key": "x", "value": {}}]}}]},
+    {"text": "", "tool_calls": [{"name": "read", "arguments": {"members": [{"key": "x", "value": 1}] * 2}}]},
 ])
 def test_bad_cli_result(result):
     with pytest.raises(relay.RelayError):

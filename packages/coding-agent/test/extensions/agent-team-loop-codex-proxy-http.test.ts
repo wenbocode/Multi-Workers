@@ -23,7 +23,7 @@ it("ModelRuntime -> actual Python relay -> fake CLI -> tool result -> final resp
 args = sys.argv
 context = json.loads(sys.stdin.read().split("CONTEXT JSON:\\n", 1)[1])
 has_result = any(message["role"] == "toolResult" for message in context["messages"])
-result = {"text": "ready" if has_result else "", "tool_calls": [] if has_result else [{"name": "lookup", "arguments": '{"ticket":42}'}]}
+result = {"text": "ready" if has_result else "", "tool_calls": [] if has_result else [{"name": "lookup", "arguments": {"members": [{"key": "ticket", "value": 42}]}}]}
 pathlib.Path(args[args.index("--output-last-message") + 1]).write_text(json.dumps(result), encoding="utf-8")
 print(json.dumps({"type":"turn.completed", "usage":{"input_tokens":10,"output_tokens":2}}))
 `,

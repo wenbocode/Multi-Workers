@@ -27,8 +27,11 @@ INSTRUCTIONS = """You are an inference adapter for another agent, not its execut
 Produce exactly the next assistant response for the conversation in the supplied
 JSON context. Follow context.systemPrompt and the conversation's instructions.
 Tools listed in context.tools belong to the caller. NEVER execute tools yourself.
-To request a caller tool, return its name and JSON-encoded argument object in
-tool_calls; the caller will execute it and include the result on the next request.
+To request a caller tool, return its name and arguments in tool_calls. Represent
+each argument object as {"members":[{"key":"path","value":"hello.txt"}]}.
+Use the same members representation for nested objects. Arrays and scalar values
+are ordinary JSON values. Never serialize arguments or values into JSON strings.
+The caller will execute the tool and include the result on the next request.
 Return text for user-facing content. Return an empty tool_calls array when done.
 Do not invent tool results or claim actions were performed. Use only listed tools.
 """
@@ -89,18 +92,53 @@ def validate_request(value: object) -> dict:
 
 
 def response_schema() -> dict:
+    # Strict output schemas require fixed property names. A member list lets
+    # tools use arbitrary keys without requiring the model to serialize JSON.
+    value_ref = {"$ref": "#/$defs/value"}
+    object_ref = {"$ref": "#/$defs/object"}
     return {
+        "$defs": {
+            "object": {
+                "type": "object", "additionalProperties": False, "required": ["members"],
+                "properties": {"members": {"type": "array", "items": {
+                    "type": "object", "additionalProperties": False, "required": ["key", "value"],
+                    "properties": {"key": {"type": "string"}, "value": value_ref},
+                }}},
+            },
+            "value": {"anyOf": [
+                {"type": "string"}, {"type": "number"}, {"type": "boolean"}, {"type": "null"},
+                {"type": "array", "items": value_ref}, object_ref,
+            ]},
+        },
         "type": "object", "additionalProperties": False,
         "properties": {
             "text": {"type": "string"},
             "tool_calls": {"type": "array", "items": {
                 "type": "object", "additionalProperties": False,
-                "properties": {"name": {"type": "string"}, "arguments": {"type": "string"}},
+                "properties": {"name": {"type": "string"}, "arguments": object_ref},
                 "required": ["name", "arguments"],
             }},
         },
         "required": ["text", "tool_calls"],
     }
+
+
+def decode_tool_value(value: object) -> object:
+    if isinstance(value, list):
+        return [decode_tool_value(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if value.keys() != {"members"} or not isinstance(value["members"], list):
+        raise ValueError("Expected tool argument object members")
+    decoded = {}
+    for member in value["members"]:
+        if (not isinstance(member, dict) or member.keys() != {"key", "value"}
+                or not isinstance(member["key"], str)):
+            raise ValueError("Invalid tool argument member")
+        if member["key"] in decoded:
+            raise ValueError("Duplicate tool argument key")
+        decoded[member["key"]] = decode_tool_value(member["value"])
+    return decoded
 
 
 def parse_result(text: str, request: dict) -> dict:
@@ -115,9 +153,9 @@ def parse_result(text: str, request: dict) -> dict:
         for call in result["tool_calls"]:
             if not isinstance(call, dict) or call.get("name") not in names:
                 raise ValueError("Unknown tool")
-            args = json.loads(call["arguments"])
-            if not isinstance(args, dict):
+            if not isinstance(call["arguments"], dict):
                 raise ValueError("Tool arguments must be an object")
+            args = decode_tool_value(call["arguments"])
             calls.append({"id": f"call_{uuid.uuid4().hex}", "name": call["name"], "arguments": args})
         if not result["text"] and not calls:
             raise ValueError("Empty assistant response")
