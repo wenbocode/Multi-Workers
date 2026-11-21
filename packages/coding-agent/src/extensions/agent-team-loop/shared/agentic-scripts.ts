@@ -35,6 +35,36 @@ export interface AgenticScriptResult {
 	output: string;
 }
 
+/** Inspect the same installation the window will invoke, without executing project code at startup. */
+export function inspectPlanGate(projectDir: string): AgenticScriptResult {
+	const dir = agenticScriptsDir(projectDir);
+	if (!dir)
+		return {
+			ok: false,
+			output: `AgenticTask framework scripts not found under ${projectDir}. Run the framework installer.`,
+		};
+	const advance = path.join(dir, "advance_phase.py");
+	const closure = path.join(dir, "plan_closure.py");
+	try {
+		const source = fs.readFileSync(advance, "utf8");
+		const imported = /^from plan_closure import problems(?: as (\w+))?\s*$/m.exec(source);
+		if (
+			!fs.statSync(closure).isFile() ||
+			!imported ||
+			!new RegExp(`\\b${imported[1] ?? "problems"}\\s*\\(`).test(source) ||
+			!/["']tasks["']\s*:\s*\[\s*\(\s*["']plan\.md["']\s*,\s*["']plan_closure["']/.test(source)
+		) {
+			throw new Error("missing PLAN → TASKS closure registration");
+		}
+		return { ok: true, output: advance };
+	} catch (error) {
+		return {
+			ok: false,
+			output: `AgenticTask PLAN → TASKS gate unavailable in ${dir}: ${error instanceof Error ? error.message : String(error)}. Update the installed AgenticTask scripts.`,
+		};
+	}
+}
+
 /**
  * Run one AgenticTask framework script directly: spawn with list args, no
  * shell. Same execution model as mw-runner's mw.py calls, so framework state
@@ -62,12 +92,9 @@ export function runAgenticScript(
 	if (!fs.existsSync(script)) {
 		return { ok: false, output: `Framework script not found: ${script}` };
 	}
-	if (
-		scriptName === "advance_phase.py" &&
-		args[1]?.toLowerCase() === "tasks" &&
-		!fs.existsSync(path.join(dir, "plan_closure.py"))
-	) {
-		return { ok: false, output: "AgenticTask PLAN → TASKS gate missing. Update the installed AgenticTask scripts." };
+	if (scriptName === "advance_phase.py" && args[1]?.toLowerCase() === "tasks") {
+		const gate = inspectPlanGate(projectDir);
+		if (!gate.ok) return gate;
 	}
 	// -X utf8: framework gate scripts print Chinese diagnostics; a Windows
 	// console default (cp936) read back as utf8 would turn them into '?'.

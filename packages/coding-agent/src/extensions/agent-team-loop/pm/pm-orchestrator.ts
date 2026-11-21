@@ -9,6 +9,7 @@ import { stopMonitor } from "../autopilot/monitor.ts";
 import { gatesDir, parseGateFile, readConfig, readGateReminders } from "../autopilot/status-model.ts";
 import { registerRagTools } from "../rag/tools.ts";
 import { AckStore } from "../shared/ack-store.ts";
+import { inspectPlanGate } from "../shared/agentic-scripts.ts";
 import { claimedPmKey, preparationProblems, validateDecisionMaterial } from "../shared/decide-policy.ts";
 import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.ts";
 import {
@@ -2966,6 +2967,9 @@ export function pmActivate(pi: ExtensionAPI, projectDir = process.cwd()): void {
 				return;
 			}
 		}
+
+		const gate = inspectPlanGate(projectDir);
+		if (!gate.ok) ctx.ui.notify(gate.output, "warning");
 
 		// Auto-start mw background service if not already running.
 		// After spawning, poll for the PID file so the agent's first turn doesn't

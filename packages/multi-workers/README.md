@@ -1045,3 +1045,8 @@ python mw.py decide sign --project .agenticdoc/<key> --disable            # 显�
 cd packages/multi-workers
 python -m pytest -q          # 430+ 通过；e2e 默认 deselect
 ```
+
+
+### 全局安装后的窗口门禁验收
+
+从发布源码根目录运行 `node scripts/check-agentic-window-gates.mjs <项目目录> [其他项目目录...]`（Node 24+）。为每个目标窗口传入实际项目根目录。命令沿用窗口解析脚本目录的顺序，打印实际加载的两个 Python 文件，并用临时空计划验证 PLAN → TASKS 会拒绝推进。任一项目缺件或门禁失效时退出码非零。PM 窗口启动时也会检查选中的安装目录并提示修复路径。
