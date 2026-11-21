@@ -75,6 +75,10 @@ export interface Terminal {
 	// Write output to terminal
 	write(data: string): void;
 
+	/** If output is backpressured, wait once for drain and return a cancellation
+	 * function. Return undefined when output can accept another rendered frame. */
+	waitForOutputDrain?(onDrain: () => void): (() => void) | undefined;
+
 	// Get terminal dimensions
 	get columns(): number;
 	get rows(): number;
@@ -469,6 +473,15 @@ export class ProcessTerminal implements Terminal {
 				// Ignore logging errors
 			}
 		}
+	}
+
+	waitForOutputDrain(onDrain: () => void): (() => void) | undefined {
+		const output = process.stdout;
+		if (!output.writableNeedDrain) return undefined;
+		output.once("drain", onDrain);
+		return () => {
+			output.removeListener("drain", onDrain);
+		};
 	}
 
 	get columns(): number {

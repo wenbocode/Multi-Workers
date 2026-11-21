@@ -338,6 +338,7 @@ export abstract class TuiBase extends Container implements TUI {
 	public onDebug?: () => void;
 	private renderRequested = false;
 	private renderTimer: NodeJS.Timeout | undefined;
+	private cancelOutputDrain: (() => void) | undefined;
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
@@ -743,6 +744,9 @@ export abstract class TuiBase extends Container implements TUI {
 
 	stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
+		this.renderRequested = false;
+		this.cancelOutputDrain?.();
+		this.cancelOutputDrain = undefined;
 		if (this.renderTimer) {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;
@@ -757,11 +761,16 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	renderNow(force = false): void {
+		if (this.stopped) return;
 		if (force) this.resetRenderState();
 		this.renderRequested = false;
 		if (this.renderTimer) {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;
+		}
+		if (this.deferRenderForOutput()) {
+			this.renderRequested = true;
+			return;
 		}
 		this.lastRenderAt = performance.now();
 		this.doRender();
@@ -779,6 +788,7 @@ export abstract class TuiBase extends Container implements TUI {
 				if (this.stopped || !this.renderRequested) {
 					return;
 				}
+				if (this.deferRenderForOutput()) return;
 				this.renderRequested = false;
 				this.lastRenderAt = performance.now();
 				this.doRender();
@@ -794,6 +804,7 @@ export abstract class TuiBase extends Container implements TUI {
 		if (this.stopped || this.renderTimer || !this.renderRequested) {
 			return;
 		}
+		if (this.deferRenderForOutput()) return;
 		const elapsed = performance.now() - this.lastRenderAt;
 		const delay = Math.max(0, TuiBase.MIN_RENDER_INTERVAL_MS - elapsed);
 		this.renderTimer = setTimeout(() => {
@@ -801,6 +812,7 @@ export abstract class TuiBase extends Container implements TUI {
 			if (this.stopped || !this.renderRequested) {
 				return;
 			}
+			if (this.deferRenderForOutput()) return;
 			this.renderRequested = false;
 			this.lastRenderAt = performance.now();
 			this.doRender();
@@ -808,6 +820,16 @@ export abstract class TuiBase extends Container implements TUI {
 				this.scheduleRender();
 			}
 		}, delay);
+	}
+
+	private deferRenderForOutput(): boolean {
+		if (!this.cancelOutputDrain) {
+			this.cancelOutputDrain = this.terminal.waitForOutputDrain?.(() => {
+				this.cancelOutputDrain = undefined;
+				this.scheduleRender();
+			});
+		}
+		return this.cancelOutputDrain !== undefined;
 	}
 
 	private handleTerminalInput(data: string): void {

@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fixed unbounded redraw buffering on slow terminals by waiting for output drain and rendering the latest state once output resumes.
 - Fixed Windows Shift+Enter detection by extending the native Win32 helper to report modifier key state.
 - Fixed the npm package omitting the source and build script needed to rebuild the Darwin native addon.
 - Fixed Windows console truecolor detection when Windows Terminal does not provide `WT_SESSION` to child shells.
