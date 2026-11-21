@@ -3,6 +3,39 @@ import { formatProviderError, normalizeProviderError } from "../../../ai/src/uti
 import { projectSummaryFailure } from "../../src/extensions/agent-team-loop/shared/context-summary-diagnostics.ts";
 
 describe("safe summary failure projection", () => {
+	it.each([
+		["Unsupported parameter: reasoning_effort", "parameter"],
+		["invalid_request_error: Unsupported value: temperature", "parameter"],
+		["context_length_exceeded", "context"],
+		["maximum context length exceeded", "context"],
+		["model_not_found", "model"],
+		["The model private-model does not exist or you do not have access", "model"],
+		["invalid_json", "request_format"],
+		["Invalid messages: tool results must follow tool calls", "request_format"],
+		["tool_call_id must match a prior tool call", "request_format"],
+		["An assistant message with tool_calls must be followed by tool messages", "request_format"],
+		["invalid_request_error", "bad_request"],
+		["Bad Request", "bad_request"],
+	])("classifies HTTP 400 %s without retaining upstream details", (reason, category) => {
+		const projected = projectSummaryFailure({
+			errorMessage: `OpenAI API error (400): ${reason} PRIVATE-KEY https://private.invalid`,
+		});
+		expect(projected).toMatchObject({ category, httpStatus: 400 });
+		expect(Object.keys(projected).every((field) => ["category", "httpStatus", "errorType"].includes(field))).toBe(
+			true,
+		);
+		expect(JSON.stringify(projected)).not.toMatch(/PRIVATE|https|temperature|reasoning_effort|private-model/);
+	});
+	it("classifies nested 400 codes and keeps specific auth or quota evidence", () => {
+		expect(projectSummaryFailure({ status: 400, error: { code: "invalid_parameter", message: "PRIVATE" } })).toEqual({
+			category: "parameter",
+			httpStatus: 400,
+			errorType: "invalid_parameter",
+		});
+		expect(projectSummaryFailure({ status: 400, error: { code: "invalid_api_key" } }).category).toBe("auth");
+		expect(projectSummaryFailure({ status: 400, error: { code: "insufficient_quota" } }).category).toBe("quota");
+		expect(projectSummaryFailure({ status: 400 })).toEqual({ category: "bad_request", httpStatus: 400 });
+	});
 	it.each(["OpenAI API error", "Azure OpenAI API error"])(
 		"recognizes real %s formatting without retaining the body",
 		(prefix) => {

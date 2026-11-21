@@ -32,6 +32,7 @@ export interface ProviderPolicyHooks {
 	controller?: ProviderContextPolicy;
 	nativeSummarySignals?: WeakSet<AbortSignal>;
 	automaticNativeSummarySignals?: WeakSet<AbortSignal>;
+	nativeSummaryModel?: (signal: AbortSignal) => Model<Api> | undefined;
 	policyFailure?: (model: Model<Api>, error: unknown) => AssistantMessage | undefined;
 	nativeSummaryFailure?: (
 		model: Model<Api>,
@@ -88,6 +89,23 @@ export function installProviderPolicies(ctx: ExtensionContext, contextPolicy?: P
 			const output = createAssistantMessageEventStream();
 			void (async () => {
 				try {
+					if (options?.signal && current.nativeSummarySignals?.has(options.signal)) {
+						const selected = current.nativeSummaryModel?.(options.signal);
+						if (selected && (selected.provider !== model.provider || selected.id !== model.id)) {
+							const target = registry.getProvider(selected.provider);
+							if (!target || !wrappers.has(target)) throw new Error("Compact model provider unavailable");
+							// Only portable summary controls cross providers; resolve target authentication afresh.
+							const stream = target[method](selected, context, {
+								signal: options.signal,
+								sessionId: options.sessionId,
+								cacheRetention: options.cacheRetention,
+								maxTokens: options.maxTokens,
+							});
+							for await (const event of stream) output.push(event);
+							output.end(await stream.result());
+							return;
+						}
+					}
 					const entryAuth = await registry.getApiKeyAndHeaders(model);
 					if (!entryAuth.ok) throw new Error(entryAuth.error);
 					const physicalDispatch = (

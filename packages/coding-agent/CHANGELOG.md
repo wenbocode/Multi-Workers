@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added `/mw context compact-model [provider/model|clear]` to choose a compact model in the current window's memory. Manual, automatic and overflow compaction use the selected provider's authentication and limits while task requests keep their model.
 - Added `/mw thinking show|set|clear` to configure worker thinking independently of models, with effective-level sources, role inheritance and next-spawn semantics.
 
 - Added the Zhient gateway to the MW extension. Use `/login zhient` and select a model such as `/model zhient/gpt-6.1-sol`.
@@ -134,6 +135,7 @@
 
 ### Fixed
 
+- Classified native summary HTTP 400 failures as parameter, model, context, request-format or generic bad-request errors without exposing upstream error text.
 - Fixed unbounded memory growth when a shell command contains multiple PowerShell here-strings. Write-surface scanning now searches for each closing marker after its opener.
 
 - Fixed MW native compaction being suppressed after a retried or cancelled model response proposed tools that never executed. Failed attempts remain in session history without being mistaken for incomplete tool batches.

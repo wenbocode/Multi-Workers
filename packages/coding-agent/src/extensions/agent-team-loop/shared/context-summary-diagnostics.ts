@@ -1,4 +1,14 @@
-export type SummaryFailureCategory = "quota" | "rate_limit" | "auth" | "context" | "network" | "unknown";
+export type SummaryFailureCategory =
+	| "quota"
+	| "rate_limit"
+	| "auth"
+	| "context"
+	| "network"
+	| "parameter"
+	| "model"
+	| "request_format"
+	| "bad_request"
+	| "unknown";
 
 export interface SummaryFailure {
 	category: SummaryFailureCategory;
@@ -14,6 +24,16 @@ const ERROR_TYPES = [
 	["authentication_error", "auth"],
 	["permission_denied", "auth"],
 	["context_length_exceeded", "context"],
+	["unsupported_parameter", "parameter"],
+	["invalid_parameter", "parameter"],
+	["missing_required_parameter", "parameter"],
+	["unsupported_value", "parameter"],
+	["invalid_value", "parameter"],
+	["model_not_found", "model"],
+	["invalid_model", "model"],
+	["unsupported_model", "model"],
+	["invalid_json", "request_format"],
+	["invalid_message", "request_format"],
 	["ECONNRESET", "network"],
 	["ECONNREFUSED", "network"],
 	["ETIMEDOUT", "network"],
@@ -82,5 +102,24 @@ export function projectSummaryFailure(value: unknown): SummaryFailure {
 	if (/\b(?:maximum context length|context window exceeded)\b/i.test(text)) return { category: "context", ...status };
 	if (/\b(?:fetch failed|network error|socket hang up|connection refused)\b/i.test(text))
 		return { category: "network", ...status };
+	if (httpStatus === 400) {
+		if (
+			/\b(?:unsupported|invalid|unknown|unrecognized|missing|required)\s+(?:parameter|argument|value)\b/i.test(text)
+		)
+			return { category: "parameter", ...status };
+		if (
+			/\bmodel\b[^\n]{0,120}\b(?:not found|does not exist|not supported|unsupported|unavailable|not have access)\b/i.test(
+				text,
+			)
+		)
+			return { category: "model", ...status };
+		if (
+			/\b(?:invalid|malformed)\s+(?:json|request body|message|messages|schema)\b|\btool(?:_call_id|_calls|_results| calls?| results?)\b[^\n]{0,120}\b(?:missing|must|required|match|follow)\b/i.test(
+				text,
+			)
+		)
+			return { category: "request_format", ...status };
+		return { category: "bad_request", ...status };
+	}
 	return { category: "unknown", ...status };
 }

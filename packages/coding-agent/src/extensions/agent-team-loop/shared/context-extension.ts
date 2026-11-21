@@ -34,6 +34,7 @@ export interface ContextExtensionOptions {
 
 const policyFailures = new WeakMap<ModelRegistry, MwContextPolicyDetails>();
 const nativeSummarySignalsByRegistry = new WeakMap<ModelRegistry, AbortSignal>();
+const windowCompactModels = new WeakMap<ModelRegistry, { provider: string; id: string }>();
 
 /** Native core cancellation may never become an assistant message; preserve its signal identity. */
 export function consumeNativeContextAbort(registry: ModelRegistry): boolean {
@@ -105,6 +106,14 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 			controller: state.controller,
 			nativeSummarySignals,
 			automaticNativeSummarySignals,
+			nativeSummaryModel: (signal) => {
+				if (!nativeAttempts.has(signal)) return undefined;
+				const selected = windowCompactModels.get(ctx.modelRegistry);
+				if (!selected) return undefined;
+				const model = ctx.modelRegistry.find(selected.provider, selected.id);
+				if (!model) throw new MwContextPolicyError("SUMMARY_MODEL_UNAVAILABLE");
+				return model;
+			},
 			policyFailure: (model, error) => {
 				if (!(error instanceof MwContextPolicyError)) return undefined;
 				policyFailures.set(ctx.modelRegistry, error.details);
@@ -294,7 +303,7 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 }
 
 export const CONTEXT_COMMAND_USAGE =
-	"Usage: /mw context show [--type TYPE] [--json] | set <field> <value> --global|--project [--type TYPE] | clear <field|type> --global|--project [--type TYPE]";
+	"Usage: /mw context compact-model [provider/model|clear] | show [--type TYPE] [--json] | set <field> <value> --global|--project [--type TYPE] | clear <field|type> --global|--project [--type TYPE]";
 
 /** User-command only: workers may inspect their policy, but cannot change it. */
 export async function runContextCommand(
@@ -307,6 +316,34 @@ export async function runContextCommand(
 	try {
 		const tokens = args.trim().split(/\s+/).filter(Boolean);
 		const action = tokens.shift() ?? "show";
+		if (action === "compact-model") {
+			const [value, extra] = tokens;
+			if (extra || value?.startsWith("--")) throw new Error(CONTEXT_COMMAND_USAGE);
+			if (value) {
+				if (options.taskFile || process.env.PI_WORKER_TASK)
+					throw new Error("Workers may only show the compact model");
+				if (!ctx.isIdle())
+					throw new Error("Wait for the current operation to finish before changing the compact model");
+				if (value === "clear") windowCompactModels.delete(ctx.modelRegistry);
+				else {
+					const separator = value.indexOf("/");
+					const model =
+						separator > 0
+							? ctx.modelRegistry.find(value.slice(0, separator), value.slice(separator + 1))
+							: undefined;
+					if (!model) throw new Error("Unknown compact model; use an exact provider/model from the model list");
+					const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+					if (!auth.ok) throw new Error("Compact model authentication unavailable");
+					windowCompactModels.set(ctx.modelRegistry, { provider: model.provider, id: model.id });
+				}
+			}
+			const override = windowCompactModels.get(ctx.modelRegistry);
+			const model = override ?? ctx.model;
+			const text = `Compact model=${model ? `${model.provider}/${model.id}` : "unselected"} source=${override ? "window" : "task"}; window memory only`;
+			ctx.ui.notify(text, "info");
+			if (!ctx.hasUI) pi.sendMessage({ customType: "mw-context", content: text, display: true });
+			return;
+		}
 		const positional: string[] = [];
 		let scope: "global" | "project" | undefined;
 		let type: string | undefined;
@@ -378,6 +415,11 @@ export async function runContextCommand(
 			compaction: { enabled: policy.compaction.enabled, triggerRatio: policy.compaction.triggerRatio },
 			generationOwner: "pi-native-compaction",
 			summaryGeneration: NATIVE_SUMMARY_POLICY,
+			compactModel: {
+				...(windowCompactModels.get(ctx.modelRegistry) ??
+					(ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : {})),
+				source: windowCompactModels.has(ctx.modelRegistry) ? "window" : "task",
+			},
 			delegatedLegacy: {
 				active: false,
 				message: "pi owns compaction generation parameters; legacy MW values below are not applied",
@@ -408,6 +450,7 @@ export async function runContextCommand(
 						? [`Budget unavailable: ${budgetError.code} ${JSON.stringify(budgetError.details)}`]
 						: []),
 					`Summary thinking=${NATIVE_SUMMARY_POLICY.thinking} minimumOutput=${NATIVE_SUMMARY_POLICY.minimumOutputTokens} maxAttempts=${NATIVE_SUMMARY_POLICY.maxAttempts}; output remains capped by model and current request budget`,
+					`Compact model=${report.compactModel.provider ?? "unselected"}/${report.compactModel.id ?? "unselected"} source=${report.compactModel.source}`,
 					...CONTEXT_POLICY_FIELDS.map((field) => {
 						const source = policy.sources[field];
 						const value =
