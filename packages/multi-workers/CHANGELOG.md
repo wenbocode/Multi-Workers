@@ -9,6 +9,8 @@
 
 ### Added
 
+- Added `toa/hy4-flash` for PM windows and pi workers, with image input, 1M context, 64K output and configurable thinking through the existing TokenLink route.
+
 - Added `/mw ue-continue-develop-frame install` for dual projects. The installer stays within the Game `Plugins` directory and automatically checks the installed package. Failures include a log excerpt and the full log path.
 
 - Added `mw thinking show|set|clear` to inspect and atomically update project worker thinking defaults and role overrides while preserving unrelated configuration. See the [worker thinking guide](docs/worker-thinking.md).

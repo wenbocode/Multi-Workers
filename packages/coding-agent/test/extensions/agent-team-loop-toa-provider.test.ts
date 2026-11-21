@@ -6,7 +6,7 @@ import { registerToa } from "../../src/extensions/agent-team-loop/shared/toa-pro
 
 afterEach(() => vi.unstubAllEnvs());
 
-it.each(["hy4", "hy3"])("streams %s through TokenLink across retries, tool calls and questions", async (id) => {
+it.each(["hy4-flash", "hy4", "hy3"])("streams %s with retries and tools", async (id) => {
 	vi.stubEnv("TOA_API_KEY", "toa-test");
 	const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null });
 	const registry = new ModelRegistry(runtime);
@@ -15,8 +15,9 @@ it.each(["hy4", "hy3"])("streams %s through TokenLink across retries, tool calls
 	await runtime.refresh({ allowNetwork: false });
 	const model = runtime.getModel("toa", id);
 	if (!model) throw new Error(`Missing toa/${id}`);
-	expect(model.contextWindow).toBe(id === "hy4" ? 1048576 : 262144);
-	expect(model.input).toEqual(id === "hy4" ? ["text", "image"] : ["text"]);
+	expect(model.contextWindow).toBe(id === "hy3" ? 262144 : 1048576);
+	expect(model.maxTokens).toBe(id === "hy3" ? 131072 : 65536);
+	expect(model.input).toEqual(id === "hy3" ? ["text"] : ["text", "image"]);
 	const context: Context = {
 		messages: [{ role: "user", content: "look up", timestamp: 1 }],
 		tools: [{ name: "lookup", description: "Look up a value", parameters: { type: "object", properties: {} } }],
@@ -50,7 +51,7 @@ it.each(["hy4", "hy3"])("streams %s through TokenLink across retries, tool calls
 		model: id,
 		stream: true,
 		prompt_cache_key: "session-1",
-		reasoning_effort: id === "hy4" ? "high" : "low",
+		reasoning_effort: id === "hy3" ? "low" : "high",
 		tools: [expect.objectContaining({ type: "function" })],
 	});
 	context.messages.push(first, {

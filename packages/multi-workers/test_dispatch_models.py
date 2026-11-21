@@ -410,6 +410,7 @@ class TestDirectProviderSpawn:
     @pytest.mark.parametrize(("provider", "key_env", "model"), [
         ("toa", "TOA_API_KEY", "hy3"),
         ("toa", "TOA_API_KEY", "hy4"),
+        ("toa", "TOA_API_KEY", "hy4-flash"),
         ("zhient", "ZHIENT_API_KEY", "gpt-6.1-sol"),
         ("zhient", "ZHIENT_API_KEY", "gpt-6.1-terra"),
     ])

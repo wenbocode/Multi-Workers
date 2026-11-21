@@ -28,6 +28,15 @@ export function registerToa(pi: Pick<ExtensionAPI, "registerProvider" | "on">): 
 		models: [
 			{
 				...shared,
+				id: "hy4-flash",
+				name: "Hy4 flash",
+				contextWindow: 1024 * 1024,
+				maxTokens: 64 * 1024,
+				input: ["text", "image"],
+				thinkingLevelMap: { off: "no_think", minimal: null, low: null, medium: null, high: "high" },
+			},
+			{
+				...shared,
 				id: "hy4",
 				name: "Hy4",
 				contextWindow: 1024 * 1024,
