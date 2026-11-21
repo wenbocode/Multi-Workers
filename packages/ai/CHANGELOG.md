@@ -76,6 +76,7 @@
 
 ### Changed
 
+- Changed Timi models to use a temporary 512,000-token context default pending verified per-model limits.
 - Added optional cancellation to `ModelsStore` reads, writes, and deletions; catalog orchestration binds these waits to the provider refresh signal.
 
 ### Fixed

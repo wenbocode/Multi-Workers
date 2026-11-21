@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "generatedAt": "2026-10-15T03:41:18.547Z",
+  "generatedAt": "2026-11-18T11:33:22.509Z",
   "structureHash": "490e3ed92500af1baa176e12d2e54503d764c31b118ed905b0e04c51cb36cd14",
   "files": {
     "amazon-bedrock.json": "017bfeeac48e6268b2947fd3a9e41496fe74066b381b300b3c3836c1a5c7a721",
@@ -32,7 +32,7 @@
     "openrouter.json": "c4d516a77f8f132933cda96ac1553e8d3e8bd3aa1ef3d4f9ea124e3612643d3a",
     "qwen-token-plan-cn.json": "5e504dfffed7366a0d3c3411bf90995b1c96db88ba5fb062f0bb021f83617cc4",
     "qwen-token-plan.json": "8a80cc62609e2242543bfe29952e3d33387b17540ddbab33c8517e82369752df",
-    "timi.json": "d07d766e59f0fa8200a2104e5c49e53885b18f79a12b1808b08dafb54b3f43da",
+    "timi.json": "a656c3e798126c6ae86d8283d1e01b65637f2701fb2795da4e5554be792bd0cd",
     "together.json": "927c707d06f2236cdab13f14c870fb58bce0614ba7287bbcd57cc9fd66d191ed",
     "vercel-ai-gateway.json": "2ead9806f4cb5f6d34803c52f0ac14f88212881212d3e5a8d058b134c5e16514",
     "xai.json": "d036f5d1ececd7280c09ca1a6249553f39a7a1087ddb129a0d689a427fc944c4",
