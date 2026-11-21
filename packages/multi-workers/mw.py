@@ -12661,7 +12661,12 @@ def _install_project_agent_guide(project_dir: pathlib.Path) -> pathlib.Path:
         codex_dst = project_dir / ".agenticdoc" / "templates" / "codex_doc.md"
         if not codex_dst.resolve().is_relative_to(project_dir):
             raise ValueError(f"Codex template points outside the project: {codex_dst}")
-        if not codex_dst.exists():
+        # Upgrade only the exact shipped SDD template; project customizations
+        # and in-progress key records are never rewritten by init.
+        old_codex_hash = "7cba6e49e18f0dc36c7bd1210abdea53b674ce2be2415470f3fe52a1807b123c"
+        shipped_v2 = (codex_dst.is_file() and hashlib.sha256(
+            codex_dst.read_bytes().replace(b"\r\n", b"\n")).hexdigest() == old_codex_hash)
+        if not codex_dst.exists() or shipped_v2:
             codex_dst.parent.mkdir(parents=True, exist_ok=True)
             _atomic_write_yml(codex_dst, codex_template)
         if not guide.resolve().is_relative_to(project_dir):
@@ -12675,7 +12680,7 @@ def _install_project_agent_guide(project_dir: pathlib.Path) -> pathlib.Path:
         elif original.startswith(b"\xfe\xff"):
             encoding = "utf-16-be"
         existing = original.decode(encoding).removeprefix("\ufeff")
-        if "<!-- mw:agent-collaboration-version: 2 -->" not in existing.splitlines():
+        if "<!-- mw:agent-collaboration-version: 3 -->" not in existing.splitlines():
             eol = _dominant_ending(existing)
             separator = ""
             if existing and not existing.endswith(eol * 2):

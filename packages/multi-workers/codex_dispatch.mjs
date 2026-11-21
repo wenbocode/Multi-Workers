@@ -8,6 +8,7 @@ import {
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { registerWorkerTools } from "../coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts";
+import { createCodexDispatchAdapter } from "../coding-agent/src/extensions/agent-team-loop/pm/codex-pm-workflow.ts";
 import { AckStore } from "../coding-agent/src/extensions/agent-team-loop/shared/ack-store.ts";
 import { readEnvelope } from "../coding-agent/src/extensions/agent-team-loop/shared/dispatch-card.ts";
 import { IndexStore } from "../coding-agent/src/extensions/agent-team-loop/shared/index-store.ts";
@@ -17,6 +18,12 @@ const params = JSON.parse(readFileSync(0, "utf8"));
 if (readEnvelope(params.card_path).type !== "coding") throw new Error("A coding task card is required");
 const cwd = process.cwd();
 const root = path.join(cwd, ".agenticdoc");
+const indexStore = new IndexStore(root);
+if (params.workflow !== undefined && params.workflow !== "codex-lite") throw new Error("Unknown Codex PM workflow");
+const dispatchAdapter =
+	params.workflow === "codex-lite"
+		? createCodexDispatchAdapter(root, indexStore, params.key, params.claim_id)
+		: undefined;
 const resourceLoader = new DefaultResourceLoader({
 	cwd,
 	agentDir: getAgentDir(),
@@ -26,7 +33,19 @@ const resourceLoader = new DefaultResourceLoader({
 	noContextFiles: true,
 	noPromptTemplates: true,
 	extensionFactories: [
-		(pi) => registerWorkerTools(pi, new WorkerStore(root), new AckStore(root), new IndexStore(root), root, {}, cwd),
+		(pi) =>
+			registerWorkerTools(
+				pi,
+				new WorkerStore(root),
+				new AckStore(root),
+				indexStore,
+				root,
+				{},
+				cwd,
+				undefined,
+				undefined,
+				dispatchAdapter,
+			),
 	],
 });
 await resourceLoader.reload();

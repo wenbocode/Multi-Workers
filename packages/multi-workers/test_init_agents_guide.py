@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 PACKAGE = pathlib.Path(__file__).resolve().parent
-MARKER = "<!-- mw:agent-collaboration-version: 2 -->"
+MARKER = "<!-- mw:agent-collaboration-version: 3 -->"
 
 
 @pytest.fixture
@@ -45,7 +45,12 @@ def test_new_project_uses_shipped_guide(project):
     codex = project / ".agenticdoc" / "templates" / "codex_doc.md"
     assert codex.read_text(encoding="utf-8") == (PACKAGE / "templates" / "codex_doc.md").read_text(encoding="utf-8")
     assert "仅供 Codex PM 使用" in codex.read_text(encoding="utf-8")
-    assert "PM mode: codex" in installed and "PM mode: mw" in installed
+    assert "Workflow: codex-lite" in installed and "PM mode: mw" in installed
+    assert "spec → design → plan → tasks → execute → verify → done" in installed
+    assert "- Workflow: codex-lite" in codex.read_text(encoding="utf-8")
+    assert "- Claim-Id: codex" in codex.read_text(encoding="utf-8")
+    for section in ("目标", "范围", "验收标准", "接续须知"):
+        assert f"## {section}" in codex.read_text(encoding="utf-8")
     assert claude.read_bytes() == b"# Existing project instructions\n"
     assert str(project / "AGENTS.md") in result.stdout
     assert "status: draft" in (project / ".agenticdoc" / "goal.md").read_text(encoding="utf-8")
@@ -111,6 +116,59 @@ def test_upgrade_keeps_legacy_section_and_project_codex_notes(project):
     assert guide.read_bytes() == upgraded
     assert template.read_bytes() == b"# Project Codex template\n"
     assert note.read_bytes() == b"# Work in progress\n"
+
+
+@pytest.mark.parametrize(("encoding", "bom"), [
+    ("utf-8", b""), ("utf-8", b"\xef\xbb\xbf"), ("utf-16-le", b"\xff\xfe"),
+])
+def test_v2_upgrade_appends_one_authoritative_guide_and_preserves_edits(project, encoding, bom):
+    guide = project / "AGENTS.md"
+    original = bom + (
+        "# 项目自定义规则\r\n保留此处的修改。\r\n\r\n"
+        "## Multi-Workers 协作约定\r\n旧版内的项目定制。\r\n"
+        "<!-- mw:agent-collaboration-version: 2 -->\r\n"
+    ).encode(encoding)
+    guide.write_bytes(original)
+    init(project, "--no-framework")
+    upgraded = guide.read_bytes()
+    assert upgraded.startswith(original)
+    text = upgraded[len(bom):].decode(encoding)
+    assert text.count(MARKER) == 1
+    assert text.count("<!-- mw:agent-collaboration-version: 2 -->") == 1
+    assert "本节取代前面版本化的 MW 协作章节" in text
+    assert "普通 MW 派发仍检查原 SDD 文档" in text
+    assert "Workflow: codex-lite" in text
+    assert "\n" not in text.replace("\r\n", "")
+    init(project, "--no-framework")
+    assert guide.read_bytes() == upgraded
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_exact_shipped_v2_codex_template_upgrades_without_rewriting_key(project, newline):
+    legacy = (PACKAGE / "test" / "fixtures" / "codex_doc_v2.md").read_text(encoding="utf-8")
+    template = project / ".agenticdoc" / "templates" / "codex_doc.md"
+    template.parent.mkdir(parents=True)
+    template.write_bytes(legacy.replace("\n", newline).encode("utf-8"))
+    key_note = project / ".agenticdoc" / "existing" / "codex_doc.md"
+    key_note.parent.mkdir()
+    key_note.write_bytes(legacy.encode("utf-8"))
+    init(project, "--no-framework")
+    assert template.read_text(encoding="utf-8") == (PACKAGE / "templates" / "codex_doc.md").read_text(encoding="utf-8")
+    assert key_note.read_bytes() == legacy.encode("utf-8")
+    installed = template.read_bytes()
+    init(project, "--no-framework")
+    assert template.read_bytes() == installed
+
+
+@pytest.mark.parametrize(("encoding", "bom"), [("utf-8", b""), ("utf-16-le", b"\xff\xfe")])
+def test_modified_v2_codex_template_is_project_owned(project, encoding, bom):
+    legacy = (PACKAGE / "test" / "fixtures" / "codex_doc_v2.md").read_text(encoding="utf-8")
+    template = project / ".agenticdoc" / "templates" / "codex_doc.md"
+    template.parent.mkdir(parents=True)
+    custom = bom + (legacy + "\n项目增加的验收要求。\n").encode(encoding)
+    template.write_bytes(custom)
+    init(project, "--no-framework")
+    assert template.read_bytes() == custom
 
 
 @pytest.mark.parametrize("family", ["target", "partition"])

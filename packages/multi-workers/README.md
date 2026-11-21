@@ -18,7 +18,7 @@ Worker 1 (独立 pi 进程)   Worker 2 ...   Worker N
 
 - **进程级隔离**：每个 Worker 是独立 pi 进程，崩溃不影响其他 Worker
 - **文件驱动去中心化协调**：无中心调度器，Worker 之间不直接通信，通过 `.agenticdoc/` 下的文件 + 文件锁并发控制
-- **Phase 门禁**：沿用 AgenticTask 语义（spec / design / plan / tasks / evidence）
+- **Phase 门禁**：MW PM 沿用 AgenticTask 语义；Codex PM 可显式使用轻量任务主记录和独立验收入口
 - **凭证隔离**：每个 Worker 只拿到它需要的 API key，其他 provider 凭证从 env 中删除
 
 ## 组成
@@ -51,6 +51,10 @@ python packages/multi-workers/mw.py bootstrap --project .
 | 8 | `doctor`：全链路诊断，期望 `summary: healthy` |
 
 PM 和 worker 共用项目根目录的 `AGENTS.md`。对使用其他指令文件的客户端，可在其项目指令中要求先阅读 `AGENTS.md`。
+
+MW PM 继续完整的 `spec → design → plan → tasks → execute → verify → done` 流程。Codex PM 使用 `codex_pm.py init --project <目录> --key <key>` 显式建立 `codex-lite` 任务：`codex_doc.md` 保存目标、范围、验收标准、进度和接续信息，`achieved.md` 保存交付与遗留，派给 MW Worker 时才建立任务卡。活动 ClaimId 统一为 `codex`；`_index.parallel` 保留真实阶段和 active/idle，`_index.md` 投影全部 active key。已有完整 SDD key 不自动转换。操作和验收说明见 [Codex PM 工作流](docs/codex-pm.md)。
+
+已有项目重跑 init 会保留原文，追加一次 v3 协作章节。未改动的旧版 Codex 默认模板升级为轻量模板；项目定制模板和已有任务记录保持原样。AgenticTask 原脚本和 MW Worker 执行逻辑继续原行为。
 
 首次派发前必须显式选择工作区模式，见下文「双工作区」。`init` 不会自动选择 single。
 

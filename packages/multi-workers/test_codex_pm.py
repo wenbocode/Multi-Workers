@@ -42,6 +42,7 @@ def card(proj):
         capture_output=True, check=True, timeout=20,
     )
     root = proj / ".agenticdoc"
+    (root / "target.yml").write_text("active: single\n", encoding="utf-8")
     key = root / KEY
     (key / "tasks").mkdir(parents=True)
     for name in ("spec", "design"):
@@ -82,7 +83,7 @@ def card(proj):
     pm.write_text(pm.read_text(encoding="utf-8").replace(
         "## 1. Snapshot", "## 1. Snapshot\n- PM mode: codex"), encoding="utf-8")
     (key / "codex_doc.md").write_text(
-        (root / "templates" / "codex_doc.md").read_text(encoding="utf-8")
+        (CLI.parent / "test" / "fixtures" / "codex_doc_v2.md").read_text(encoding="utf-8")
         + "\nCodex preparation complete. T-01 transfers remaining implementation to MW.\n",
         encoding="utf-8")
     return source
@@ -125,8 +126,15 @@ def test_develop_reconnect_and_verify(proj, card, fakebin, start_launcher, monke
     other.mkdir()
     with monkeypatch.context() as changed:
         changed.setenv("MW_TARGET_GAME", str(other))
-        error = invoke(proj, "verify", "--card", card.stem, "--", *COMMAND, expected=2)
-        assert "workspace differs" in error["error"]
+        target = proj / ".agenticdoc" / "target.yml"
+        original_target = target.read_bytes()
+        try:
+            subprocess.run([sys.executable, str(CLI.with_name("mw.py")), "target", "set", "--project", str(proj),
+                            "--game", str(other)], capture_output=True, check=True, timeout=20)
+            error = invoke(proj, "verify", "--card", card.stem, "--", *COMMAND, expected=2)
+            assert "workspace differs" in error["error"]
+        finally:
+            target.write_bytes(original_target)
     # A real red/green acceptance run with the SAME test and argv.
     framework(proj, "advance_phase.py", KEY, "verify")
     worker_product = proj / "counter.py"

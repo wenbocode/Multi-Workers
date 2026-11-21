@@ -3256,6 +3256,10 @@ export function writeDispatchTaskMd(
 	return { ok: true, path: taskMdPath, injected: input.injectWriteSurface === true };
 }
 
+/** An application-installed workflow adapter; never a model-supplied tool
+ * argument. Success replaces only the ordinary owner/phase-document checks. */
+export type WorkerDispatchAdapter = (ownerKey: string) => { ok: true; phase: string } | { ok: false; reason: string };
+
 /**
  * Register agent-callable tools for worker dispatch and task listing.
  * These complement the slash commands in registerWorkerCommands.
@@ -3273,6 +3277,7 @@ export function registerWorkerTools(
 	/** T-08 test seam for the dp1 feedback writer; production omits it (the real
 	 * `mw decide lifecycle` child is the single write face). */
 	lifecycleRun?: LifecycleRunner,
+	dispatchAdapter?: WorkerDispatchAdapter,
 ): void {
 	registerReplanTool(pi, projectDir, windowClaimId);
 	// dispatch_worker: create a task.md and immediately dispatch it to the worker queue.
@@ -3377,7 +3382,11 @@ export function registerWorkerTools(
 			// guard is the single write gate for every dispatch, explicit key or not.
 			// resolveOwnerKeyWithSync already degrades a foreign-live or reserved
 			// value to _scratch, so the implicit path gains no new refusal.
-			const refusal = foreignLiveClaimRefusal(indexStore, ownerKey);
+			const adapted = dispatchAdapter?.(ownerKey);
+			if (adapted && !adapted.ok) {
+				return { content: [{ type: "text", text: adapted.reason }], details: undefined };
+			}
+			const refusal = adapted?.ok ? null : foreignLiveClaimRefusal(indexStore, ownerKey);
 			if (refusal) return { content: [{ type: "text", text: refusal }], details: undefined };
 
 			const validCli = ["pi", "claude", "codex"];
@@ -3401,8 +3410,8 @@ export function registerWorkerTools(
 			// CURRENT phase picks the tier — SPEC (or placeholder/unknown) needs the
 			// spec-side chain; from DESIGN onward the full six-item chain. One
 			// phase read, reused by the task.md frontmatter below.
-			const ownerPhase = dispatchPhase(agenticdocRoot, ownerKey);
-			const docGaps = dispatchDocGaps(agenticdocRoot, ownerKey, ownerPhase);
+			const ownerPhase = adapted?.ok ? adapted.phase : dispatchPhase(agenticdocRoot, ownerKey);
+			const docGaps = adapted?.ok ? [] : dispatchDocGaps(agenticdocRoot, ownerKey, ownerPhase);
 			if (docGaps.length > 0) {
 				return {
 					content: [
@@ -3536,6 +3545,13 @@ export function registerWorkerTools(
 			}
 			// DP-1 ledger + (on disagreement) the one PM wake for this dispatch.
 			emitDispatchTriage(pi, agenticdocRoot, modelPlan.triage);
+
+			// The Codex state can change while pre-dispatch decisions run. Read it
+			// again before publishing the task; ordinary MW keeps its existing path.
+			const currentWorkflow = dispatchAdapter?.(ownerKey);
+			if (currentWorkflow && !currentWorkflow.ok) {
+				return { content: [{ type: "text", text: currentWorkflow.reason }], details: undefined };
+			}
 
 			const publish = () =>
 				writeDispatchTaskMd(
