@@ -23,6 +23,7 @@ import copy
 from collections.abc import Mapping
 import ctypes
 from ctypes import wintypes
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -14273,10 +14274,10 @@ def _add_serve_args(parser: argparse.ArgumentParser) -> None:
 # -- Subcommand: stats (mw-usage-monitor T-03, design 3.3 / 5 / 7) ----------
 
 #: Formats accepted by ``--since``; echoed on a bad value (design 7: rc=2).
-_STATS_SINCE_HINT = "7d / 24h / 30m / YYYY-MM-DD"
+_STATS_BOUND_HINT = "7d / 24h / 30m / YYYY-MM-DD"
+_STATS_SINCE_HINT = _STATS_BOUND_HINT + " / all"
 
-#: ``--until`` adds one form on top of ``--since`` (local wall-clock minute).
-_STATS_UNTIL_HINT = _STATS_SINCE_HINT + " / YYYY-MM-DDTHH:MM"
+_STATS_UNTIL_HINT = _STATS_BOUND_HINT + " / YYYY-MM-DDTHH:MM"
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
@@ -14286,9 +14287,10 @@ def cmd_stats(args: argparse.Namespace) -> int:
     missing ledger is not an error: session logs are still scanned and the
     text path renders ``no ledger yet`` / ``no usage in window`` (design 7).
     """
-    since_text = str(args.since or "7d").strip()
+    now = datetime.now(timezone.utc)
+    since_text = ("7d" if args.since is None else args.since).strip()
     try:
-        since = usage.parse_since(since_text)
+        since = usage.parse_since(since_text, now)
     except ValueError:
         print(
             f"[mw stats] invalid --since {since_text!r}; use {_STATS_SINCE_HINT}",
@@ -14299,7 +14301,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
     until = None
     if until_text:
         try:
-            until = usage.parse_until(until_text)
+            until = usage.parse_until(until_text, now)
         except ValueError:
             # Same rc=2 path / message shape as ``--since`` (no second dialect).
             print(
@@ -14331,21 +14333,29 @@ def cmd_stats(args: argparse.Namespace) -> int:
             "[mw stats] note: --json suppresses the full run table",
             file=sys.stderr,
         )
+    filters = {
+        "window": since_text,
+        "key": args.key,
+        "type": args.type,
+        "model": args.model,
+        "project": project_filter,
+        "source": args.source,
+    }
     report = usage.build_report(
+        now=now,
         since=since,
         until=until,
         limit=args.limit,
         detail=args.detail,
         include_all_runs=needs_html and not args.json,
-        filters={
-            "window": since_text,
-            "key": args.key,
-            "type": args.type,
-            "model": args.model,
-            "project": project_filter,
-            "source": args.source,
-        },
+        filters=filters,
     )
+    if args.since is None and args.until is None:
+        history = usage.build_report(now=now, filters={**filters, "window": "all"})
+        group_windows = dict.fromkeys(("key", "project"), "all")
+        for dimension in group_windows:
+            report["groups"][dimension] = history["groups"][dimension]
+        report["group_windows"] = group_windows
     if args.json:
         # `runs[]` / `runs_total` are part of the report itself (R8): the JSON
         # contract never depends on `--detail`, so nothing is trimmed here.
@@ -14639,8 +14649,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "stats",
         help="Token and wall-clock usage over a time window (worker runs + PM sessions)",
     )
-    stats_p.add_argument("--since", default="7d", metavar="WINDOW",
-                         help=f"Window to report: {_STATS_SINCE_HINT} (default: %(default)s)")
+    stats_p.add_argument("--since", metavar="WINDOW",
+                         help=f"Window to report: {_STATS_SINCE_HINT} (default: 7d, "
+                              "with all-time key/project groups when neither bound is given)")
     stats_p.add_argument("--key", default=None, metavar="KEY",
                          help="Only runs owned by this key directory")
     stats_p.add_argument("--type", default=None, metavar="TYPE",

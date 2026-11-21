@@ -43,6 +43,7 @@ TOP_KEYS = {
     "ledger",
     "totals",
     "groups",
+    "group_windows",
     "coverage",
     "sources",
     "runs_total",
@@ -162,7 +163,7 @@ def _run_stats(argv: list[str] | None = None) -> tuple[int, str, str]:
 def test_parse_args_stats_defaults() -> None:
     args = mw._parse_args(["stats"])
     assert args.subcommand == "stats"
-    assert args.since == "7d"
+    assert args.since is None  # omitted uses 7d, with all-time key/project groups
     assert args.key is None
     assert args.type is None
     assert args.model is None
@@ -217,8 +218,8 @@ def test_cmd_stats_text_matches_format_report(env_dirs, monkeypatch) -> None:
 
     def spy_build(*args, **kwargs):
         report = real_build(*args, **kwargs)
-        captured["report"] = report
-        captured["filters"] = kwargs.get("filters")
+        captured.setdefault("report", report)
+        captured.setdefault("filters", kwargs.get("filters"))
         return report
 
     monkeypatch.setattr(usage, "build_report", spy_build)
@@ -318,6 +319,7 @@ def test_cmd_stats_json_contract(env_dirs) -> None:
         assert not any(token in key.lower() for token in forbidden), key
 
     assert report["window"] == "7d"
+    assert report["group_windows"] == {"key": "all", "project": "all"}
     assert report["ledger"]["events"] == 2
     assert report["ledger"]["bad_lines"] == 0
     assert report["ledger"]["open_runs"] == 0
@@ -367,6 +369,64 @@ def test_cmd_stats_invalid_since_rc2(env_dirs) -> None:
     assert out == ""
     assert "invalid --since" in err
     assert "7d / 24h / 30m / YYYY-MM-DD" in err
+
+
+def test_cmd_stats_history_windows(env_dirs, tmp_path) -> None:
+    usage_dir, pi_root, _claude = env_dirs
+    old_session = f"mw-{WORKER_KEY}-4242-2"
+    other_session = "mw-other-key-4242-3"
+    old = 14 * 24 * 60
+    _write_ledger(usage_dir, [
+        _worker_run(),
+        _run_at("old", old, old - 60, old_session),
+        _run_at("other", old, old - 60, other_session, key="other-key"),
+    ])
+    _pi_session(pi_root, WORKER_SESSION_ID)
+    for session_id in (old_session, other_session):
+        session = _pi_session(pi_root, session_id, at_minutes=old)
+        stamp = (NOW - timedelta(minutes=old - 60)).timestamp()
+        os.utime(session, (stamp, stamp))
+
+    filters = ["--key", WORKER_KEY, "--project", "ProjA"]
+    code, out, err = _run_stats(["--json", *filters])
+    assert code == 0, err
+    report = json.loads(out)
+    assert report["window"] == "7d"
+    assert report["totals"]["calls"] == report["runs_total"] == 1
+    assert [report["groups"][dim][0]["calls"] for dim in ("model", "type", "key", "project")] == [1, 1, 2, 2]
+
+    for window_args, expected in (
+        (["--since", "7d"], 1),
+        (["--until", "1h"], 1),
+        (["--since", "all"], 2),
+        (["--since", "all", "--until", "7d"], 1),
+    ):
+        code, out, err = _run_stats(["--json", *filters, *window_args])
+        assert code == 0, err
+        report = json.loads(out)
+        assert report["totals"]["calls"] == report["runs_total"] == expected
+        assert {row["calls"] for rows in report["groups"].values() for row in rows} == {expected}
+        assert "group_windows" not in report
+        if "all" in window_args:
+            assert report["window"] == "all"
+            assert report["since"] is None
+
+    target = tmp_path / "report.html"
+    code, out, err = _run_stats([*filters, "--html", str(target), "--no-open"])
+    assert code == 0, err
+    html = target.read_text(encoding="utf-8")
+    for dim in ("key", "project"):
+        assert f"by {dim} (all time)" in out
+        assert f"<h2>by {dim} (all time)</h2>" in html
+
+    code, out, err = _run_stats([*filters, "--since", "all", "--html", str(target), "--no-open"])
+    assert code == 0, err
+    assert out.startswith("usage earliest record")
+    assert '<h2>runs (newest first) · 2</h2>' in target.read_text(encoding="utf-8")
+
+    code, out, err = _run_stats(["--until", "all"])
+    assert code == 2
+    assert "invalid --until" in err
 
 
 def test_cmd_stats_missing_ledger_rc0_still_scans_sessions(env_dirs) -> None:
@@ -561,7 +621,7 @@ def test_cmd_stats_html_writes_self_contained_report(env_dirs, tmp_path, monkeyp
 
     monkeypatch.setattr(mw.webbrowser, "open", _explode)
 
-    # No --html and no --detail: no sidecar at all (the text path is unchanged).
+    # No --html and no --detail: no sidecar.
     code, out, _err = _run_stats([])
     assert code == 0
     assert "html:" not in out
@@ -573,7 +633,7 @@ def test_cmd_stats_html_writes_self_contained_report(env_dirs, tmp_path, monkeyp
     assert target.exists()
     html = target.read_text(encoding="utf-8")
     # Four group tables + the run table are the anchors, not the text brief.
-    for heading in ("by model", "by type", "by key", "by project"):
+    for heading in ("by model", "by type", "by key (all time)", "by project (all time)"):
         assert f"<h2>{heading}</h2>" in html
     # spec §13.2 R15: once the table *is* the whole window the heading states
     # its size (`runs (newest first) · N`) instead of the legacy `showing` note.

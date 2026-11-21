@@ -73,6 +73,7 @@ _TIMESTAMP_RE = re.compile(r'"timestamp"\s*:\s*"([^"]+)"')
 _SLUG_MAX = 64
 
 _RELATIVE_UNITS = {"d": timedelta(days=1), "h": timedelta(hours=1), "m": timedelta(minutes=1)}
+_ALL_HISTORY_START = datetime.min.replace(tzinfo=timezone.utc)
 
 #: Value used for the type/key group of a PM window session (not a worker run).
 PM_LABEL = "pm"
@@ -393,16 +394,18 @@ def _parse_bound(text: str, now: datetime | None, flag: str, *, allow_time: bool
 
 
 def parse_since(text: str, now: datetime | None = None) -> datetime:
-    """``7d`` / ``24h`` / ``30m`` / ``YYYY-MM-DD`` -> aware UTC datetime.
+    """Parse a relative or calendar bound, or the earliest instant for ``all``.
 
     Invalid input raises ``ValueError`` (the CLI turns that into rc=2).
     A calendar date means local midnight of that day.
     """
+    if _norm(text).lower() == "all":
+        return _ALL_HISTORY_START
     return _parse_bound(text, now, "--since", allow_time=False)
 
 
 def parse_until(text: str, now: datetime | None = None) -> datetime:
-    """``--until`` upper bound: same forms as ``parse_since`` + ``YYYY-MM-DDTHH:MM``.
+    """Parse the upper bound as a relative duration, date, or local minute.
 
     The extra form is local wall-clock time of that minute ("yesterday 14:00"),
     so a review window can start and end inside one day. Relative forms keep
@@ -457,14 +460,14 @@ def iter_session_files(root: pathlib.Path, since: datetime) -> Iterator[pathlib.
     root = pathlib.Path(root)
     if not root.is_dir():
         return
-    cutoff = _as_utc(since).timestamp()
+    cutoff = None if since == _ALL_HISTORY_START else _as_utc(since).timestamp()
     try:
         candidates = sorted(root.rglob("*.jsonl"))
     except OSError:
         return
     for path in candidates:
         try:
-            if path.stat().st_mtime < cutoff:
+            if cutoff is not None and path.stat().st_mtime < cutoff:
                 continue
         except OSError:
             continue
@@ -1521,7 +1524,10 @@ def build_report(
     else:
         since_utc = _as_utc(since)
     until_utc = _as_utc(until) if until is not None else now_utc
-    window = _norm(filters.get("window")) or _window_label(since_utc, until_utc)
+    all_history = since_utc == _ALL_HISTORY_START
+    window = "all" if all_history else (
+        _norm(filters.get("window")) or _window_label(since_utc, until_utc)
+    )
 
     runs, ledger_meta = load_runs(since_utc, filters, until=until_utc)
     by_session = {
@@ -1680,7 +1686,7 @@ def build_report(
 
     report: dict[str, Any] = {
         "generated_at": _iso(now_utc),
-        "since": _iso(since_utc),
+        "since": None if all_history else _iso(since_utc),
         "until": _iso(until_utc),
         "window": window,
         "ledger": {
@@ -1844,6 +1850,7 @@ def format_report_text(report: Mapping[str, Any], detail: bool = False) -> str:
     totals = report.get("totals") or {}
     sources = report.get("sources") or {}
     groups = report.get("groups") or {}
+    group_windows = report.get("group_windows") or {}
     since = _norm(report.get("since"))
     until = _norm(report.get("until"))
     since_date = since[:10] if len(since) >= 10 else since
@@ -1855,7 +1862,8 @@ def format_report_text(report: Mapping[str, Any], detail: bool = False) -> str:
     )
     if until:
         # Half-open window: show both bounds (R7).
-        first = f"usage {_format_local_stamp(since)} → {_format_local_stamp(until)} ({window})"
+        start = "earliest record" if window == "all" else _format_local_stamp(since)
+        first = f"usage {start} → {_format_local_stamp(until)} ({window})"
     else:
         # Backward compatible wording for a report built without ``until``.
         first = f"usage since {since_date} ({window})"
@@ -1870,11 +1878,11 @@ def format_report_text(report: Mapping[str, Any], detail: bool = False) -> str:
         lines.append("")
         lines.append("no usage in window")
     else:
-        for _dim, title, rows in sections:
+        for dim, title, rows in sections:
             if not rows:
                 continue
             lines.append("")
-            lines.append(title)
+            lines.append(f"{title} (all time)" if group_windows.get(dim) == "all" else title)
             for row in rows:
                 if row.get("wall_kind") == "session":
                     marked = True
@@ -2189,10 +2197,11 @@ def render_html(report: Mapping[str, Any], *, title: str | None = None) -> str:
     totals = report.get("totals") or {}
     sources = report.get("sources") or {}
     groups = report.get("groups") or {}
+    group_windows = report.get("group_windows") or {}
     total_tokens = totals.get("tokens") or {}
-    since = _format_local_stamp(report.get("since"))
-    until = _format_local_stamp(report.get("until"))
     window = _norm(report.get("window")) or "-"
+    since = "最早记录" if window == "all" else _format_local_stamp(report.get("since"))
+    until = _format_local_stamp(report.get("until"))
     doc_title = title if title is not None else f"mw usage — {since} → {until}"
 
     meta_cells = [
@@ -2228,6 +2237,8 @@ def render_html(report: Mapping[str, Any], *, title: str | None = None) -> str:
         rows = groups.get(dim) or []
         if not rows:
             continue  # empty groups are not rendered at all
+        if group_windows.get(dim) == "all":
+            label = f"{label} (all time)"
         group_sections.append(
             f"<section>\n<h2>{_html_escape(label)}</h2>\n"
             f"{_html_table(_HTML_GROUP_HEADERS, (_html_group_row(row) for row in rows))}\n"

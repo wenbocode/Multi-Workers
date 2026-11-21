@@ -109,7 +109,7 @@ pi 窗口内是同一张报表：`/mw stats [<同样的参数>]`。窗口侧是�
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `--since` | `7d` | 窗口：`7d` / `24h` / `30m` / `YYYY-MM-DD`（日期 = 本地零点）。非法值 rc=2 并打印可用格式 |
+| `--since` | `7d` | `7d` / `24h` / `30m` / `YYYY-MM-DD`（本地零点）/ `all`（全部已保留历史）。非法值 rc=2 并打印可用格式 |
 | `--until` | now | 窗口上界，窗口为半开区间 `[since, until)`：`7d` / `24h` / `30m` / `YYYY-MM-DD` / `YYYY-MM-DDTHH:MM`（日期/时刻 = 本地墙钟，相对形式以 now 为基准）。早于 `--since` 或非法值 rc=2 |
 | `--key` | 全部 | 只统计该 owner key |
 | `--type` | 全部 | 只统计该任务类型（coding / review / research / ...） |
@@ -122,6 +122,10 @@ pi 窗口内是同一张报表：`/mw stats [<同样的参数>]`。窗口侧是�
 | `--json` | 文本 | 输出固定 JSON 契约（`groups` / `totals` / `coverage` / `sources` / `runs[]` / `runs_total`，未知值一律 `null`） |
 | `--html [PATH]` | 不生成 | 额外写一份**单文件自包含**静态 HTML（内联 CSS，无外链/无脚本/CDN）：`--html PATH` 写到该路径（父目录自动创建），只写 `--html` 不写值则用默认路径 `<usage_dir>/reports/usage-<YYYYMMDD-HHMMSS>.html`（每次调用一个新文件，不覆盖历史，`MW_USAGE_DIR` 同源）。`--json` 时路径只写 stderr，stdout 仍是纯 JSON；文本模式在末尾追加 `html: <path>`。HTML 明细表包含窗口内**全部** run（标题 `runs (newest first) · N`，不写 `showing N of M`） |
 | `--no-open` | 关（打开） | 不调用浏览器。`--html`/`--detail` 默认用 `webbrowser.open(file:///…)` 打开报告；自动化场景用 `--no-open` 或环境变量 `MW_STATS_NO_OPEN=1`（`0` = 恢复打开）抑制。打开/写盘失败只 warn，rc 仍为 0。`--json` 且未显式给 `--html PATH` 时等价 `--no-open`（不弹窗，文件照写；`--json --html PATH` 仍打开） |
+
+未指定 `--since` 和 `--until` 时，`by key` 和 `by project` 默认累计全部已保留历史，其余统计默认近 7 天。
+累计分组沿用 key、项目等过滤条件。文本和 HTML 用 `(all time)` 标明累计分组，JSON 用 `group_windows` 标明。
+显式指定任一时间参数时，整张报表共用同一时间窗口。`mw stats --since all --html` 打开全历史报表，此时 JSON 的 `since` 为 `null`。
 
 ### 数据落在哪
 
@@ -148,7 +152,7 @@ by model
   timi/glm-5.3             calls 84    in 1.24M  out 310k   cacheR 11.4M   cacheW 42k    wall p50 4m12s  p90 5m30s  n 6
   timi/glm-5.3-flashx      calls 36    in 8.1M   out 920k   cacheR 40.2M   cacheW 305k   wall p50 1h00m  p90 1h00m* n 5
 
-by key
+by key (all time)
   mw-usage-monitor         calls 84    in 1.24M  out 310k   cacheR 11.4M   cacheW 42k    wall p50 4m12s  p90 5m30s  n 6
   pm                       calls 36    in 8.1M   out 920k   cacheR 40.2M   cacheW 305k   wall p50 1h00m  p90 1h00m* n 5
 
