@@ -216,6 +216,8 @@ export interface MaterialIssue {
 	/** Only `missing` means the field was absent; supplied invalid values keep
 	 * their actual constraint failure. Counts never include submitted text. */
 	code?: "missing" | "type" | "blank" | "max-bytes" | "max-items" | "enum" | "unknown-field";
+	allowed_choices?: readonly string[];
+	received_choice?: string;
 	actual?: number;
 	limit?: number;
 }
@@ -385,7 +387,7 @@ export function validateDecisionMaterial(dp: string, material: unknown): Materia
 	return issues.length ? { ok: false, issues } : { ok: true, material };
 }
 
-function decisionChoices(dp: string, material: Record<string, unknown>): readonly string[] {
+export function decisionChoices(dp: string, material: Record<string, unknown>): readonly string[] {
 	const entry = DECIDE_REGISTRY[dp];
 	if (entry.kind !== "dynamic-candidates") return entry.fixedChoiceIds;
 	return Array.isArray(material.handling_options)
@@ -399,6 +401,7 @@ export function preparationProblems(
 	preparation: unknown,
 	context: unknown,
 	materialRefIssues?: MaterialReferenceIssue[],
+	choiceIssues?: MaterialIssue[],
 ): string[] {
 	const entry = DECIDE_REGISTRY[dp];
 	const problems: string[] = [];
@@ -466,12 +469,32 @@ export function preparationProblems(
 						"repository file path:line belongs in evidence field values, not material_refs",
 				);
 		}
-		if (
-			!Array.isArray(item.applies_to) ||
-			!item.applies_to.length ||
-			!item.applies_to.every((target) => nonblank(target) && choices.includes(target))
-		)
-			problems.push(`${path}.applies_to`);
+		const targets = item.applies_to;
+		const field = `${path}.applies_to`;
+		if (!Array.isArray(targets) || !targets.length) {
+			problems.push(field);
+			choiceIssues?.push({
+				field,
+				code: targets === undefined ? "missing" : Array.isArray(targets) ? "blank" : "type",
+				rule: "expected a nonempty array of choice IDs",
+				allowed_choices: choices,
+			});
+		} else {
+			for (const [index, target] of targets.entries()) {
+				if (nonblank(target) && choices.includes(target)) continue;
+				const member = `${field}[${index}]`;
+				problems.push(member);
+				choiceIssues?.push({
+					field: member,
+					code: typeof target === "string" ? "enum" : "type",
+					rule: "expected a choice ID for this decision point",
+					allowed_choices: choices,
+					...(typeof target === "string" && /^[A-Za-z][A-Za-z0-9-]{0,63}$/.test(target) && !/^sk-/i.test(target)
+						? { received_choice: target }
+						: {}),
+				});
+			}
+		}
 	}
 	return problems;
 }

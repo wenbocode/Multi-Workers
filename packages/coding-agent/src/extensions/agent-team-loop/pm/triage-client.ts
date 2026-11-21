@@ -926,12 +926,23 @@ export function prepareDecisionEnvelope(
 			material_issues: validated.issues,
 		};
 	const materialRefIssues: MaterialReferenceIssue[] = [];
-	const problems = preparationProblems(dpId, validated.material, preparation, context, materialRefIssues);
+	const choiceIssues: MaterialIssue[] = [];
+	const problems = preparationProblems(
+		dpId,
+		validated.material,
+		preparation,
+		context,
+		materialRefIssues,
+		choiceIssues,
+	);
 	if (!preparation || problems.length)
 		return {
 			ok: false,
 			reason: TRIAGE_REASON_INPUT_INCOMPLETE,
-			missing: problems,
+			missing: problems.filter(
+				(field) => !choiceIssues.some((issue) => issue.field === field && issue.code !== "missing"),
+			),
+			...(choiceIssues.length ? { material_issues: choiceIssues } : {}),
 			...(materialRefIssues.length ? { material_ref_issues: materialRefIssues } : {}),
 		};
 	let bytes: number;

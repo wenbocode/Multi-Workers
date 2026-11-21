@@ -1,0 +1,61 @@
+{
+  "dp": "dp-pm-steer",
+  "trigger": "T-021-offline-native-feasibility",
+  "material": {
+    "task_goal": "Recorded evidence",
+    "task_requirements": "Recorded evidence",
+    "task_deliverables": "Recorded evidence",
+    "pm_decision_background": "Recorded evidence"
+  },
+  "evidence_refs": [
+    {
+      "field": "task_goal",
+      "path": "T-021-offline-native-feasibility.md"
+    },
+    {
+      "field": "task_requirements",
+      "path": "T-021-offline-native-feasibility.md"
+    },
+    {
+      "field": "task_deliverables",
+      "path": "T-021-offline-native-feasibility.md"
+    },
+    {
+      "field": "pm_decision_background",
+      "path": "plan.md"
+    },
+    {
+      "field": "pm_decision_background",
+      "path": "permissions.yaml"
+    }
+  ],
+  "preparation": {
+    "prepared_at": "2026-11-21T23:15:08.1662227+08:00",
+    "basis_catalog": [
+      {
+        "id": "replan-adc205ff9c8e5386ee935fb5",
+        "applies_to": [
+          "split"
+        ],
+        "material_refs": [
+          "pm_decision_background",
+          "task_requirements",
+          "task_goal"
+        ],
+        "text": "Recorded basis"
+      },
+      {
+        "id": "retain-original-blocked",
+        "applies_to": [
+          "continue",
+          "escalate"
+        ],
+        "material_refs": [
+          "task_requirements",
+          "pm_decision_background"
+        ],
+        "text": "Recorded basis"
+      }
+    ]
+  }
+}

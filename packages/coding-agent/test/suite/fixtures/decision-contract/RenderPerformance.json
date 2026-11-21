@@ -1,0 +1,48 @@
+{
+  "dp": "dp-QG",
+  "trigger": "m0-frame-capture-source-v1",
+  "material": {
+    "review_requirements": "Recorded evidence",
+    "review_evidence": [
+      "Recorded evidence",
+      "Recorded evidence",
+      "Recorded evidence",
+      "Recorded evidence",
+      "Recorded evidence",
+      "Recorded evidence"
+    ],
+    "review_findings": "Recorded evidence",
+    "uncovered_scope": "Recorded evidence"
+  },
+  "evidence_refs": [
+    {
+      "field": "review_findings",
+      "path": "t002-pm-readback-2026-11-21.md"
+    },
+    {
+      "field": "review_evidence",
+      "path": "review-t002-source.md"
+    },
+    {
+      "field": "review_requirements",
+      "path": "design.md"
+    }
+  ],
+  "preparation": {
+    "prepared_at": "2026-11-21T01:13:39.4967607+08:00",
+    "basis_catalog": [
+      {
+        "id": "frame-source-f001-f004",
+        "applies_to": [
+          "fix"
+        ],
+        "material_refs": [
+          "review_findings",
+          "review_evidence",
+          "review_requirements"
+        ],
+        "text": "Recorded basis"
+      }
+    ]
+  }
+}

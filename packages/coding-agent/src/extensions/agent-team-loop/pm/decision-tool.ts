@@ -14,12 +14,14 @@ import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import {
 	type DecisionPreparation,
 	decisionActorAllowed,
+	decisionChoices,
 	decisionIdRefusal,
 	inspectPmClaim,
 	type MaterialIssue,
 	type MaterialReferenceIssue,
 	type PmClaimReason,
 	type PreparedBasis,
+	preparationProblems,
 	selectedDecisionBasis,
 	validateDecisionMaterial,
 } from "../shared/decide-policy.ts";
@@ -636,12 +638,59 @@ function buildSelection(
 	return { question, id: value };
 }
 
+/** Read-only composition aid. A preview neither checks authority nor issues a ruling. */
+export function previewDecisionInput(
+	dp: string,
+	material: Record<string, unknown> = {},
+	preparation?: DecisionPreparation,
+	context?: Record<string, unknown>,
+	refs: readonly { field: string }[] = [],
+) {
+	const allowed_choices = decisionChoices(dp, material);
+	const evidence_fields: string[] = [];
+	function collect(value: unknown, field: string): void {
+		if (typeof value === "string") evidence_fields.push(field);
+		else if (Array.isArray(value)) {
+			for (const [index, item] of value.entries()) collect(item, `${field}[${index}]`);
+		} else if (value && typeof value === "object") {
+			for (const [name, item] of Object.entries(value)) {
+				if (/^[A-Za-z_][A-Za-z0-9_-]*$/.test(name)) collect(item, `${field}.${name}`);
+			}
+		}
+	}
+	collect(material, "material");
+	preparation?.basis_catalog.forEach((item, index) => {
+		if (typeof item.text === "string") evidence_fields.push(`preparation.basis_catalog[${index}].text`);
+	});
+	const valid = validateDecisionMaterial(dp, material);
+	const issues: MaterialIssue[] = valid.ok ? [] : [...valid.issues];
+	const references: MaterialReferenceIssue[] = [];
+	const problems = preparationProblems(dp, material, preparation, context, references, issues);
+	for (const field of problems) {
+		if (
+			!issues.some((issue) => issue.field === field) &&
+			!references.some((issue) => issue.field === field || issue.field.startsWith(`${field}[`))
+		)
+			issues.push({ field, rule: "required or invalid preparation field" });
+	}
+	issues.push(...references);
+	for (const [index, ref] of refs.entries()) {
+		if (!evidence_fields.includes(ref.field))
+			issues.push({
+				field: `evidence_refs[${index}].field`,
+				code: "unknown-field",
+				rule: "select an existing evidence field",
+			});
+	}
+	return { preview: true as const, transport: "not-sent" as const, allowed_choices, evidence_fields, issues };
+}
+
 /** The fixed material-preparation prompts handed to the asking agent
  * (design §2 "固定提示"). They are part of the tool contract, not UI copy. */
 export const DECISION_MATERIAL_PROMPTS = Object.fromEntries(
 	Object.entries(DECIDE_REGISTRY).map(([id, entry]) => [
 		id,
-		`${id} (${entry.roleScope}): ${[...entry.requiredStateFields, ...entry.optionalStateFields].map((field) => `${field.name} — ${field.description}`).join("; ")}`,
+		`${id} (${entry.roleScope}, applies_to: ${entry.kind === "dynamic-candidates" ? "IDs from material.handling_options" : decisionChoices(id, {}).join(", ")}): ${[...entry.requiredStateFields, ...entry.optionalStateFields].map((field) => `${field.name} — ${field.description}`).join("; ")}`,
 	]),
 );
 
@@ -1191,12 +1240,18 @@ export async function runAskDecision(input: AskDecisionInput): Promise<AskDecisi
 		input.context,
 		input.parentDecisionRef,
 	);
-	if (!prepared.ok)
-		return unavailable(prepared.reason, dp, false, {
+	if (!prepared.ok) {
+		const refusal = unavailable(prepared.reason, dp, false, {
 			missing_fields: prepared.missing,
 			material_issues: prepared.material_issues,
 			material_ref_issues: prepared.material_ref_issues,
 		});
+		if (prepared.material_issues?.some((issue) => issue.allowed_choices)) {
+			const preview = previewDecisionInput(dp, input.material, input.preparation, input.context, input.evidenceRefs);
+			refusal.text += `\nLOCAL PREFLIGHT: ${jsonText(preview)}\nRepair and repeat preview=true before submitting.`;
+		}
+		return refusal;
+	}
 	const envelope: DecisionToolEnvelope =
 		input.evidenceRefs === undefined
 			? prepared.envelope
@@ -1756,6 +1811,11 @@ const PREPARATION_SCHEMA = Type.Optional(
 export const ASK_DECISION_PARAMETERS = Type.Object(
 	{
 		dp: DP_ENUM_SCHEMA,
+		preview: Type.Optional(
+			Type.Boolean({
+				description: "Inspect choices, reference paths and local input issues without requesting a decision.",
+			}),
+		),
 		trigger: Type.String({
 			minLength: 1,
 			maxLength: 256,
@@ -1976,6 +2036,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 	pi.registerTool<
 		typeof ASK_DECISION_PARAMETERS,
 		| (AskDecisionPayload & { blocked_event_id?: string; gate_route?: ReturnType<typeof resolvePmGateRoute> })
+		| ReturnType<typeof previewDecisionInput>
 		| { available: false; gate_route: ReturnType<typeof resolvePmGateRoute> }
 	>({
 		name: ASK_DECISION_TOOL,
@@ -2010,6 +2071,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			"note is an L0/L1 summary (<=600 bytes): no credentials, no user quotes, no absolute paths, no code.",
 			"mode=suggest only archives an advisory row; acted is the service's verdict and never your own " +
 				"inference from the mode.",
+			"Before submission, use preview=true on ask_decision. Correct local input issues and repeat preview before requesting a ruling. Preview never authorizes action or consumes an attempt.",
 			...Object.values(DECISION_MATERIAL_PROMPTS),
 			"Prepare material and a separately timestamped basis_catalog. Each item's material_refs is a non-empty array of existing field paths in this request's material, " +
 				"without the material. prefix, not repository file path:line. Each item names its applicable choices.",
@@ -2037,6 +2099,16 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			if (invalidDp) {
 				const refused = refusalOutcome(invalidDp, params.dp);
 				return blockedResult(params.dp, refused, "registry-check");
+			}
+			if (params.preview) {
+				const preview = previewDecisionInput(
+					params.dp,
+					params.material,
+					params.preparation,
+					params.context,
+					params.evidence_refs,
+				);
+				return { content: [{ type: "text", text: jsonText(preview) }], details: preview };
 			}
 			const bound = boundKey(params.key);
 			if (bound.key === undefined) {
