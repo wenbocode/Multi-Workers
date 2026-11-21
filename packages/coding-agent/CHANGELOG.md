@@ -135,6 +135,7 @@
 
 ### Fixed
 
+- Fixed local decision-tool validation reporting supplied but invalid material as missing. Refusals now distinguish missing fields from invalid values and report the violated rule and byte limit without exposing material contents.
 - Classified native summary HTTP 400 failures as parameter, model, context, request-format or generic bad-request errors without exposing upstream error text.
 - Fixed unbounded memory growth when a shell command contains multiple PowerShell here-strings. Write-surface scanning now searches for each closing marker after its opener.
 

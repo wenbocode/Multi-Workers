@@ -16,6 +16,7 @@ import {
 	type DecisionPreparation,
 	decisionActorAllowed,
 	decisionIdRefusal,
+	type MaterialIssue,
 	type MaterialReferenceIssue,
 	type PreparedBasis,
 	selectedDecisionBasis,
@@ -232,6 +233,7 @@ export interface AskDecisionUnavailable {
 	/** State fields the registry requires and this call site could not supply
 	 * (names only, L0). Only present on a zero-spawn `input-incomplete` refusal. */
 	missing_fields?: string[];
+	material_issues?: MaterialIssue[];
 	input_diagnostics?: DecisionInputDiagnostics;
 	original_blocked_event_id?: string;
 }
@@ -1022,6 +1024,7 @@ function unavailable(
 	extra: {
 		escalated_reason?: string;
 		missing_fields?: string[];
+		material_issues?: MaterialIssue[];
 		material_ref_issues?: MaterialReferenceIssue[];
 		input_diagnostics?: DecisionInputDiagnostics;
 		original_blocked_event_id?: string;
@@ -1036,6 +1039,7 @@ function unavailable(
 	if (extra.missing_fields !== undefined && extra.missing_fields.length > 0) {
 		payload.missing_fields = extra.missing_fields;
 	}
+	if (extra.material_issues?.length) payload.material_issues = extra.material_issues;
 	if (extra.input_diagnostics) payload.input_diagnostics = extra.input_diagnostics;
 	if (extra.original_blocked_event_id) payload.original_blocked_event_id = extra.original_blocked_event_id;
 	return {
@@ -1100,6 +1104,7 @@ export async function runAskDecision(input: AskDecisionInput): Promise<AskDecisi
 	if (!prepared.ok)
 		return unavailable(prepared.reason, dp, false, {
 			missing_fields: prepared.missing,
+			material_issues: prepared.material_issues,
 			material_ref_issues: prepared.material_ref_issues,
 		});
 	const envelope: DecisionToolEnvelope =
@@ -1847,7 +1852,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				"(<task_key> or <task_key>#ckpt<N>); never invent a dp id, trigger or question id.",
 			'available=false is a terminal answer for this attempt: report "blocked on decision <dp>" and wait ' +
 				"for a human. Repeating the same call in one turn is cut off by the retry breaker.",
-			"unavailable=input-incomplete lists missing_fields: fix the named MATERIAL fields and retry once; " +
+			"unavailable=input-incomplete reports material_issues for invalid material, including UTF-8 byte counts and declared limits; " +
 				"a missing field is never filled by inference.",
 			"note is an L0/L1 summary (<=600 bytes): no credentials, no user quotes, no absolute paths, no code.",
 			"mode=suggest only archives an advisory row; acted is the service's verdict and never your own " +

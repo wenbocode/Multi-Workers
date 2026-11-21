@@ -213,6 +213,11 @@ export interface DecisionPreparation {
 export interface MaterialIssue {
 	field: string;
 	rule: string;
+	/** Only `missing` means the field was absent; supplied invalid values keep
+	 * their actual constraint failure. Counts never include submitted text. */
+	code?: "missing" | "type" | "blank" | "max-bytes" | "max-items" | "enum" | "unknown-field";
+	actual?: number;
+	limit?: number;
 }
 
 /** Local reference diagnosis; field names only, never submitted material values. */
@@ -249,40 +254,76 @@ function fieldValue(material: Record<string, unknown>, path: string): unknown {
 	return value;
 }
 
-function validField(field: DecideRegistryField, value: unknown): boolean {
+function fieldIssue(field: DecideRegistryField, value: unknown): MaterialIssue | undefined {
+	if (value === undefined) return { field: field.name, code: "missing", rule: "required field is absent" };
 	switch (field.type) {
 		case "string":
-			return (
-				nonblank(value) &&
-				(field.maxBytes === undefined || Buffer.byteLength(value) <= field.maxBytes) &&
-				(field.enum === undefined || field.enum.includes(value))
-			);
+			if (typeof value !== "string") break;
+			if (!value.trim()) return { field: field.name, code: "blank", rule: "must be a nonblank string" };
+			if (field.maxBytes !== undefined && Buffer.byteLength(value) > field.maxBytes)
+				return {
+					field: field.name,
+					code: "max-bytes",
+					rule: "exceeds the declared UTF-8 bytes limit",
+					actual: Buffer.byteLength(value),
+					limit: field.maxBytes,
+				};
+			if (field.enum !== undefined && !field.enum.includes(value))
+				return { field: field.name, code: "enum", rule: "must be one of the declared choices" };
+			return undefined;
 		case "array":
-			return (
-				Array.isArray(value) &&
-				(field.maxItems === undefined || value.length <= field.maxItems) &&
-				value.every((item) =>
-					field.itemType === "object"
-						? isRecord(item)
-						: nonblank(item) &&
-							(field.itemMaxBytes === undefined || Buffer.byteLength(item) <= field.itemMaxBytes),
-				)
-			);
+			if (!Array.isArray(value)) break;
+			if (field.maxItems !== undefined && value.length > field.maxItems)
+				return {
+					field: field.name,
+					code: "max-items",
+					rule: "exceeds the declared array item limit",
+					actual: value.length,
+					limit: field.maxItems,
+				};
+			for (const [index, item] of value.entries()) {
+				// Match the existing Array.every semantics for non-JSON sparse input.
+				if (!(index in value)) continue;
+				const name = `${field.name}[${index}]`;
+				if (field.itemType === "object") {
+					if (!isRecord(item)) return { field: name, code: "type", rule: "must be an object" };
+				} else {
+					if (typeof item !== "string") return { field: name, code: "type", rule: "must be a string" };
+					if (!item.trim()) return { field: name, code: "blank", rule: "must be a nonblank string" };
+					if (field.itemMaxBytes !== undefined && Buffer.byteLength(item) > field.itemMaxBytes)
+						return {
+							field: name,
+							code: "max-bytes",
+							rule: "exceeds the declared UTF-8 bytes limit",
+							actual: Buffer.byteLength(item),
+							limit: field.itemMaxBytes,
+						};
+				}
+			}
+			return undefined;
 		case "boolean":
-			return typeof value === "boolean";
+			if (typeof value === "boolean") return undefined;
+			break;
 		case "object":
-			return isRecord(value);
+			if (isRecord(value)) return undefined;
+			break;
 		case "integer":
-			return typeof value === "number" && Number.isSafeInteger(value);
+			if (typeof value === "number" && Number.isSafeInteger(value)) return undefined;
+			break;
 		case "number":
-			return typeof value === "number" && Number.isFinite(value);
+			if (typeof value === "number" && Number.isFinite(value)) return undefined;
 	}
+	return { field: field.name, code: "type", rule: `must be a ${field.type}` };
 }
 
 export function validateDecisionMaterial(dp: string, material: unknown): MaterialValidation {
 	if (decisionIdRefusal(dp))
 		return { ok: false, issues: [{ field: "dp", rule: "requires an active decision point" }] };
-	if (!isRecord(material)) return { ok: false, issues: [{ field: "material", rule: "must be an object" }] };
+	if (!isRecord(material))
+		return {
+			ok: false,
+			issues: [{ field: "material", code: material === undefined ? "missing" : "type", rule: "must be an object" }],
+		};
 	const entry = DECIDE_REGISTRY[dp];
 	const paths = entry.modelStateFields ?? [];
 	const issues: MaterialIssue[] = [];
@@ -293,7 +334,11 @@ export function validateDecisionMaterial(dp: string, material: unknown): Materia
 			if (!key.includes(".") && paths.some((allowed) => allowed.startsWith(`${path}.`)) && isRecord(value)) {
 				checkKeys(value, `${path}.`);
 			} else {
-				issues.push({ field: path, rule: "not a declared material field or container" });
+				issues.push({
+					field: prefix.slice(0, -1) || "material",
+					code: "unknown-field",
+					rule: "contains a field or container not declared by this entry",
+				});
 			}
 		}
 	}
@@ -301,7 +346,8 @@ export function validateDecisionMaterial(dp: string, material: unknown): Materia
 	for (const field of [...entry.requiredStateFields, ...entry.optionalStateFields]) {
 		const value = fieldValue(material, field.name);
 		if (value === undefined && entry.optionalStateFields.includes(field)) continue;
-		if (!validField(field, value)) issues.push({ field: field.name, rule: "missing or invalid field" });
+		const issue = fieldIssue(field, value);
+		if (issue !== undefined) issues.push(issue);
 	}
 	if (entry.kind === "dynamic-candidates" && Array.isArray(material.handling_options)) {
 		const candidates = material.handling_options;
@@ -317,7 +363,8 @@ export function validateDecisionMaterial(dp: string, material: unknown): Materia
 				continue;
 			}
 			for (const name of Object.keys(item)) {
-				if (!keys.includes(name)) issues.push({ field: `${field}.${name}`, rule: "unknown candidate field" });
+				if (!keys.includes(name))
+					issues.push({ field, code: "unknown-field", rule: "contains an unknown candidate field" });
 			}
 			for (const key of keys)
 				if (!nonblank(item[key])) issues.push({ field: `${field}.${key}`, rule: "must be nonblank" });

@@ -13,6 +13,7 @@ import {
 	type DecisionPreparation,
 	decisionActorAllowed,
 	decisionIdRefusal,
+	type MaterialIssue,
 	type MaterialReferenceIssue,
 	type PreparedBasis,
 	preparationProblems,
@@ -164,6 +165,7 @@ export type TriageState = Record<string, unknown>;
 
 /** Structured DP advice (design D-003 response projection). */
 export interface TriageResult {
+	material_issues?: MaterialIssue[];
 	available: boolean;
 	reason?: string;
 	triage_type?: string;
@@ -865,7 +867,13 @@ export function validateDecisionMeta(meta: DecisionEnvelopeMeta): string[] {
 /** Result of preparing one material envelope for the wire. */
 export type DecisionEnvelopePreparation =
 	| { ok: true; envelope: DecisionMaterialEnvelope; bytes: number }
-	| { ok: false; reason: string; missing: string[]; material_ref_issues?: MaterialReferenceIssue[] };
+	| {
+			ok: false;
+			reason: string;
+			missing: string[];
+			material_issues?: MaterialIssue[];
+			material_ref_issues?: MaterialReferenceIssue[];
+	  };
 
 /** Validate → canonicalise → bound the business material, in that order.
  *
@@ -914,7 +922,8 @@ export function prepareDecisionEnvelope(
 		return {
 			ok: false,
 			reason: TRIAGE_REASON_INPUT_INCOMPLETE,
-			missing: validated.issues.map((issue) => issue.field),
+			missing: validated.issues.filter((issue) => issue.code === "missing").map((issue) => issue.field),
+			material_issues: validated.issues,
 		};
 	const materialRefIssues: MaterialReferenceIssue[] = [];
 	const problems = preparationProblems(dpId, validated.material, preparation, context, materialRefIssues);
@@ -1038,7 +1047,11 @@ export function triageDispatchEnvelope(input: {
 			input.preparation,
 			input.context,
 		);
-		if (!prepared.ok) return refused(prepared.reason, prepared.missing, []);
+		if (!prepared.ok) {
+			const result = refused(prepared.reason, prepared.missing, []);
+			if (prepared.material_issues?.length) result.material_issues = prepared.material_issues;
+			return result;
+		}
 		const run = input.run ?? runDecideMw;
 		const request: DecideRunRequest = {
 			projectDir: input.projectDir,

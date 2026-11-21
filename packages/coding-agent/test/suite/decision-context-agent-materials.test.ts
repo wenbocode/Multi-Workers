@@ -454,7 +454,7 @@ describe("dp-auto material contract (AC-005)", () => {
 		}
 	});
 
-	it("refuses missing background facts and unknown keys by name", () => {
+	it("names missing background facts and refuses unknown keys without echoing them", () => {
 		const missing = autoMaterial({ background: { task_goal: "g", current_state: "s", tried: "r" } });
 		const built = validateDecisionMaterial("dp-auto", missing);
 		expect(built.ok).toBe(false);
@@ -464,7 +464,8 @@ describe("dp-auto material contract (AC-005)", () => {
 		const extra = validateDecisionMaterial("dp-auto", { ...autoMaterial(), local_candidates: [] });
 		expect(extra.ok).toBe(false);
 		if (extra.ok) throw new Error("unreachable");
-		expect(extra.issues.map((issue) => issue.field)).toContain("local_candidates");
+		expect(extra.issues).toMatchObject([{ field: "material", code: "unknown-field" }]);
+		expect(JSON.stringify(extra.issues)).not.toContain("local_candidates");
 		// The field list is the generated registry's, not a second local table.
 		expect(DECIDE_REGISTRY["dp-auto"]?.modelStateFields).toEqual([
 			"question",
@@ -695,7 +696,8 @@ describe("role permissions (AC-006/AC-010)", () => {
 		expect(payload.available).toBe(false);
 		if (payload.available) throw new Error("unreachable");
 		expect(payload.unavailable).toBe("input-incomplete");
-		expect(payload.missing_fields).toContain("pm_decision_background");
+		expect(payload.missing_fields).toBeUndefined();
+		expect(payload.material_issues).toMatchObject([{ field: "pm_decision_background", code: "blank" }]);
 	});
 
 	it("sends the PM's dp25 four sections, `[]` being a real 'none', and signs in one judgment", async () => {
