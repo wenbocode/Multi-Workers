@@ -175,6 +175,8 @@ def _build_cases(corpus: dict, project: pathlib.Path, outside: pathlib.Path) -> 
 
 def _materialize(cases: list[dict], project: pathlib.Path) -> pathlib.Path:
     ad = project / ".agenticdoc"
+    ad.mkdir(parents=True, exist_ok=True)
+    (ad / "target.yml").write_text("active: single\n", encoding="utf-8")
     for index, case in enumerate(cases):
         task_key = f"{CAND}-{index:03d}"
         task_md = ad / OWNER / "workers" / task_key / "task.md"
@@ -520,6 +522,7 @@ _CARD_HEAD = (
 def _write_card(project: pathlib.Path, owner: str, stem: str, entries: list[str]) -> None:
     card_dir = project / ".agenticdoc" / owner / "tasks"
     card_dir.mkdir(parents=True, exist_ok=True)
+    (project / ".agenticdoc" / "target.yml").write_text("active: single\n", encoding="utf-8")
     body = "\n".join(f"- `{entry}`" for entry in entries)
     (card_dir / f"{stem}.md").write_text(
         _CARD_HEAD + f"## 写入允许面\n\n{body}\n", encoding="utf-8", newline="\n"

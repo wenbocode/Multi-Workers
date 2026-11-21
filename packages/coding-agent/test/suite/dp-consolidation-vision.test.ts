@@ -25,6 +25,7 @@ function fixture(
 	const agenticdoc = path.join(project, ".agenticdoc");
 	const taskDir = path.join(agenticdoc, "fixture", "workers", "vision-task");
 	fs.mkdirSync(taskDir, { recursive: true });
+	fs.writeFileSync(path.join(agenticdoc, "target.yml"), "active: single\n", "utf8");
 	const taskPath = path.join(taskDir, "task.md");
 	fs.writeFileSync(
 		taskPath,

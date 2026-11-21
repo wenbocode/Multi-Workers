@@ -52,6 +52,8 @@ python packages/multi-workers/mw.py bootstrap --project .
 
 PM 和 worker 共用项目根目录的 `AGENTS.md`。对使用其他指令文件的客户端，可在其项目指令中要求先阅读 `AGENTS.md`。
 
+首次派发前必须显式选择工作区模式，见下文「双工作区」。`init` 不会自动选择 single。
+
 每个 key 在正常的 `spec → design → plan → tasks → execute → verify → done` 流程中，由 PM 在 `pm-state.md` 的 Snapshot 记录 `- PM mode: mw` 或 `- PM mode: codex`。初始化还会安装 `.agenticdoc/templates/codex_doc.md`，仅 Codex PM 将其复制到自己的 key，记录内置执行和同 key 转派。派工示例见 [Codex PM 工作流](docs/codex-pm.md)。已有项目重跑 init 会保留原文、追加新版协作章节一次，保留已有 Codex 模板定制。
 
 常用参数：
@@ -316,7 +318,11 @@ fallback_models:
 
 ## 双工作区：代码目录与工作目录分离
 
-默认 **single 模式**：控制工作区与目标项目是同一个目录。配置 `target.yml` 后进入 **dual 模式**：
+工作区模式必须在派发前显式选择：**single** 表示控制工作区与目标项目是同一个目录，**dual** 将控制工作区与目标项目分离，**partition** 将控制区、父项目与功能分区分离。配置位于控制工作区的 `.agenticdoc/target.yml`。
+
+没有配置时，查询仍显示 `mode=single / source=default`，但 PM 与 conductor 均阻断派发，错误含 `target-config-required`、控制根、配置路径和修复方法。缺文件、空文件、空映射以及未建立模式的配置都不能授予派发资格；配置被删除后也一样。配置错误沿用原有拒绝通道，门禁不会注入 profile 或写入队列。
+
+dual 的目录关系：
 
 ```
 控制工作区 (control root)                  目标项目 (game root)
@@ -335,15 +341,32 @@ fallback_models:
 
 ### 配置方式
 
-CLI（优先级：env > target.yml > single 默认）：
+CLI（根路径优先级：env > target.yml；查询可回落 single/default，派发不可）：
 
 ```bash
 python mw.py target set --project <控制工作区> \
     --game <UE项目根> \
     [--engine <引擎根>] [--vcs git|p4|none] [--uproject <.uproject>]
 python mw.py target show --project <控制工作区>   # 查看解析后的生效视图
-python mw.py target clear --project <控制工作区>  # 删除 target.yml，回到 single
+python mw.py target clear --project <控制工作区>  # 清除 dual 配置；隐式 single 不可派发
 ```
+
+同目录项目需在 `.agenticdoc/target.yml` 中明确选择 single：
+
+```yaml
+active: single
+```
+
+partition 配置示例（相对路径以控制根为准；parent 与 partition 必须不同且互不嵌套）：
+
+```yaml
+active: partition
+partition:
+  parent: D:/Projects/Main
+  partition: D:/Projects/Feature
+```
+
+dual 也可用 v2 格式：`active: dual`，并在 `dual:` 块中配置 `game` 和可选的 `engine`。只有项目确实同目录时才选择 single，不要为消除门禁而覆盖已有 dual/partition 配置。
 
 pi 窗口内（新窗口生效）：
 
@@ -354,7 +377,7 @@ pi 窗口内（新窗口生效）：
 ```
 
 `set`/`clear` 自**下一次 worker 派发**生效，无需重启 serve（launcher 每次 spawn 重新解析）。带空格的路径用双引号。
-环境变量临时覆盖（不落盘）：`MW_TARGET_GAME` / `MW_TARGET_ENGINE`。
+环境变量临时覆盖（不落盘）：dual 使用 `MW_TARGET_GAME` 和可选的 `MW_TARGET_ENGINE`；partition 使用 `MW_PARTITION_PARENT` 与 `MW_PARTITION_ROOT`。无文件时，有效的 `MW_TARGET_GAME` 或完整的 partition 变量对也可显式激活相应模式；只有 engine 或只有一个 partition 变量仍拒绝。环境变量须在执行派发的 PM/conductor 进程中生效。
 `target.yml` 三个手工维护段（`mw target set` 只管理 bootstrap 字段，不碰这些）：
 
 ```yaml

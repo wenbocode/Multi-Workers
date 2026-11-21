@@ -7870,7 +7870,7 @@ def _apply_bootstrap_line(text: str, key: str, value: str | None) -> str:
 
 def _target_template(game: str, engine: str | None, vcs: str | None, uproject: str | None) -> str:
     lines = [
-        "# Dual-workspace target config (mw target set). File absent = single mode.",
+        "# Dual-workspace target config (mw target set). Dispatch requires an explicit mode.",
         "# Bootstrap fields are managed by `mw target set/clear`; the three sections",
         "# below are hand-maintained profiles (mw-dual-workspace design D-010).",
         "mode: dual",
@@ -8012,6 +8012,14 @@ def _target_set(project_dir: pathlib.Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_workspace_mode_guidance(project_dir: pathlib.Path) -> None:
+    """Explain explicit dispatch configuration without choosing a project mode."""
+    print("[mw] Worker dispatch requires an explicit workspace mode; single/default cannot dispatch.")
+    print(f"[mw] single: write 'active: single' to {mw_common.target_yml_path(project_dir)}")
+    print(f'[mw] dual: mw target set --project "{project_dir}" --game <dir> [--engine <dir>]')
+    print(f'[mw] partition: mw partition set --project "{project_dir}" --parent <dir> --partition <dir>')
+
+
 def _target_clear(project_dir: pathlib.Path) -> int:
     """`mw target clear` (mw-target-partition FIX-6): a v1 file keeps the
     historical whole-file unlink (zero change); a v2 file clears only the
@@ -8020,7 +8028,8 @@ def _target_clear(project_dir: pathlib.Path) -> int:
     `mw partition clear`, AC-011)."""
     yml = mw_common.target_yml_path(project_dir)
     if not yml.exists():
-        print("[mw target clear] no target.yml — already single mode")
+        print("[mw target clear] no target.yml — nothing to clear")
+        _print_workspace_mode_guidance(project_dir)
         return 0
     exact = _read_yml_exact(yml)
     try:
@@ -8045,7 +8054,8 @@ def _target_clear(project_dir: pathlib.Path) -> int:
         except OSError as e:
             print(f"[mw target clear] Error: removing {yml} failed: {e}", file=sys.stderr)
             return 1
-        print(f"[mw target clear] removed {yml} — mode resolves to single")
+        print(f"[mw target clear] removed {yml} — queries resolve to single/default")
+        _print_workspace_mode_guidance(project_dir)
         return 0
     if not isinstance(raw.get("dual"), dict):
         print("[mw target clear] no dual block — nothing to clear")
@@ -8072,6 +8082,7 @@ def _target_clear(project_dir: pathlib.Path) -> int:
             print(f"[mw target clear] Error: removing {yml} failed: {e}", file=sys.stderr)
             return 1
         print(f"[mw target clear] removed dual block; no mode blocks remain — deleted {yml}")
+        _print_workspace_mode_guidance(project_dir)
         return 0
     try:
         _atomic_write_yml(yml, text)
@@ -8185,6 +8196,7 @@ def _target_off(project_dir: pathlib.Path) -> int:
     yml = mw_common.target_yml_path(project_dir)
     if not yml.exists():
         print("[mw target off] dual mode is not active (no target.yml) — nothing to do")
+        _print_workspace_mode_guidance(project_dir)
         return 0
     exact = _read_yml_exact(yml)
     try:
@@ -10425,6 +10437,7 @@ def _partition_clear(project_dir: pathlib.Path) -> int:
     yml = mw_common.target_yml_path(project_dir)
     if not yml.exists():
         print("[mw partition clear] no partition block — nothing to clear")
+        _print_workspace_mode_guidance(project_dir)
         return 0
     exact = _read_yml_exact(yml)
     try:
@@ -10471,6 +10484,7 @@ def _partition_clear(project_dir: pathlib.Path) -> int:
             print(f"[mw partition clear] Error: removing {yml} failed: {e}", file=sys.stderr)
             return 1
         print(f"[mw partition clear] removed partition block; no mode blocks remain — deleted {yml}")
+        _print_workspace_mode_guidance(project_dir)
         return 0
     try:
         _atomic_write_yml(yml, text)
@@ -10558,6 +10572,7 @@ def _partition_off(project_dir: pathlib.Path) -> int:
     yml = mw_common.target_yml_path(project_dir)
     if not yml.exists():
         print("[mw partition off] partition mode is not active (no target.yml) — nothing to do")
+        _print_workspace_mode_guidance(project_dir)
         return 0
     exact = _read_yml_exact(yml)
     try:
@@ -12797,6 +12812,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if projection_incomplete:
         return 1
     print(f"[mw init] Project initialized: {project_dir}")
+    _print_workspace_mode_guidance(project_dir)
     return 0
 
 
@@ -14713,7 +14729,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                               help="Explicit .uproject (game-relative or absolute; default: unique discovery)")
     for action in ("clear", "show", "on", "off"):
         help_text = (
-            "Delete target.yml (back to single)" if action == "clear"
+            "Remove dual config; explicit workspace configuration is required to dispatch" if action == "clear"
             else "Print the resolved config" if action == "show"
             else "Switch active mode to dual (v2 files; the dual block must exist)" if action == "on"
             else "Park dual mode: active → single, dual block kept (v2 files)"

@@ -4,6 +4,7 @@
 
 ### Breaking Changes
 
+- Worker dispatch now requires an explicit workspace choice in `.agenticdoc/target.yml` or complete dual/partition environment activation. Missing or empty configuration no longer authorizes implicit `single/default` dispatch; use `active: single` only for an intentionally single workspace. Both dispatch channels reject omitted dual/partition configuration before task or queue writes and report the configuration path and repair guidance.
 - Interactive MW PM and autopilot now require a reviewed plan before entering `TASKS`. Existing keys in `PLAN` need a pruning record, a retained-task roster, and coverage for all ACs and required design paths. See the [plan closure guide](docs/plan-closure.md).
 
 ### Added

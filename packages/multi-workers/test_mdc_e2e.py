@@ -67,6 +67,7 @@ def _verify(tag: str, **kv) -> None:
 def _project(root: pathlib.Path) -> pathlib.Path:
     """Minimal enabled autopilot project."""
     (root / ".agenticdoc" / "_autopilot").mkdir(parents=True, exist_ok=True)
+    (root / ".agenticdoc" / "target.yml").write_text("active: single\n", encoding="utf-8")
     (root / ".agenticdoc" / "goal.md").write_text("# Goal\n\nShip it.\n", encoding="utf-8")
     cfg = config.default_config()
     cfg["enabled"] = True
@@ -338,6 +339,7 @@ print(json.dumps({"ok": r.ok, "reason": r.reason}))
 def _bare_project(project: pathlib.Path) -> pathlib.Path:
     """Card-only project for the direct ``dispatch()`` entry (no roadmap)."""
     (project / ".agenticdoc" / "_autopilot").mkdir(parents=True, exist_ok=True)
+    (project / ".agenticdoc" / "target.yml").write_text("active: single\n", encoding="utf-8")
     card_dir = project / ".agenticdoc" / _OWNER / "tasks"
     card_dir.mkdir(parents=True, exist_ok=True)
     (card_dir / f"{_STEM}.md").write_text(_VC106_CARD, encoding="utf-8", newline="\n")

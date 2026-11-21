@@ -145,6 +145,13 @@ _OLD_PRODUCER_TASK_MD = (
 _BARE_LEGACY_TASK_MD = "type: coding\n\nDo something useful.\n"
 
 
+@pytest.fixture(autouse=True)
+def explicit_single_workspace(tmp_path):
+    path = tmp_path / ".agenticdoc" / "target.yml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("active: single\n", encoding="utf-8")
+
+
 def _write(tmp_path: pathlib.Path, name: str, text: str) -> pathlib.Path:
     path = tmp_path / name
     path.write_text(text, encoding="utf-8", newline="\n")

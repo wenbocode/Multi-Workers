@@ -18,6 +18,16 @@ from autopilot import dispatch
 from autopilot import timeline as timeline_mod
 
 
+@pytest.fixture(autouse=True)
+def explicit_single_workspace(tmp_path, monkeypatch):
+    """These dispatch tests start from an intentionally single workspace."""
+    for name in ("MW_TARGET_GAME", "MW_TARGET_ENGINE", "MW_PARTITION_PARENT", "MW_PARTITION_ROOT"):
+        monkeypatch.delenv(name, raising=False)
+    path = mw_common.target_yml_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("active: single\n", encoding="utf-8")
+
+
 def _verify(tag: str, **kv) -> None:
     print(f"[VERIFY] {tag}: " + " ".join(f"{k}={v}" for k, v in kv.items()), flush=True)
 
@@ -314,10 +324,10 @@ def _write_target_yml(
     (agentic / "target.yml").write_text(body, encoding="utf-8")
 
 
-def test_dispatch_single_mode_no_yml_snapshot(
+def test_dispatch_explicit_single_mode_snapshot(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression lock: with no target.yml the dispatch output is the canonical
+    """Regression lock: with explicit single mode the dispatch output is the canonical
     T-10 envelope rendering (no dual-workspace additions).
 
     Rebaselined 2026-10-12 (mw-dispatch-card-gate T-10): the conductor now
@@ -372,7 +382,7 @@ def test_dispatch_single_mode_no_yml_snapshot(
     )
     assert result.task_md is not None
     assert result.task_md.read_text(encoding="utf-8") == expected
-    _verify("VC-013", single_no_yml_snapshot=true_str(True))
+    _verify("VC-013", explicit_single_snapshot=true_str(True))
 
 
 def test_dispatch_dual_mode_expands_scope_and_injects_deny_globs(

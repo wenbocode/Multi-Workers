@@ -14,7 +14,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Model } from "@earendil-works/pi-ai";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../src/core/extensions/types.ts";
 import type { ModelRegistry } from "../../src/core/model-registry.ts";
 import { autoStartMonitor, registerAutopilotCommands } from "../../src/extensions/agent-team-loop/autopilot/console.ts";
@@ -148,6 +148,21 @@ import {
 function mkdtemp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "atl-test-"));
 }
+
+const dispatchProjects: string[] = [];
+
+function mkDispatchRoot(): string {
+	const project = mkdtemp();
+	dispatchProjects.push(project);
+	const root = path.join(project, ".agenticdoc");
+	fs.mkdirSync(root);
+	fs.writeFileSync(path.join(root, "target.yml"), "active: single\n", "utf8");
+	return root;
+}
+
+afterEach(() => {
+	for (const project of dispatchProjects.splice(0)) fs.rmSync(project, { recursive: true, force: true });
+});
 
 function makeTaskDir(root: string, key: string): string {
 	const dir = path.join(root, key);
@@ -409,10 +424,20 @@ describe("WorkerStore", () => {
 	});
 
 	it("dispatchTask stamps ISO 8601 timestamps", async () => {
-		const root = mkdtemp();
+		const project = mkdtemp();
+		const root = path.join(project, ".agenticdoc");
+		fs.mkdirSync(root);
+		fs.writeFileSync(path.join(root, "target.yml"), "active: single\n", "utf8");
 		const ws = new WorkerStore(root);
 		await dispatchTask(
-			{ taskKey: "disp-1", status: "pending", cli: "pi", provider: "timi", model: "", taskPath: "/t" },
+			{
+				taskKey: "disp-1",
+				status: "pending",
+				cli: "pi",
+				provider: "timi",
+				model: "",
+				taskPath: path.join(root, "_scratch", "workers", "disp-1", "task.md"),
+			},
 			ws,
 		);
 		const line =
@@ -1498,6 +1523,21 @@ describe("IndexStore.claim (M1: atomic claim primitive)", () => {
 });
 
 describe("dispatchNewTasks keyed workers scan", () => {
+	const projects: string[] = [];
+
+	function mkdtemp(): string {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "atl-dispatch-scan-"));
+		projects.push(project);
+		const root = path.join(project, ".agenticdoc");
+		fs.mkdirSync(root);
+		fs.writeFileSync(path.join(root, "target.yml"), "active: single\n", "utf8");
+		return root;
+	}
+
+	afterEach(() => {
+		for (const project of projects.splice(0)) fs.rmSync(project, { recursive: true, force: true });
+	});
+
 	function writeTaskMd(root: string, rel: string, type = "coding"): string {
 		const dir = path.join(root, rel);
 		fs.mkdirSync(dir, { recursive: true });
@@ -3364,7 +3404,7 @@ describe("task scope isolation (mw-task-scope-isolation: AC-001..AC-007)", () =>
 	});
 
 	it("AC-007: an explicit cross-key dispatch stays this window's task", async () => {
-		const root = mkdtemp();
+		const root = mkDispatchRoot();
 		const ws = new WorkerStore(root);
 		const is = new IndexStore(root);
 		writePhaseDocs(root, "key-b"); // documented so the dispatch gate passes
@@ -3867,7 +3907,7 @@ describe("pm-key takeover claims", () => {
 	}, 20000);
 
 	it("dispatch_worker refuses undocumented keys, allows _scratch and documented keys", async () => {
-		const root = mkdtemp();
+		const root = mkDispatchRoot();
 		const ws = new WorkerStore(root);
 		const is = new IndexStore(root);
 		const { pi, tools } = fakeCmdPi();
@@ -5624,7 +5664,7 @@ describe("dispatch role + model override gate (mw-dispatch-role-escape)", () => 
 		root: string;
 		execute: (params: Record<string, unknown>, registry?: ModelRegistry) => Promise<string>;
 	}> {
-		const root = mkdtemp();
+		const root = mkDispatchRoot();
 		const ws = new WorkerStore(root);
 		const is = new IndexStore(root);
 		if (dispatchYml !== undefined) writeDispatchYml(root, dispatchYml);
@@ -5653,7 +5693,7 @@ describe("dispatch role + model override gate (mw-dispatch-role-escape)", () => 
 		root: string;
 		run: (args: string, registry?: ModelRegistry) => Promise<string[]>;
 	}> {
-		const root = mkdtemp();
+		const root = mkDispatchRoot();
 		const ws = new WorkerStore(root);
 		const is = new IndexStore(root);
 		if (dispatchYml !== undefined) writeDispatchYml(root, dispatchYml);

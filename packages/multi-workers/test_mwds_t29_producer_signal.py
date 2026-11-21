@@ -78,6 +78,13 @@ _CODING_CARD_TEXT = (
 _LEGACY_CARD_TEXT = "type: coding\nDo something useful."
 
 
+@pytest.fixture(autouse=True)
+def explicit_single_workspace(tmp_path):
+    path = mw_common.target_yml_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("active: single\n", encoding="utf-8")
+
+
 # ── poll harness (T-03 shape, reused) ────────────────────────────────────────
 
 @pytest.fixture()

@@ -155,6 +155,7 @@
 
 ### Breaking Changes
 
+- Worker dispatch now requires an explicit workspace mode. Configure `.agenticdoc/target.yml` (`active: single`, or valid dual/partition roots) or activate dual/partition with complete target environment variables. Missing or empty configuration no longer authorizes implicit single-mode dispatch; queries still report single/default.
 - MW context compaction generation settings now come from pi. Existing `targetRatio`, `keepRecentTokens`, `maxSummaryTokens` and `timeoutMs` overrides are shown as delegated; setting them through `/mw context` is refused. MW retains `maxTokens`, `compaction.enabled` and `compaction.triggerRatio`.
 - Custom `ExtensionContext` and `ExtensionContextActions` implementations must provide `requestCompaction`.
 

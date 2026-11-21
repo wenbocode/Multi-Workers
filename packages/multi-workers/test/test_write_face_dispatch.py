@@ -34,6 +34,16 @@ from autopilot import write_face as wf  # noqa: E402
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 PKG_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORPUS_PATH = PKG_ROOT / "test" / "fixtures" / "write-face-corpus.json"
+
+
+@pytest.fixture(autouse=True)
+def explicit_single_workspace(tmp_path, monkeypatch):
+    """Write-face tests choose single mode before exercising dispatch gates."""
+    for name in ("MW_TARGET_GAME", "MW_TARGET_ENGINE", "MW_PARTITION_PARENT", "MW_PARTITION_ROOT"):
+        monkeypatch.delenv(name, raising=False)
+    path = mw_common.target_yml_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("active: single\n", encoding="utf-8")
 OWNER = "wfk"
 
 _CARD_HEAD = (

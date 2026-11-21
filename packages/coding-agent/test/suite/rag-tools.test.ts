@@ -133,7 +133,7 @@ function makeProject(options: ProjectOptions): string {
 	fs.mkdirSync(path.join(project, ".agenticdoc"), { recursive: true });
 	fs.writeFileSync(
 		path.join(project, ".agenticdoc", "target.yml"),
-		`rag:\n  enabled: [${options.enabled.join(", ")}]\n`,
+		`mode: single\nrag:\n  enabled: [${options.enabled.join(", ")}]\n`,
 		"utf8",
 	);
 	if (options.servers !== undefined) {
@@ -398,7 +398,7 @@ describe("worker integration", () => {
 	it("disabled activation reproduces the pre-RAG tool set exactly", () => {
 		const { capture, pi } = api();
 		applyRagTools(pi, null, "coding");
-		expect(capture.active).toEqual(["read", "write", "edit", "bash", "find", "grep", "ls"]);
+		expect(capture.active).toEqual(["read", "write", "edit", "bash", "find", "grep", "ls", "mw_run_detached"]);
 	});
 
 	it("renderRagBlock returns null when no server is enabled", () => {
@@ -475,7 +475,7 @@ describe("rag block byte contract and injection", () => {
 		expect(fs.readFileSync(taskPath, "utf8")).toBe(expected);
 
 		// Disable RAG: the stale block is dropped wholesale.
-		fs.writeFileSync(path.join(project, ".agenticdoc", "target.yml"), "rag:\n  enabled: []\n", "utf8");
+		fs.writeFileSync(path.join(project, ".agenticdoc", "target.yml"), "mode: single\nrag:\n  enabled: []\n", "utf8");
 		await dispatch(project, "_scratch", "inject", original);
 		const afterDisable = fs.readFileSync(taskPath, "utf8");
 		expect(afterDisable).not.toContain(RAG_MARKER_V1);

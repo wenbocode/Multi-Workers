@@ -229,8 +229,9 @@ export function rawTargetYml(controlRoot: string): Record<string, unknown> {
 	let text: string;
 	try {
 		text = fs.readFileSync(file, "utf-8");
-	} catch {
-		return {};
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+		fail("invalid-yaml", `target.yml unreadable (${file}): ${String(error)}`);
 	}
 	let parsed: unknown;
 	try {
@@ -727,6 +728,24 @@ export function resolveWorkspaceConfig(controlRoot: string): WorkspaceConfig {
 	}
 	// Row 9: partition activated purely by env (no file).
 	return loadPartitionConfig(controlRoot, controlNorm, null, envParent, envPartition, null);
+}
+
+/** Queries may describe an unconfigured workspace as single/default, but
+ * dispatch requires an explicit mode so a missing dual/partition config cannot
+ * silently move the worker and its write-face checks into the control tree. */
+export function resolveDispatchWorkspaceConfig(controlRoot: string): WorkspaceConfig {
+	const config = resolveWorkspaceConfig(controlRoot);
+	if (config.source === "default") {
+		fail(
+			"invalid-config",
+			`target-config-required: control root=${config.controlRoot}; config=${path.resolve(targetYmlPath(controlRoot))}; ` +
+				`mode=${config.mode} source=${config.source}. Dispatch requires an explicit workspace mode: ` +
+				"set active: single only for a single workspace, or configure active: dual with dual.game, " +
+				"or active: partition with partition.parent and partition.partition; " +
+				"complete MW_TARGET_GAME or MW_PARTITION_PARENT/MW_PARTITION_ROOT environment activation is also accepted.",
+		);
+	}
+	return config;
 }
 
 /**

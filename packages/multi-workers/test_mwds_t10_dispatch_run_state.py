@@ -36,6 +36,13 @@ TASK_KEY = "ap-k1-t10"
 TERMINAL_ORDER = ("done", "needs-clarification", "failed", "lost")
 
 
+@pytest.fixture(autouse=True)
+def explicit_single_workspace(tmp_path):
+    path = mw_common.target_yml_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("active: single\n", encoding="utf-8")
+
+
 def _verify(tag: str, body: str) -> None:
     print(f"[VERIFY] {tag}: {body}", flush=True)
 
@@ -151,6 +158,9 @@ def test_missing_run_json_dispatches_byte_identically(tmp_path: pathlib.Path) ->
     old-producer vs. missing-section discriminator). Only that line was added;
     the producer name is pinned literally and the version comes from the same
     lockstep metadata source the producer reads.
+
+    The literal also includes the shipped phase-writer recovery contract;
+    choosing an explicit single workspace does not alter those task bytes.
     """
     result = _dispatch(tmp_path)
     assert result.ok is True and result.row_verified is True
@@ -184,6 +194,16 @@ def test_missing_run_json_dispatches_byte_identically(tmp_path: pathlib.Path) ->
         "交付格式：本轮产物集中在 .agenticdoc/k1/workers/ap-k1-t10/，报告与输出文件"
         "（report.md / output.md）按任务书列出的必备段成节（结论 / 证据（含原始命令与输出）/ "
         "审计未及范围 / 残留与未验证 / 上下文来源清单）。\n"
+        "\n"
+        "## 交付段契约（本角色）\n"
+        "\n"
+        "本角色（type: phase-writer）的恢复契约段：report.md / output.md 必须按下列标题成节"
+        "（可直接复制；缺任一段即 settle 判缺失）：\n"
+        "\n"
+        "- `## 结论`\n"
+        "- `## 证据`\n"
+        "- `## 残留与未验证`\n"
+        "- `## 上下文来源`\n"
         "\n"
         "以上为种子，不是探索上界；可自行检索补充上下文。\n"
         "\n"
@@ -304,6 +324,9 @@ def test_verify_vc012_vc013_vc014(
     # (over the same queue) is byte-inert.
     missing_root = tmp_path / "missing"
     missing_root.mkdir()
+    missing_target = mw_common.target_yml_path(missing_root)
+    missing_target.parent.mkdir()
+    missing_target.write_text("active: single\n", encoding="utf-8")
     calls.clear()
     missing = _dispatch(missing_root)
     missing_dispatches = (

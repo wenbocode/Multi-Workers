@@ -80,6 +80,7 @@ function mkProject(): { project: string; agenticdoc: string } {
 	const project = mkdtemp("mw-writeface-pm-");
 	const agenticdoc = path.join(project, ".agenticdoc");
 	fs.mkdirSync(agenticdoc, { recursive: true });
+	fs.writeFileSync(path.join(agenticdoc, "target.yml"), "active: single\n", "utf8");
 	return { project, agenticdoc };
 }
 

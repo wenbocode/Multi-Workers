@@ -13,6 +13,8 @@ MARKER = "<!-- mw:agent-collaboration-version: 2 -->"
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
+    for name in ("MW_TARGET_GAME", "MW_TARGET_ENGINE", "MW_PARTITION_PARENT", "MW_PARTITION_ROOT"):
+        monkeypatch.delenv(name, raising=False)
     agent = tmp_path / "pi"
     (agent / "extensions").mkdir(parents=True)
     (agent / "extensions" / "agent-team-loop.js").touch()
@@ -47,6 +49,12 @@ def test_new_project_uses_shipped_guide(project):
     assert claude.read_bytes() == b"# Existing project instructions\n"
     assert str(project / "AGENTS.md") in result.stdout
     assert "status: draft" in (project / ".agenticdoc" / "goal.md").read_text(encoding="utf-8")
+    assert "Worker dispatch requires an explicit workspace mode" in result.stdout
+    assert "single/default cannot dispatch" in result.stdout
+    assert "active: single" in result.stdout
+    assert "mw target set" in result.stdout and "mw partition set" in result.stdout
+    assert str(project / ".agenticdoc" / "target.yml") in result.stdout
+    assert not (project / ".agenticdoc" / "target.yml").exists()
     assert not (project.parent / "AGENTS.md").exists()
 
 
@@ -103,3 +111,40 @@ def test_upgrade_keeps_legacy_section_and_project_codex_notes(project):
     assert guide.read_bytes() == upgraded
     assert template.read_bytes() == b"# Project Codex template\n"
     assert note.read_bytes() == b"# Work in progress\n"
+
+
+@pytest.mark.parametrize("family", ["target", "partition"])
+@pytest.mark.parametrize("action", ["clear", "off"])
+def test_missing_workspace_config_actions_explain_dispatch_requirement(project, family, action):
+    result = subprocess.run(
+        [sys.executable, str(PACKAGE / "mw.py"), family, action, "--project", str(project)],
+        cwd=project.parent, capture_output=True, text=True, check=True,
+    )
+    assert "Worker dispatch requires an explicit workspace mode" in result.stdout
+    assert "single/default cannot dispatch" in result.stdout
+    assert "active: single" in result.stdout
+    assert "mw target set" in result.stdout and "mw partition set" in result.stdout
+    assert not (project / ".agenticdoc").exists()
+
+
+@pytest.mark.parametrize("family", ["target", "partition"])
+def test_clearing_last_workspace_mode_explains_dispatch_requirement(project, family):
+    target = project.parent / "target"
+    target.mkdir()
+    command = [sys.executable, str(PACKAGE / "mw.py"), family]
+    options = ["--game", str(target)] if family == "target" else [
+        "--parent", str(target), "--partition", str(project),
+    ]
+    subprocess.run(
+        [*command, "set", "--project", str(project), *options],
+        cwd=project.parent, capture_output=True, text=True, check=True,
+    )
+    assert (project / ".agenticdoc" / "target.yml").is_file()
+    result = subprocess.run(
+        [*command, "clear", "--project", str(project)],
+        cwd=project.parent, capture_output=True, text=True, check=True,
+    )
+    assert "Worker dispatch requires an explicit workspace mode" in result.stdout
+    assert "single/default cannot dispatch" in result.stdout
+    assert "active: single" in result.stdout
+    assert not (project / ".agenticdoc" / "target.yml").exists()

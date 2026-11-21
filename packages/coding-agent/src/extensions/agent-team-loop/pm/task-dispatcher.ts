@@ -12,7 +12,12 @@ import { dualEnginePolicyLines } from "../shared/engine-policy.ts";
 import { acquireLock } from "../shared/file-lock.ts";
 import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
-import { renderToolchainCommand, resolveWorkspaceConfig, type WorkspaceConfig } from "../shared/target-config.ts";
+import {
+	renderToolchainCommand,
+	resolveDispatchWorkspaceConfig,
+	TargetConfigError,
+	type WorkspaceConfig,
+} from "../shared/target-config.ts";
 import { readTaskHeaderScalar, readTaskType } from "../shared/task-frontmatter.ts";
 import { type WorkerEntry, type WorkerStore, workerOwnerKey } from "../shared/worker-store.ts";
 import { workspaceWriteFaceOptions } from "../shared/workspace-write-face.ts";
@@ -257,9 +262,12 @@ function insertDenyGlobs(content: string, denyGlobs: string[]): string {
  * line to EOF (AC-019) — including a v1-marked legacy block under partition
  * activation, and a drop to nothing under a non-injecting mode (parked
  * single restores the pre-injection bytes). */
-function injectWorkspaceProfile(taskPath: string, vision?: { checked: string; model: string }): void {
+function injectWorkspaceProfile(
+	taskPath: string,
+	config: WorkspaceConfig,
+	vision?: { checked: string; model: string },
+): void {
 	const controlRoot = controlRootFromTaskPath(taskPath);
-	const config = resolveWorkspaceConfig(controlRoot);
 	let original: string;
 	try {
 		original = fs.readFileSync(taskPath, "utf8");
@@ -422,11 +430,16 @@ export async function dispatchTask(
 	// while this lock is held (a nested `acquireLock` backs off for 14.6h then
 	// raises, RQ-D3), so the row write goes through the store's own lock-free
 	// entry point (D-114: one writer implementation, no byte-mirror).
-	const options = workspaceWriteFaceOptions(writeFaceBase(path.dirname(store.queuePath)));
-
 	const release = await acquireLock(store.lockFilePath);
 	try {
 		const controlRoot = writeFaceBase(path.dirname(store.queuePath));
+		const config = resolveDispatchWorkspaceConfig(controlRoot);
+		const options = workspaceWriteFaceOptions(controlRoot, config);
+		const taskControlRoot = controlRootFromTaskPath(entry.taskPath);
+		const taskConfig =
+			path.resolve(taskControlRoot) === path.resolve(controlRoot)
+				? config
+				: resolveDispatchWorkspaceConfig(taskControlRoot);
 		const owner = workerOwnerKey(full);
 		const oldCard = dispatchOptions.card;
 		const inputPath = oldCard?.resolvedPath ?? entry.taskPath;
@@ -470,10 +483,26 @@ export async function dispatchTask(
 					detail: `${entry.taskKey}: vision image capability ${capability}; dispatch blocked`,
 				};
 			}
+			// Model verification awaits a subprocess and may yield to config
+			// edits. Revalidate before writing the profile or queue row.
+			const currentConfig = resolveDispatchWorkspaceConfig(controlRoot);
+			const currentTaskConfig =
+				path.resolve(taskControlRoot) === path.resolve(controlRoot)
+					? currentConfig
+					: resolveDispatchWorkspaceConfig(taskControlRoot);
+			if (
+				JSON.stringify(currentConfig) !== JSON.stringify(config) ||
+				JSON.stringify(currentTaskConfig) !== JSON.stringify(taskConfig)
+			) {
+				throw new TargetConfigError(
+					"invalid-config",
+					`target-config-changed: workspace configuration changed during dispatch for control root=${controlRoot}; retry dispatch with the current target.yml`,
+				);
+			}
 			vision = { checked: content, model };
 		}
 
-		injectWorkspaceProfile(entry.taskPath, vision);
+		injectWorkspaceProfile(entry.taskPath, taskConfig, vision);
 		store.upsertWithinLock(full);
 	} finally {
 		release();

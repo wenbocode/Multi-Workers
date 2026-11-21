@@ -152,8 +152,9 @@ describe("workspace profile injection (mw-dual-workspace AC-007)", () => {
 		fs.rmSync(project.control, { recursive: true, force: true });
 	});
 
-	it("single mode without target.yml: task.md byte-identical (snapshot)", async () => {
+	it("explicit single mode: task.md byte-identical (snapshot)", async () => {
 		const project = mkProject();
+		writeTargetYml(project, "active: single\n");
 		const body = "type: coding\n\nPlain manual task.\n";
 		const md = writeScratchTask(project, "ap-snap", body);
 		const store = new WorkerStore(project.agenticdoc);

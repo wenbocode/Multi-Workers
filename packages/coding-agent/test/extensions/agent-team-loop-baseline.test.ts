@@ -231,15 +231,16 @@ describe("target baseline golden (mw-target-partition AC-016)", () => {
 		console.log(`[VERIFY] VC-016: baseline_dual=${status === "MATCH" ? "identical" : "recorded"}`);
 	});
 
-	it("single sample: no file, no injection, {game} renders to the control root", async () => {
+	it("single sample: default query, explicit single dispatch, no injection", async () => {
 		const project = mkProject("atl-base-single-");
 		control = project.control;
 		const config = resolveWorkspaceConfig(project.control);
 
 		const body = "type: coding\n\nBaseline single sample task.\n";
+		fs.writeFileSync(targetYmlPath(project.control), "active: single\n", "utf8");
 		const injected = await dispatchMinimalTask(project, "ap-baseline-single", body);
 		const profileBlock = profileBlockOf(injected);
-		// No target.yml, no env: nothing to inject — byte-identical task.md.
+		// Explicit single has nothing to inject — byte-identical task.md.
 		expect(profileBlock).toBeNull();
 		expect(injected).toBe(body);
 

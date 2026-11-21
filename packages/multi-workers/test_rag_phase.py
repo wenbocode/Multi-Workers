@@ -77,6 +77,7 @@ class ConductorPhaseTest(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = pathlib.Path(self._tmp.name)
         (self.root / ".agenticdoc").mkdir(parents=True)
+        (self.root / ".agenticdoc" / "target.yml").write_text("active: single\n", encoding="utf-8")
 
     def _dispatch(self, owner: str):
         return dispatch.dispatch(

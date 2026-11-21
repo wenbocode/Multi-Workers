@@ -58,6 +58,7 @@ if str(_PARENT) not in sys.path:
 
 import mw_common  # noqa: E402  (path bootstrapped above)
 import replan_tasks  # noqa: E402
+from workspace_dispatch import load_dispatch_target_config  # noqa: E402
 
 from autopilot import config as autopilot_config  # noqa: E402
 from autopilot import effective_config  # noqa: E402
@@ -1668,6 +1669,7 @@ class DispatchResult:
     task_key: str
     task_md: pathlib.Path | None
     row_verified: bool
+    detail: str = ""
 
 
 def task_key_for(owner: str, stem: str) -> str:
@@ -2026,7 +2028,8 @@ def dispatch(
                 ev, key=_timeline_key(owner), detail=f"{task_key}: {detail}"
             )
         return DispatchResult(
-            ok=False, reason=reason, task_key=task_key, task_md=None, row_verified=False
+            ok=False, reason=reason, task_key=task_key, task_md=None, row_verified=False,
+            detail=detail,
         )
 
     # AC-004 (DD-12): the product carries its own run state (T-20/D-022), and
@@ -2106,7 +2109,7 @@ def dispatch(
     # unusable-config message is shape-dynamic (mw-target-partition D-007):
     # v1/no-file keeps the historical text, a v2 file names its active mode.
     try:
-        config = mw_common.load_target_config(project_root)
+        config = load_dispatch_target_config(project_root)
     except mw_common.TargetConfigError as exc:
         return reject(
             "target-config-unusable",
@@ -2254,6 +2257,25 @@ def dispatch(
             row_verified=False,
         )
     try:
+        # The rendered scope/profile must still describe the active workspace
+        # when the queue transaction starts. Missing config cannot become an
+        # implicit single workspace while waiting for another dispatch's lock.
+        try:
+            current_config = load_dispatch_target_config(project_root)
+            if current_config != config:
+                raise mw_common.TargetConfigError(
+                    "invalid-config",
+                    f"target-config-changed: control root={config['control_root']}; "
+                    f"config={mw_common.target_yml_path(config['control_root'])}; "
+                    "workspace configuration changed before dispatch; retry with "
+                    "the current explicit workspace configuration",
+                )
+        except mw_common.TargetConfigError as exc:
+            return reject(
+                "target-config-unusable",
+                mw_common.describe_target_error(exc, project_root),
+                ev="target-config-rejected",
+            )
         # AC-014: the write-face gate runs under the SAME lock as the row
         # write. Nothing inside this section may acquire a lock again (RQ-D3:
         # a nested acquire backs off for 14.6h and then raises).
@@ -2266,6 +2288,7 @@ def dispatch(
         refusal = _write_face_verdict(
             project_root, owner, task_key, content,
             card_backed=card_backed is not None, timeline=timeline,
+            target_config=current_config,
         )
         if refusal is not None:
             return refusal  # zero side effects: no taskDir, no task.md, no row

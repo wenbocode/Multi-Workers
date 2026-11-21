@@ -113,7 +113,10 @@ function conductorTaskMd(taskType: string, extra: string[] = []): string {
 
 describe("dispatchNewTasks origin skip (D-104 / VC-023)", () => {
 	it("VC-023/D-104: origin: conductor tasks are never queued or upserted; unmarked tasks dispatch unchanged (AC-012)", async () => {
-		const root = mkdtemp();
+		const project = mkdtemp();
+		const root = path.join(project, ".agenticdoc");
+		fs.mkdirSync(root);
+		fs.writeFileSync(path.join(root, "target.yml"), "active: single\n", "utf8");
 		const store = new WorkerStore(root);
 		writePhaseDocs(root, "goal-ap");
 

@@ -223,6 +223,8 @@ function buildCases(input: Corpus, project: string, outside: string): E2ECase[] 
 
 function materialize(cases: E2ECase[], project: string): string {
 	const agenticdoc = path.join(project, ".agenticdoc");
+	fs.mkdirSync(agenticdoc, { recursive: true });
+	fs.writeFileSync(path.join(agenticdoc, "target.yml"), "active: single\n", "utf8");
 	cases.forEach((item, index) => {
 		const taskKey = `${CAND}-${String(index).padStart(3, "0")}`;
 		const taskPath = path.join(agenticdoc, OWNER, "workers", taskKey, "task.md");
@@ -547,6 +549,7 @@ describe("AC-005 reverse proof (PM channel)", () => {
 		const newDir = path.join(agenticdoc, OWNER, "workers", "w-new");
 		fs.mkdirSync(keepDir, { recursive: true });
 		fs.mkdirSync(newDir, { recursive: true });
+		fs.writeFileSync(path.join(agenticdoc, "target.yml"), "active: single\n", "utf8");
 		const keepMd = path.join(keepDir, "task.md");
 		const newMd = path.join(newDir, "task.md");
 		fs.writeFileSync(keepMd, "write_face: packages/x/**\n", "utf8");
