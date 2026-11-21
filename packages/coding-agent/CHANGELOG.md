@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added `/mw decide on|off|probe` and `/mw decide dp on|off <id>` to the PM window (mw-decide-window-controls): fixed closed-argv forwards to the existing transport set, probe and per-point CLI, with no watched-key requirement and no replacement of existing CLI commands or `show|sign`, `dp list|show|export` and `monitor` behavior. All four writes require interactive UI and explicit human confirmation; P0 opens show registry consequences before a second explicit confirmation, and `--i-understand-p0` is attached internally only after confirmation, never accepted from the caller. `probe` is a minimal real request that may incur API charges, writes no config/authority/sign-off, and is not a QG verdict or an availability guarantee. Transport and per-point authority remain separate, authority changes apply at the next decision, and agent-tool write guards for the authority table/sign-off remain in force. Takes effect after `mw build --install` and a window `/reload`; source alone is not deployed.
+
 - Added `/mw context compact-model [provider/model|clear]` to choose a compact model in the current window's memory. Manual, automatic and overflow compaction use the selected provider's authentication and limits while task requests keep their model.
 - Added `/mw thinking show|set|clear` to configure worker thinking independently of models, with effective-level sources, role inheritance and next-spawn semantics.
 
@@ -134,6 +136,8 @@
 - Changed the PM's manual dispatch to price the worker's read budget from the card's claims (claim-driven-review): a card declaring claims now renders `read_scope: [.agenticdoc/<key>, .agenticdoc/goal.md]` plus `l2_read_file_cap: min(30, Σ预算)` and `l2_read_byte_cap: min(393216, 65536 × n)`, while a card without a claims block keeps its exact previous bytes and the 8-file / 65,536 B default. The gate is `advisory` by default (one `[claims] ...` receipt line, dispatch proceeds) and `MW_CLAIM_GATE=enforce` is the explicit opt-in that refuses instead, with zero side effects.
 
 ### Fixed
+
+- Fixed three authority gaps in the new `/mw decide` window controls (mw-decide-window-controls): all five new commands now require a TUI window (`ctx.mode === "tui"`) plus `hasUI` before any runner call (RPC/print/json, mode-less and no-UI entries are refused with zero spawn) while legacy `show|sign` and the read-only forwards keep their headless behavior; `dp on|off` now accepts only a strict single top-level JSON object from `dp show --json` (array-wrapped, garbage-prefixed/suffixed, duplicate, null/primitive and corrupted payloads fail closed); and a P0 open requires two independent explicit confirmations (the second shows registry `p0_consequences`) with a non-empty consequence string, attaching `--i-understand-p0` only after both, while P1/P2 and P0 off stay single-confirm. Legal-but-unknown ids run only the fixed read-only pre-check with zero write, illegal syntax/malicious ids spawn nothing, and help/README scope the confirmation requirement to the four new write faces.
 
 - Fixed local decision-tool validation reporting supplied but invalid material as missing. Refusals now distinguish missing fields from invalid values and report the violated rule and byte limit without exposing material contents.
 - Classified native summary HTTP 400 failures as parameter, model, context, request-format or generic bad-request errors without exposing upstream error text.

@@ -59,28 +59,39 @@ interface Notify {
 	type: string;
 }
 
+interface DecideConfirmCall {
+	title: string;
+	message: string;
+}
+
 interface FakeDecideCtx {
 	ctx: ExtensionCommandContext;
 	notifications: Notify[];
+	confirmations: DecideConfirmCall[];
 }
 
 /** Fake command ctx: `notify` records; `hasUI` decides whether it is called at
  * all (the production `reportDecide` records nothing when there is no UI).
- * There is no dialog any more — `confirm` exists only to prove nobody asks. */
-function fakeDecideCtx(opts: { hasUI?: boolean } = {}): FakeDecideCtx {
+ * The legacy show/sign face asks no dialog, so the default `confirm` throws to
+ * prove that; the new write faces inject an explicit answer here. */
+function fakeDecideCtx(opts: { hasUI?: boolean; confirm?: unknown; confirmThrow?: Error } = {}): FakeDecideCtx {
 	const notifications: Notify[] = [];
+	const confirmations: DecideConfirmCall[] = [];
 	const ctx = {
 		hasUI: opts.hasUI ?? true,
 		ui: {
 			notify: (message: string, type?: string) => {
 				notifications.push({ message, type: type ?? "" });
 			},
-			confirm: async () => {
-				throw new Error("no confirmation dialog exists on the sign-off face");
+			confirm: async (title: string, message: string): Promise<unknown> => {
+				confirmations.push({ title, message });
+				if (opts.confirmThrow) throw opts.confirmThrow;
+				if (opts.confirm === undefined) throw new Error("no confirmation dialog exists on the sign-off face");
+				return opts.confirm;
 			},
 		},
 	} as unknown as ExtensionCommandContext;
-	return { ctx, notifications };
+	return { ctx, notifications, confirmations };
 }
 
 /** One `mw decide sign --dry-run --json` payload (facts + verdicts). */
@@ -104,21 +115,30 @@ function previewPayload(overrides: Record<string, unknown> = {}): string {
 		},
 		path: null,
 		verdicts: {
+			finalize: { ok: true, problems: [] },
 			continue: { ok: true, problems: [] },
-			narrow: { ok: true, problems: [] },
-			revoke: { ok: true, problems: [] },
+			"user-confirm": { ok: true, problems: [] },
 		},
 		...overrides,
 	});
 }
 
-/** A signed `--json` write payload: Python reports the written `path` and the
- * conclusion the decision model produced (no `signed_via` field in JSON). */
+/** A signed `--json` write payload (mw-signoff-decide-only / T30 typed proof):
+ * `parseDecideSignOutcome` accepts only a complete dp-sign-key proof with
+ * `conclusion: finalize`, a `signoff_status` of written/existing and a
+ * non-empty `signoff_path`. The old continue/narrow/revoke fixture predates
+ * that contract: it was a fixture drift, not a product regression. */
 function signedWritePayload(): string {
 	return previewPayload({
-		conclusion: "continue",
-		ok: true,
+		dp: "dp-sign-key",
+		key: "k",
+		logical_id: "k-logical",
+		decision_id: "dp-sign-key:k-logical",
+		conclusion: "finalize",
+		signoff_status: "written",
+		signoff_path: SIGNED_PATH,
 		path: SIGNED_PATH,
+		ok: true,
 	});
 }
 
@@ -258,9 +278,9 @@ describe("/mw decide show is a read-only preview (mw-signoff-decide-only)", () =
 		expect(message).toContain("counted_rows=1 available=1 acted=1 escalated=0");
 		expect(message).toContain("engines:");
 		expect(message).toContain("timi-decisions/jev-latest/api=1");
+		expect(message).toContain("verdict finalize: ok");
 		expect(message).toContain("verdict continue: ok");
-		expect(message).toContain("verdict narrow: ok");
-		expect(message).toContain("verdict revoke: ok");
+		expect(message).toContain("verdict user-confirm: ok");
 		expect(message).toContain(SHA.slice(0, 12));
 		expect(message).toContain("p0-open: -");
 		expect(message).toContain("preview only");
@@ -353,7 +373,7 @@ describe("/mw decide sign forwards exactly one write argv (mw-signoff-decide-onl
 		expect(message).toContain("已签收 k");
 		expect(message).toContain(SIGNED_PATH);
 		expect(message).toContain("signed_via: auto-decide");
-		expect(message).toContain("conclusion: continue");
+		expect(message).toContain("conclusion: finalize");
 		expect(message).not.toContain("decision-scope.md");
 		expect(text).toBe(message);
 		verify(

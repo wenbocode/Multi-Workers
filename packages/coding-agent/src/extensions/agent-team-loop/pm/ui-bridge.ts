@@ -4865,10 +4865,20 @@ export const DECIDE_CONCLUSIONS = ["finalize", "continue", "user-confirm"] as co
  * `sign` takes no conclusion: the decision model produces it during the write,
  * so no caller-supplied positional remains to validate. The second line
  * documents the read-only forwards (T12a): they need no key and therefore split
- * off before the watched-key requirement. */
+ * off before the watched-key requirement. The five control faces (on/off/probe
+ * and dp on/off) are project-level too: no watched key, closed argv, and they
+ * require a TUI window (mode=tui) with an interactive UI. The four new writes
+ * (on/off, dp on/off) additionally await `ctx.ui.confirm === true`; a P0 OPEN
+ * needs a second, independent risk confirmation showing registry
+ * p0_consequences, and only then appends `--i-understand-p0` inside the window.
+ * `probe --json` is a read-only diagnostic (may send one paid request) and is
+ * never a business decision or QG verdict. Legacy show/sign keep their headless
+ * behavior and need no UI confirmation. */
 export const DECIDE_USAGE =
 	"Usage: /mw decide show | sign [--allow-empty] [--key <key>]\n" +
-	"       /mw decide dp list | dp show <id> | dp export | monitor   (read-only, no key needed)";
+	"       /mw decide dp list | dp show <id> | dp export | monitor   (read-only, no key needed)\n" +
+	"       /mw decide on | off | probe | dp on <id> | dp off <id>   (project-level, no key needed)\n" +
+	"       (the four new writes on/off & dp on/off need a TUI window + an interactive UI confirmation; P0 on needs two confirms and shows registry p0_consequences, then adds the flag internally; probe may issue one paid request, is diagnostic only and never a QG verdict)";
 
 /** The four closed read-only forwards of the window face (T12a/AC-001/AC-017).
  * Python stays the single source of parsing, rendering and of the (zero) writes. */
@@ -4882,7 +4892,27 @@ export type ParsedDecideArgs =
 	| { action: "dp-show"; dp: string }
 	| { action: "dp-export" }
 	| { action: "monitor" }
+	| { action: "on" }
+	| { action: "off" }
+	| { action: "probe" }
+	| { action: "dp-on"; dp: string }
+	| { action: "dp-off"; dp: string }
 	| { action: "usage"; error: string };
+
+/** Registry tiers the Python `dp show <id> --json` payload may report. The
+ * window never hardcodes a dp id or its tier: the registry pre-check is the
+ * single authority for the P0 confirmation flag. */
+export const DECIDE_DP_TIERS = ["P0", "P1", "P2"] as const;
+export type DecideDpTier = (typeof DECIDE_DP_TIERS)[number];
+
+/** One dp id is one safe argv token: the registry's naming shape (letters,
+ * digits, `.`, `_`, `-`), no leading dash, whitespace, quotes, semicolons or
+ * other shell characters. `decideMw` spawns an argv array (never a shell), so
+ * this is also the injection boundary for the two dp control faces. */
+const DECIDE_DP_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/;
+export function isSafeDecideDpId(id: string): boolean {
+	return DECIDE_DP_ID_RE.test(id);
+}
 
 /** Notify label of a read-only forward. */
 const DECIDE_FORWARD_LABELS: Record<DecideForwardAction, string> = {
@@ -4905,7 +4935,9 @@ export interface DecideForward {
  * returned vector verbatim, so `--write`, `--json`, `--live`, `--rows`, output
  * paths and monitor status/stop arguments are structurally unrepresentable —
  * a crafted tail can never reach Python (design §5.1: only dp list/show/export
- * and bare monitor are allowed in the window).
+ * and bare monitor are allowed in the window). The new control faces
+ * (on/off/probe, dp on/off) are deliberately NOT read-only forwards: they are
+ * handled earlier by their own fixed argv + confirmation path.
  */
 export function decideForwardArgs(parsed: ParsedDecideArgs): DecideForward | null {
 	switch (parsed.action) {
@@ -4943,6 +4975,18 @@ export function parseDecideArgs(argsText: string): ParsedDecideArgs {
 		}
 		return { action: "show" };
 	}
+	// The three project-level transport/diagnostic faces are a closed set: no
+	// flags, no output paths, no --project and no free-form tail can reach the
+	// CLI. on/off are writes (confirmed below); probe is read-only.
+	if (sub === "on" || sub === "off" || sub === "probe") {
+		if (parts.length > 1) {
+			return {
+				action: "usage",
+				error: `${DECIDE_USAGE} — \`${sub}\` takes no arguments (window face: flags, paths and --project are refused)`,
+			};
+		}
+		return { action: sub };
+	}
 	// Read-only faces (T12a) split off BEFORE the `sign` guard and before the
 	// watched-key requirement: `dp list`/`dp export` are project-level views and
 	// `dp show <id>` takes its id explicitly, so a key-less window can still list
@@ -4972,10 +5016,29 @@ export function parseDecideArgs(argsText: string): ParsedDecideArgs {
 			}
 			return { action: "dp-show", dp };
 		}
-		const refused = dpSub === undefined ? "needs a sub" : `\`dp ${dpSub}\` is not a read-only window face`;
+		if (dpSub === "on" || dpSub === "off") {
+			const dp = parts[2];
+			if (dp === undefined || dp === "") {
+				return { action: "usage", error: `${DECIDE_USAGE} — \`dp ${dpSub}\` needs a dp id` };
+			}
+			if (!isSafeDecideDpId(dp)) {
+				return {
+					action: "usage",
+					error: `${DECIDE_USAGE} — \`dp ${dpSub}\` needs a safe single-token dp id (letters/digits/.-_ only; flags and shell characters are refused)`,
+				};
+			}
+			if (parts.length > 3) {
+				return {
+					action: "usage",
+					error: `${DECIDE_USAGE} — \`dp ${dpSub}\` takes exactly one dp id (no flags; --i-understand-p0 is generated only inside the window after confirmation)`,
+				};
+			}
+			return dpSub === "on" ? { action: "dp-on", dp } : { action: "dp-off", dp };
+		}
+		const refused = dpSub === undefined ? "needs a sub" : `\`dp ${dpSub}\` is not a supported window face`;
 		return {
 			action: "usage",
-			error: `${DECIDE_USAGE} — ${refused} (window: dp list | dp show <id> | dp export; write/act faces are CLI-only)`,
+			error: `${DECIDE_USAGE} — ${refused} (read-only window: dp list | dp show <id> | dp export; writes: dp on|off <id>; other write/act faces are CLI-only)`,
 		};
 	}
 	if (sub === "monitor") {
@@ -5217,6 +5280,289 @@ async function forwardDecideReadOnly(
 	return reportDecide(ctx, result.output || `mw decide ${label}: ok`, "info");
 }
 
+/** Consent for one new decide write face. `ctx.hasUI` is necessary but NOT
+ * sufficient: the command must actually await `ctx.ui.confirm` and receive the
+ * boolean `true`. A missing UI, a cancel/timeout, an undefined answer or a
+ * thrown dialog all leave the CLI untouched (design §2). */
+type DecideConfirmResult = { confirmed: true } | { confirmed: false; level: "warning" | "error"; reason: string };
+
+async function confirmDecideWrite(
+	ctx: ExtensionCommandContext,
+	title: string,
+	message: string,
+): Promise<DecideConfirmResult> {
+	if (!ctx.hasUI) {
+		return { confirmed: false, level: "warning", reason: "需要交互 UI 的人工确认；当前无 UI，未执行任何写入" };
+	}
+	let answer: unknown;
+	try {
+		answer = await ctx.ui.confirm(title, message);
+	} catch (err) {
+		return {
+			confirmed: false,
+			level: "error",
+			reason: `确认对话框异常: ${err instanceof Error ? err.message : String(err)}；未执行任何写入`,
+		};
+	}
+	if (answer !== true) {
+		return { confirmed: false, level: "warning", reason: "未获得明确确认（取消/超时/未返回 true），未执行任何写入" };
+	}
+	return { confirmed: true };
+}
+
+/** One fixed decide argv through the injectable runner. A thrown runner is
+ * reported like a failed spawn; `MwCliResult.error` already merges Python's
+ * stdout+stderr, so audit/config warnings are never swallowed. */
+function runDecideCli(
+	runner: (projectDir: string, args: string[]) => MwCliResult,
+	projectDir: string,
+	args: string[],
+	label: string,
+): MwCliResult {
+	try {
+		return runner(projectDir, args);
+	} catch (err) {
+		return { ok: false, error: `${label} 执行异常: ${err instanceof Error ? err.message : String(err)}` };
+	}
+}
+
+/** `mw decide probe --json` verdict. `exit 0` alone is NOT availability: every
+ * diagnostic row must be an object with verdict exactly `ok` and a 2xx numeric
+ * HTTP status, and the array must be non-empty. Anything else is a warning or
+ * an error, never a green light (and never a QG verdict). */
+export interface DecideProbeVerdict {
+	ok: boolean;
+	rows: number;
+	reason: string;
+	/** Raw JSON of each diagnostic row, kept verbatim for display. */
+	diagnostics: string[];
+}
+
+export function parseDecideProbeOutput(output: string): DecideProbeVerdict {
+	const lines = output.replace(/\r\n/g, "\n").split("\n");
+	const start = lines.findIndex((line) => line.trim().startsWith("["));
+	if (start === -1) return { ok: false, rows: 0, reason: "probe --json 输出为空或不是 JSON 数组", diagnostics: [] };
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(lines.slice(start).join("\n").trim()) as unknown;
+	} catch {
+		return { ok: false, rows: 0, reason: "probe --json 输出不是可解析的 JSON 数组", diagnostics: [] };
+	}
+	if (!Array.isArray(parsed) || parsed.length === 0) {
+		return { ok: false, rows: 0, reason: "probe --json 结果为空数组或不是数组", diagnostics: [] };
+	}
+	const bad: string[] = [];
+	const diagnostics: string[] = [];
+	parsed.forEach((row, index) => {
+		diagnostics.push(JSON.stringify(row));
+		if (row === null || typeof row !== "object" || Array.isArray(row)) {
+			bad.push(`#${index + 1} 不是诊断对象`);
+			return;
+		}
+		const record = row as Record<string, unknown>;
+		const status = record.status;
+		if (record.verdict !== "ok" || typeof status !== "number" || status < 200 || status >= 300) {
+			bad.push(`#${index + 1} verdict=${String(record.verdict)} status=${String(status)}`);
+		}
+	});
+	return {
+		ok: bad.length === 0,
+		rows: parsed.length,
+		reason: bad.length === 0 ? "all diagnostics ok" : `诊断行未全部通过: ${bad.join("; ")}`,
+		diagnostics,
+	};
+}
+
+/** Registry metadata of `mw decide dp show <id> --json`. The WHOLE output must
+ * be one top-level JSON object: no array wrapping, no banner/garbage prefix or
+ * suffix and no extraction of an inner `{...}`. The id must match the requested
+ * dp, the tier must be P0/P1/P2, and p0_consequences must be a string or null;
+ * a malformed payload fails closed before any write. */
+export interface DecideDpMetadata {
+	id: string;
+	tier: DecideDpTier;
+	p0_consequences: string;
+}
+
+/** Strict top-level object read for the registry pre-check. Unlike the tolerant
+ * `parseDecidePreview` (which slices an inner `{...}` out of an array or a
+ * banner), this parses the entire trimmed output and accepts only a single
+ * non-null, non-array object, so a wrapped/garbage/duplicate/multi-object
+ * payload can never yield an authority-writable object (fail closed). */
+function parseStrictDecideObject(output: string): Record<string, unknown> | null {
+	const text = output.trim();
+	if (!text.startsWith("{")) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text) as unknown;
+	} catch {
+		return null;
+	}
+	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+	return parsed as Record<string, unknown>;
+}
+
+export function parseDecideDpMetadata(
+	output: string,
+	dp: string,
+): { ok: true; metadata: DecideDpMetadata } | { ok: false; reason: string } {
+	const payload = parseStrictDecideObject(output);
+	if (payload === null) return { ok: false, reason: "dp show --json 输出不是单个顶层 JSON 对象" };
+	if (payload.id !== dp) {
+		return { ok: false, reason: `registry id 不匹配（请求 ${dp}，返回 ${String(payload.id)}）` };
+	}
+	const tier = payload.tier;
+	if (tier !== "P0" && tier !== "P1" && tier !== "P2") {
+		return { ok: false, reason: `registry tier 无效: ${String(tier)}` };
+	}
+	const consequences = payload.p0_consequences;
+	if (consequences !== null && consequences !== undefined && typeof consequences !== "string") {
+		return { ok: false, reason: "registry p0_consequences 类型无效" };
+	}
+	return {
+		ok: true,
+		metadata: { id: dp, tier, p0_consequences: typeof consequences === "string" ? consequences : "" },
+	};
+}
+
+/** `/mw decide on|off` — one fixed `set --json enabled=<bool>` write, only
+ * after an explicit human confirmation. The CLI's own text (including any
+ * warning) is echoed verbatim; a nonzero exit or a thrown runner is an error. */
+async function runDecideTransportControl(
+	ctx: ExtensionCommandContext,
+	projectDir: string,
+	action: "on" | "off",
+	runner: (projectDir: string, args: string[]) => MwCliResult,
+): Promise<string> {
+	const enabled = action === "on";
+	const label = `mw decide ${action}`;
+	const confirmation = await confirmDecideWrite(
+		ctx,
+		`/mw decide ${action}`,
+		`确认${enabled ? "开启" : "关闭"} decision 传输总开关？只写 .mw/decide.json 的 enabled 字段，不改任何决策点授权、guard 或环境；需要你本人明确确认。`,
+	);
+	if (!confirmation.confirmed) return reportDecide(ctx, `${label}: ${confirmation.reason}`, confirmation.level);
+	const result = runDecideCli(runner, projectDir, ["set", "--json", `enabled=${enabled}`], label);
+	if (!result.ok) return reportDecide(ctx, `${label} 写入失败: ${result.error}`, "error");
+	return reportDecide(
+		ctx,
+		`${label} (set enabled=${enabled}) CLI 原文（含配置/审计 warning）:\n${result.output || "(CLI 无输出)"}\n(仅传输开关写入；不是业务裁决或 QG verdict)`,
+		"info",
+	);
+}
+
+/** `/mw decide probe` — one fixed read-only `probe --json`. No confirmation,
+ * no write, no QG claim: exit 0 with a failed/empty/malformed matrix is never
+ * presented as an available model. */
+async function runDecideProbe(
+	ctx: ExtensionCommandContext,
+	projectDir: string,
+	runner: (projectDir: string, args: string[]) => MwCliResult,
+): Promise<string> {
+	const result = runDecideCli(runner, projectDir, ["probe", "--json"], "mw decide probe");
+	if (!result.ok) return reportDecide(ctx, `mw decide probe 失败: ${result.error}`, "error");
+	const verdict = parseDecideProbeOutput(result.output);
+	const body = [
+		"mw decide probe (probe --json): 只读诊断，可能发起一次付费请求；不是业务裁决或 QG verdict；不写配置/授权/签收。",
+		...verdict.diagnostics.map((row, index) => `  [${index + 1}] ${row}`),
+		`CLI 原文:\n${result.output || "(空输出)"}`,
+	].join("\n");
+	if (!verdict.ok) {
+		return reportDecide(
+			ctx,
+			`mw decide probe: 模型可用性未确认（${verdict.reason}）\n${body}`,
+			verdict.rows === 0 ? "error" : "warning",
+		);
+	}
+	return reportDecide(
+		ctx,
+		`mw decide probe: ${verdict.rows} 条诊断均 verdict=ok 且 HTTP 2xx（仅本次探测，不代表业务裁决/QG）\n${body}`,
+		"info",
+	);
+}
+
+/** `/mw decide dp on|off <id>` — fixed read-only registry pre-check, then one
+ * explicit human confirmation, then one fixed write argv. A P0 OPEN additionally
+ * needs a non-empty registry p0_consequences and a SECOND, independent risk
+ * confirmation; `--i-understand-p0` is generated here (never by the caller)
+ * only after BOTH confirms returned exactly `true` (spec §5 / design §2). */
+async function runDecideDpControl(
+	ctx: ExtensionCommandContext,
+	projectDir: string,
+	parsed: { action: "dp-on" | "dp-off"; dp: string },
+	runner: (projectDir: string, args: string[]) => MwCliResult,
+): Promise<string> {
+	const enabled = parsed.action === "dp-on";
+	const label = `mw decide dp ${enabled ? "on" : "off"}`;
+	if (!ctx.hasUI) {
+		return reportDecide(ctx, `${label} ${parsed.dp}: 需要交互 UI 的人工确认；当前无 UI，未预检也未写入`, "warning");
+	}
+	const shown = runDecideCli(runner, projectDir, ["dp", "show", parsed.dp, "--json"], `${label} 预检`);
+	if (!shown.ok) return reportDecide(ctx, `${label} ${parsed.dp} 预检失败: ${shown.error}`, "error");
+	const metadata = parseDecideDpMetadata(shown.output, parsed.dp);
+	if (!metadata.ok) {
+		return reportDecide(ctx, `${label} ${parsed.dp} 拒绝写入（registry 元数据无效: ${metadata.reason}）`, "error");
+	}
+	const p0Open = enabled && metadata.metadata.tier === "P0";
+	const consequences = metadata.metadata.p0_consequences;
+	// A P0 open with missing/null/blank consequences must fail closed: never show
+	// a placeholder consequence and then authorize the write. P1/P2 (null is
+	// fine) and a P0 off (safe de-powering) are deliberately not affected.
+	if (p0Open && consequences.trim() === "") {
+		return reportDecide(
+			ctx,
+			`${label} ${parsed.dp} 拒绝写入（P0 开启但 registry p0_consequences 缺失/空白，无法进行风险确认）`,
+			"error",
+		);
+	}
+	// First confirmation (shared by every dp face): the id and the on/off state.
+	const first = await confirmDecideWrite(
+		ctx,
+		`/mw decide dp ${enabled ? "on" : "off"} <id>`,
+		`确认${enabled ? "开启" : "关闭"}决策点 ${parsed.dp} (${metadata.metadata.tier})？只修改该点授权，不改传输开关/环境；需要你本人明确确认。`,
+	);
+	if (!first.confirmed) return reportDecide(ctx, `${label} ${parsed.dp}: ${first.reason}`, first.level);
+	// P0 open: a second, independent high-risk confirmation showing the registry
+	// consequences. A cancelled first confirm returns above, so this dialog is
+	// never shown in that case; the flag is appended only after both are `true`.
+	if (p0Open) {
+		const risk = await confirmDecideWrite(
+			ctx,
+			`/mw decide dp on <id> — P0 风险二次确认`,
+			`确认开启 P0 决策点 ${parsed.dp}？高风险 — registry p0_consequences: ${consequences}\n这是独立的第二次风险确认；确认后窗口内部附加 --i-understand-p0；只修改该点授权，不改传输开关/环境。`,
+		);
+		if (!risk.confirmed) return reportDecide(ctx, `${label} ${parsed.dp}: ${risk.reason}`, risk.level);
+	}
+	const argv = enabled ? ["dp", "on", parsed.dp] : ["dp", "off", parsed.dp];
+	if (p0Open) argv.push("--i-understand-p0");
+	const written = runDecideCli(runner, projectDir, argv, label);
+	if (!written.ok) return reportDecide(ctx, `${label} ${parsed.dp} 写入失败: ${written.error}`, "error");
+	return reportDecide(
+		ctx,
+		`${label} ${parsed.dp} CLI 原文（含审计 warning）:\n${written.output || "(CLI 无输出)"}\n(Python 侧原子写入与变更审计；窗口未改 guard/配置/环境；非 QG verdict)`,
+		"info",
+	);
+}
+
+/** The five new control faces are human-window only. `ctx.hasUI` is true in RPC
+ * mode too, so `ctx.mode === "tui"` is the actual human-window proof: an
+ * RPC/print/json or mode-less entry (even with hasUI and a confirm that could
+ * return true) and a no-UI entry are refused BEFORE any runner call (including
+ * the read-only dp pre-check). Legacy show/sign and the read-only forwards are
+ * deliberately NOT gated so their headless behavior is unchanged (RQ2). */
+function decideControlEntry(ctx: ExtensionCommandContext): { ok: true } | { ok: false; reason: string } {
+	if (ctx.mode !== "tui") {
+		return {
+			ok: false,
+			reason: `需要 pi 交互窗口 (mode=tui)；当前入口 mode=${String(ctx.mode)} 不是可信的人类窗口，已拒绝且未执行任何调用`,
+		};
+	}
+	if (!ctx.hasUI) {
+		return { ok: false, reason: "需要交互 UI 的人工确认；当前无 UI，已拒绝且未执行任何写入/诊断" };
+	}
+	return { ok: true };
+}
+
 /**
  * `/mw decide show|sign` — the window face of the decision-model sign-off
  * (mw-signoff-decide-only: the decision model signs, nothing else does).
@@ -5239,6 +5585,11 @@ async function forwardDecideReadOnly(
  * the control root. The runner is injectable so every branch is provable
  * without a spawn.
  *
+ * The five control faces (on/off/probe, dp on/off) are handled BEFORE these
+ * read-only forwards and BEFORE the watched-key guard: they are project-level,
+ * use fixed argv only, and require a TUI window + interactive UI before any
+ * spawn; the four writes additionally await `ui.confirm(true)`.
+ *
  * Every result is also returned as text: `ctx.ui.notify` is a no-op without a
  * UI (headless / `-p` / worker), so the `/mw` handler puts the return value into
  * the transcript instead (AC-007 — no silent loss).
@@ -5251,13 +5602,39 @@ export async function runMwDecideCommand(
 ): Promise<string> {
 	const parsed = parseDecideArgs(argsText);
 	if (parsed.action === "usage") return reportDecide(ctx, parsed.error, "warning");
+	// The five new control faces require a TUI window + interactive UI before ANY
+	// runner call (registry pre-check included). An untrusted/mode-less/no-UI
+	// entry gets a clear refusal and zero runner calls. Legacy show/sign and the
+	// read-only forwards keep their headless behavior (RQ2 / design §2).
+	if (
+		parsed.action === "on" ||
+		parsed.action === "off" ||
+		parsed.action === "probe" ||
+		parsed.action === "dp-on" ||
+		parsed.action === "dp-off"
+	) {
+		const entry = decideControlEntry(ctx);
+		if (!entry.ok) return reportDecide(ctx, `mw decide 控制命令拒绝: ${entry.reason}`, "warning");
+	}
+	// Project-level controls resolve BEFORE the read-only forwards and the
+	// watched-key requirement: no key, no dialog for probe, and one explicit
+	// human confirmation for every write (design §2). The runner is shared so
+	// every branch is provable with the same counting stub.
+	const runner = deps.runner ?? decideMw;
+	if (parsed.action === "probe") return await runDecideProbe(ctx, projectDir, runner);
+	if (parsed.action === "on" || parsed.action === "off") {
+		return await runDecideTransportControl(ctx, projectDir, parsed.action, runner);
+	}
+	if (parsed.action === "dp-on" || parsed.action === "dp-off") {
+		return await runDecideDpControl(ctx, projectDir, parsed, runner);
+	}
 	// Read-only faces first (T12a/AC-001): `dp list|show|export` and `monitor`
 	// need neither an interactive dialog nor a watched key, so they are resolved
 	// before the key guard. `decideForwardArgs` returns the exact Python argv — no
 	// caller-supplied flag survives (AC-017).
 	const forward = decideForwardArgs(parsed);
 	if (forward !== null) {
-		return await forwardDecideReadOnly(ctx, projectDir, forward, deps.runner ?? decideMw);
+		return await forwardDecideReadOnly(ctx, projectDir, forward, runner);
 	}
 	// Exhaustiveness guard, not a live branch: every parsed action other than
 	// `show`/`sign` has a forward argv, so this only keeps the compiler's
@@ -5274,8 +5651,6 @@ export async function runMwDecideCommand(
 			"warning",
 		);
 	}
-	const runner = deps.runner ?? decideMw;
-
 	let preview: MwCliResult;
 	try {
 		preview = runner(projectDir, decidePreviewArgs(key, parsed.action === "sign" ? parsed.allowEmpty : false));
@@ -5715,7 +6090,7 @@ export function registerMwCommands(
 			}
 
 			ctx.ui.notify(
-				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | ue-continue-develop-frame install | model show|set|clear|set-fallback|clear-fallback | thinking show|set <default|role> <level>|clear <default|role|all> | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | pm-state compact --key <k> --summary <file> [--apply <sha256>] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
+				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | ue-continue-develop-frame install | model show|set|clear|set-fallback|clear-fallback | thinking show|set <default|role> <level>|clear <default|role|all> | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | decide on|off|probe | decide dp on|off <id> | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | pm-state compact --key <k> --summary <file> [--apply <sha256>] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
 				"warning",
 			);
 		},

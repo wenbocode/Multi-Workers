@@ -417,6 +417,7 @@ toolchain 模板不只是注入 task.md 的文档——PM 直执时用 `mw ue-to
 | `/mw build \| init \| start \| stop \| status \| doctor [fix] \| update [--apply]` | 服务与 bundle 管理（update = 锚点自检，见 [UPDATE.md](./UPDATE.md)） |
 | `/mw target show \| set \| clear` | 双工作区配置（见上） |
 | `/mw context show \| set \| clear` | 上下文预算与自动压缩；默认全局 512k、coding/research 256k、review 512k，详见[操作手册](docs/context.md) |
+| `/mw decide on \| off \| probe \| dp on <id> \| dp off <id>` | 决策传输/单点授权的交互式控制；需重建安装重载后生效，详见下「决策窗口控制」 |
 | `/mw ack <task-key> \| all` | 确认终态 worker 结果 |
 
 ### 实施准入门禁（mw-implementation-gate）
@@ -725,6 +726,24 @@ python mw.py decide probe --project <dir> [--json]                              
 python mw.py decide show  --project <dir> [--json]                                 # 生效配置 + 最近一条证据行
 python mw.py decide set   --project <dir> [--json] KEY=VALUE ...                   # 原子写配置（未知键/非法值拒绝，exit 2）
 ```
+
+#### 决策窗口控制
+
+pi 输入框新增五个项目级闭集命令（无需 watched key，不删除任何原 CLI 命令）：
+
+```text
+/mw decide on                         # 只写 .mw/decide.json 的 enabled=true
+/mw decide off                        # 只写 .mw/decide.json 的 enabled=false
+/mw decide probe                      # 最小真实传输诊断，回显原样诊断
+/mw decide dp on <id>                 # 只开指定决策点授权
+/mw decide dp off <id>                # 只关指定决策点授权
+```
+
+- 五类命令都要求 `ctx.mode === "tui"` 且 `ctx.hasUI`（pi TUI 交互窗口）才进入处理；不可信/RPC/print/json、无头/无 UI 入口明确拒绝且零 runner。旧 `show|sign`、`dp list|show|export`、`monitor` 的 headless 语义不变。
+- `on`/`off`/`dp on`/`dp off` 是四个写命令：窗口只映射固定 argv，且每次由人明确确认；取消、undefined、确认异常均不写。`dp ...` 仅接受安全单 token id：语法非法/额外参数/标记/恶意 id 在解析阶段零 runner（零 spawn）；合法但未知的 id 只做固定 `dp show <id> --json` 只读预检、零写入；预检 id/tier 无效或 CLI 非 0/异常如实显示并不写。P0 开启需要两次独立的明确确认：第一次确认 id/开关状态，第二次展示注册表 `p0_consequences` 与高风险提示；两次均为 `true` 且后果说明非空才写（缺失/空白后果拒绝），`--i-understand-p0` 仅在两次确认后由窗口内部附加，不是调用者可输入的自由参数。
+- `probe` 使用固定 `mw decide probe --json` 的最小真实请求，可能产生 API 费用；不写传输配置、点授权或签收，不等同 QG verdict。exit 0/HTTP 200 也不代表模型可用或质量门禁通过；空、坏或非 ok 诊断按 warning/error 原样显示。
+- 传输总开关（`.mw/decide.json`）与单点授权表（`.mw/decide-points.json`）相互独立；授权表改动下一次决策即热生效，无需重启 serve。`/mw decide show|sign`、`dp list|show|export`、`monitor` 及原 CLI 语义不变；Agent 工具对授权表/签收文件的写保护仍拒绝，窗口命令不绕过 guard。
+- 这些是 TS 扩展源码命令：需另行 `mw build --install` 并 `/reload` 窗口才生效；未构建/安装/重载的当前窗口不声称已部署。
 
 #### `mw decide ask`（人直接问 timi/jev-latest）
 

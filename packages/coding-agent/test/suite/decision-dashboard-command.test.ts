@@ -74,16 +74,21 @@ afterEach(() => {
 });
 
 /** Fake command ctx: records notifications; `hasUI` is explicit because the
- * read-only forwards must work in headless (`-p`) windows too. No dialog. */
-function fakeDecideCtx(opts: { hasUI?: boolean } = {}): { ctx: ExtensionCommandContext; notifications: Notify[] } {
+ * read-only forwards must work in headless (`-p`) windows too. The new write
+ * faces inject their explicit human confirmation answer here. */
+function fakeDecideCtx(opts: { hasUI?: boolean; confirm?: unknown } = {}): {
+	ctx: ExtensionCommandContext;
+	notifications: Notify[];
+} {
 	const notifications: Notify[] = [];
 	const ctx = {
 		hasUI: opts.hasUI ?? true,
+		mode: "tui",
 		ui: {
 			notify: (message: string, type?: string) => {
 				notifications.push({ message, type: type ?? "info" });
 			},
-			confirm: async () => false,
+			confirm: async () => opts.confirm ?? false,
 			select: async () => undefined,
 			input: async () => undefined,
 		},
@@ -176,18 +181,36 @@ describe("/mw decide dp read-only parsing (T12a)", () => {
 		// The read-only actions carry no argv of their own on the sign face.
 		expect(decideForwardArgs({ action: "show" })).toBeNull();
 		expect(decideForwardArgs({ action: "usage", error: "x" })).toBeNull();
+		// New project-level controls are legal parses but deliberately NOT read-only
+		// forwards: they take their own fixed argv + confirmation path.
+		expect(parseDecideArgs("on")).toEqual({ action: "on" });
+		expect(parseDecideArgs("off")).toEqual({ action: "off" });
+		expect(parseDecideArgs("probe")).toEqual({ action: "probe" });
+		const dpOn = parseDecideArgs("dp on dp-QG");
+		const dpOff = parseDecideArgs("dp off dp1-dispatch-type");
+		expect(dpOn).toEqual({ action: "dp-on", dp: "dp-QG" });
+		expect(dpOff).toEqual({ action: "dp-off", dp: "dp1-dispatch-type" });
+		expect(decideForwardArgs(dpOn)).toBeNull();
+		expect(decideForwardArgs(dpOff)).toBeNull();
 		verify(
 			`T12a parse-readonly: list=${JSON.stringify(decideForwardArgs(list)?.argv)} show=${JSON.stringify(
 				decideForwardArgs(show)?.argv,
-			)} export=${JSON.stringify(decideForwardArgs(exported)?.argv)}`,
+			)} export=${JSON.stringify(decideForwardArgs(exported)?.argv)} legal_dp_on=${dpOn.action} legal_dp_off=${dpOff.action}`,
 		);
 	});
 
-	it("refuses every write/act face, --write, --live and unknown tails", () => {
+	it("refuses every unsupported write/act face, --write, --live and unknown tails", () => {
 		const refused = [
 			"dp",
-			"dp on dp1-dispatch-type",
-			"dp off dp1-dispatch-type",
+			"dp on",
+			"dp off",
+			"dp on --i-understand-p0",
+			"dp on dp-QG --i-understand-p0",
+			"dp on dp-QG extra",
+			'dp on "dp;rm -rf"',
+			"on --json",
+			"off --project x",
+			"probe --json",
 			"dp set dp1-dispatch-type mode=auto",
 			"dp refresh",
 			"dp check",
@@ -220,13 +243,11 @@ describe("/mw decide dp read-only parsing (T12a)", () => {
 		expect(parseDecideArgs("sign continue").action).toBe("usage");
 		const write = parseDecideArgs("dp export --write");
 		expect(write.action === "usage" && write.error).toContain("read-only");
-		verify(`T12a parse-refused: cases=${refused.length} sign_kept=true show_kept=true`);
+		verify(`T12a parse-refused: cases=${refused.length} sign_kept=true show_kept=true dp_on_off_legal=true`);
 	});
 
-	it("refuses dp on/off/set/apply/verify with zero runner calls (AC-017)", async () => {
+	it("refuses dp set/apply/verify and --write with zero runner calls (AC-017)", async () => {
 		const writes = [
-			"dp on dp1-dispatch-type",
-			"dp off dp1-dispatch-type",
 			"dp set dp1-dispatch-type mode=auto",
 			"dp apply .agenticdoc/k/evidence/review/sign-final.md",
 			"dp verify --live",
@@ -241,6 +262,46 @@ describe("/mw decide dp read-only parsing (T12a)", () => {
 			expect(notifications[0]?.type, text).toBe("warning");
 		}
 		verify(`T12a refusal-spawns: cases=${writes.length} runner_calls=0 auth_writes=0`);
+	});
+
+	it("accepts confirmed on/off with fixed argv, no watched key and verbatim warnings", async () => {
+		for (const [text, argv] of [
+			["on", ["set", "--json", "enabled=true"]],
+			["off", ["set", "--json", "enabled=false"]],
+		] as const) {
+			const { calls, runner } = stubRunner("wrote .mw/decide.json\nWARNING: audit append failed");
+			const { ctx, notifications } = fakeDecideCtx({ confirm: true });
+			const result = await runMwDecideCommand(ctx, "/proj", text, { runner, watchKey: () => undefined });
+			expect(calls).toEqual([argv]);
+			expect(result).toContain("WARNING: audit append failed");
+			expect(notifications[0]?.type).toBe("info");
+		}
+		verify("T12a transport-confirmed: argv=set --json enabled=<bool> key_required=false warning_preserved=true");
+	});
+
+	it("accepts confirmed dp on/off only after the fixed registry pre-check", async () => {
+		for (const [text, writeArgv] of [
+			["dp on dp-QG", ["dp", "on", "dp-QG"]],
+			["dp off dp-QG", ["dp", "off", "dp-QG"]],
+		] as const) {
+			const calls: string[][] = [];
+			const runner = (_projectDir: string, args: string[]): MwCliResult => {
+				calls.push(args);
+				return {
+					ok: true,
+					output:
+						args[1] === "show"
+							? JSON.stringify({ id: "dp-QG", tier: "P1", p0_consequences: null })
+							: "wrote .mw/decide-points.json",
+				};
+			};
+			const { ctx, notifications } = fakeDecideCtx({ confirm: true });
+			const result = await runMwDecideCommand(ctx, "/proj", text, { runner, watchKey: () => undefined });
+			expect(calls).toEqual([["dp", "show", "dp-QG", "--json"], writeArgv]);
+			expect(result).toContain("wrote .mw/decide-points.json");
+			expect(notifications.at(-1)?.type).toBe("info");
+		}
+		verify("T12a dp-controls: precheck=dp show <id> --json p0_flag=0 writes=1_each");
 	});
 });
 
@@ -322,19 +383,20 @@ describe("/mw decide real entry through the harness (T12a)", () => {
 		const windowText = notifications[0]?.message ?? "";
 		expect(windowText).not.toContain("unknown sub");
 
-		const rows = windowText
-			.split(/\r?\n/)
-			.filter((line) => /^dp[0-9]/.test(line))
-			.map((line) => line.split(/\s+/)[0] ?? "");
-		expect(rows).toHaveLength(25);
-		expect(windowText).toContain("25 decision point(s)");
-
+		// The registry consolidation retired the old dpNN rows; the live table is
+		// the CLI's own JSON set. Derive the expected ids/count instead of pinning
+		// the stale 25, and keep the window === CLI equivalence assertion.
 		const cli = await withIsolatedHome(() => decideMw(root, ["dp", "list", "--json"]));
 		expect(cli.ok).toBe(true);
 		const payload = cli.ok ? (JSON.parse(cli.output) as { points: Array<{ id: string }> }) : { points: [] };
 		const cliIds = payload.points.map((point) => point.id);
-		expect(cliIds).toHaveLength(25);
+		expect(cliIds.length).toBeGreaterThan(0);
+		const rows = windowText
+			.split(/\r?\n/)
+			.filter((line) => /^dp[A-Za-z0-9-]/.test(line))
+			.map((line) => line.split(/\s+/)[0] ?? "");
 		expect(rows).toEqual(cliIds);
+		expect(windowText).toContain(`${cliIds.length} decision point(s)`);
 
 		// The entry consumed no model turn: the faux provider was never asked.
 		expect(harness.session.messages).toEqual([]);
@@ -350,10 +412,12 @@ describe("/mw decide real entry through the harness (T12a)", () => {
 		const root = mkdtemp("mw-dd-realshow-");
 		const { harness, notifications } = await createCommandHarness(root);
 
-		await withIsolatedHome(() => harness.session.prompt("/mw decide dp show dp1-dispatch-type"));
+		// `dp1-dispatch-type` is a retired id (read-only history), so use a live
+		// registry id; the shape assertions are otherwise unchanged.
+		await withIsolatedHome(() => harness.session.prompt("/mw decide dp show dp-w-type"));
 		expect(notifications).toHaveLength(1);
 		const showText = notifications[0]?.message ?? "";
-		expect(showText).toContain("dp1-dispatch-type (P2)");
+		expect(showText).toContain("dp-w-type (P2)");
 		expect(showText).toContain("enabled=true mode=auto source=default");
 		expect(showText).toContain("questions:");
 
@@ -365,14 +429,18 @@ describe("/mw decide real entry through the harness (T12a)", () => {
 		const registry = path.join(path.dirname(mwPy ?? ""), "decide_registry.json");
 		expect(fs.existsSync(registry)).toBe(true);
 		const before = sha256File(registry);
+		const cliList = await withIsolatedHome(() => decideMw(root, ["dp", "list", "--json"]));
+		const cliPayload = cliList.ok
+			? (JSON.parse(cliList.output) as { points: Array<{ id: string }> })
+			: { points: [] };
 		await withIsolatedHome(() => harness.session.prompt("/mw decide dp export"));
 		const exportText = notifications.at(-1)?.message ?? "";
-		expect(exportText).toContain("25 decision point(s)");
+		expect(exportText).toContain(`${cliPayload.points.length} decision point(s)`);
 		expect(sha256File(registry)).toBe(before);
 		expect(fs.existsSync(path.join(root, ".mw", "decide-points.json"))).toBe(false);
 		expect(harness.session.messages).toEqual([]);
 		verify(
-			`T12a real-show/export: show_dp=dp1-dispatch-type export_points=25 registry_sha256=${before.slice(
+			`T12a real-show/export: show_dp=dp-w-type export_points=${cliPayload.points.length} registry_sha256=${before.slice(
 				0,
 				12,
 			)} registry_unchanged=true points_table_written=false provider_turns=0`,

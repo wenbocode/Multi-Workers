@@ -111,6 +111,9 @@ async function windowFixture() {
 	fs.mkdirSync(path.join(project, ".mw"), { recursive: true });
 	fs.writeFileSync(path.join(project, ".mw/decide.json"), JSON.stringify({ enabled: false }));
 	fs.mkdirSync(path.join(keyDir, "evidence/research"), { recursive: true });
+	// Explicit legal single workspace for this isolated fixture only; the real
+	// target-config dispatch gate is neither mocked nor weakened.
+	fs.writeFileSync(path.join(root, "target.yml"), "active: single\n", "utf8");
 	fs.mkdirSync(path.join(keyDir, "tasks"));
 	fs.writeFileSync(path.join(root, "goal.md"), "# Goal\nKeep the authorized task moving.\n");
 	fs.writeFileSync(
