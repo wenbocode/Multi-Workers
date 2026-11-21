@@ -13263,23 +13263,33 @@ def _runtime_code_files(root: pathlib.Path | None = None) -> list[pathlib.Path]:
     """The serve's runtime code set: *.py|*.json under the tree, skipping
     __pycache__/dist/.tmp and any `test`/`test_*`/`_*` entry. One definition
     shared by the mtime baseline and the content digest, so "what counts as
-    code" cannot drift between the two judges."""
+    code" cannot drift between the two judges. Excluded directories are pruned
+    during a scandir walk, before their contents are ever enumerated."""
     tree = pathlib.Path(root) if root is not None else _SCRIPT_DIR
     out: list[pathlib.Path] = []
-    for f in tree.rglob("*"):
-        if not f.is_file():
-            continue
+    pending: list[pathlib.Path] = [tree]
+    while pending:
+        directory = pending.pop()
         try:
-            rel = f.relative_to(tree)
-        except ValueError:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if entry.name not in _UPDATE_ENV_SKIP_DIRS:
+                                pending.append(pathlib.Path(entry.path))
+                            continue
+                        if not entry.is_file():
+                            continue
+                    except OSError:
+                        continue
+                    f = pathlib.Path(entry.path)
+                    if f.suffix not in _RUNTIME_CODE_SUFFIXES:
+                        continue
+                    if f.name.startswith("test_") or f.name.startswith("_"):
+                        continue
+                    out.append(f)
+        except OSError:
             continue
-        if any(part in _UPDATE_ENV_SKIP_DIRS for part in rel.parts[:-1]):
-            continue
-        if f.suffix not in _RUNTIME_CODE_SUFFIXES:
-            continue
-        if f.name.startswith("test_") or f.name.startswith("_"):
-            continue
-        out.append(f)
     return out
 
 

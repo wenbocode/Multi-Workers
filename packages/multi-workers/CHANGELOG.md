@@ -185,6 +185,7 @@
 
 ### Fixed
 
+- Fixed runtime code identity scans descending into excluded `.tmp`, `test`, `dist` and `__pycache__` directories, avoiding large framework-cache walks during service startup and stale-code checks.
 - Fixed Python dispatch and conductor write-face checks rejecting configured dual and partition roots. Declarations now retain control-relative semantics and canonical absolute identities for overlap detection, including junction aliases.
 
 - Fixed the `config_sha_after` width in the `authority-change` archive row: the writer sliced a 16-hex value out of an already-sliced 64-hex one, so a reused digest could disagree with the table it claims to describe; the row now carries the documented 16 hex in both `override` and `settle`/`sign` paths (mw-decision-substitution W9).
