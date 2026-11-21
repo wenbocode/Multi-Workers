@@ -2,6 +2,7 @@
 import concurrent.futures
 import http.client
 import json
+import subprocess
 import sys
 import threading
 import time
@@ -25,6 +26,35 @@ def settings(server):
 
 def test_login_probe_uses_cli_and_removes_api_environment(backend):
     assert backend.check_login() == "chatgpt"
+
+
+def test_resolve_codex_prefers_path_and_honors_explicit_command(monkeypatch):
+    monkeypatch.setattr(codex_proxy.shutil, "which", lambda name: sys.executable if name == "codex" else None)
+    assert codex_proxy.resolve_codex("codex") == sys.executable
+    with pytest.raises(RuntimeError, match="missing-cli"):
+        codex_proxy.resolve_codex("missing-cli")
+
+
+@pytest.mark.parametrize("installed", [True, False])
+def test_windows_codex_desktop_discovery(tmp_path, monkeypatch, installed):
+    location = tmp_path / "桌面 Codex"
+    cli = location / "app/resources/codex.exe"
+    if installed:
+        cli.parent.mkdir(parents=True)
+        cli.touch()
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("SystemRoot", str(tmp_path))
+    monkeypatch.setattr(codex_proxy.shutil, "which", lambda _: None)
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0, raising=False)
+    def query(command, **kwargs):
+        assert command[0] == str(tmp_path / "System32/WindowsPowerShell/v1.0/powershell.exe")
+        return subprocess.CompletedProcess(command, 0, stdout=str(location).encode("utf-8"))
+    monkeypatch.setattr(subprocess, "run", query)
+    if installed:
+        assert codex_proxy.resolve_codex("codex") == str(cli)
+    else:
+        with pytest.raises(RuntimeError, match="--codex"):
+            codex_proxy.resolve_codex("codex")
 
 
 def test_missing_login_blocks_start_without_writing_config(tmp_path, monkeypatch):

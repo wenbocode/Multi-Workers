@@ -23,6 +23,33 @@ def config_path(project: Path) -> Path:
     return project / ".mw" / "codex-local.json"
 
 
+def resolve_codex(codex: str) -> str:
+    executable = shutil.which(codex)
+    if executable:
+        return os.path.abspath(executable)
+    if sys.platform != "win32" or codex != "codex":
+        raise RuntimeError(f"Codex executable not found: {codex}")
+
+    # pi launched outside the desktop app may not inherit its versioned CLI directory.
+    powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    query = ("[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
+             "(Get-AppxPackage -Name OpenAI.Codex | Where-Object PackageFamilyName "
+             "-eq 'OpenAI.Codex_2p2nqsd0c76g0').InstallLocation")
+    try:
+        lookup = subprocess.run([str(powershell), "-NoProfile", "-NonInteractive", "-Command", query],
+                                capture_output=True, timeout=6, creationflags=subprocess.CREATE_NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("Codex missing from PATH and desktop package lookup failed; "
+                           "use codex_proxy.py start --codex <path-to-codex.exe>") from exc
+    location = Path(lookup.stdout.decode("utf-8-sig").strip())
+    if lookup.returncode == 0 and location.is_absolute():
+        bundled = location / "app/resources/codex.exe"
+        if bundled.is_file():
+            return str(bundled)
+    raise RuntimeError("Codex CLI not found on PATH or in the registered Codex desktop package; "
+                       "use codex_proxy.py start --codex <path-to-codex.exe>")
+
+
 def read_config(project: Path) -> dict | None:
     file = config_path(project)
     if not file.exists():
@@ -109,9 +136,7 @@ def start(project: Path, port: int | None = None, codex: str = "codex") -> dict:
                     raise
             except ConnectionRefusedError:
                 pass
-        executable = shutil.which(codex)
-        if not executable:
-            raise RuntimeError("Codex executable not found on PATH")
+        executable = resolve_codex(codex)
         backend = CodexBackend([executable])
         if backend.check_login() != "chatgpt":
             raise RuntimeError("Codex ChatGPT login unavailable; run codex login in a terminal")
@@ -150,9 +175,7 @@ def start(project: Path, port: int | None = None, codex: str = "codex") -> dict:
 
 
 def serve(project: Path, config: dict | None, codex: str, port: int | None, ready_dir: Path | None) -> None:
-    executable = shutil.which(codex)
-    if not executable:
-        raise RuntimeError("Codex executable not found")
+    executable = resolve_codex(codex)
     preferred_port = port or (urlsplit(config["url"]).port if config else 0)
     token = config["token"] if config else secrets.token_hex(32)
     backend = CodexBackend([executable])

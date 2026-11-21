@@ -8,6 +8,7 @@
 
 - `codex login status` 显示 `Logged in using ChatGPT`。需要时在普通终端运行 `codex login`。
 - CLI 支持 `exec --ignore-user-config --ephemeral --output-schema`。本机 Codex 桌面版附带 CLI 已验证。
+- Windows 上，`/mw proxy start` 优先使用 pi 进程 PATH 中的 Codex CLI；找不到时从当前用户注册的 Codex 桌面安装包查找随附的 CLI。自定义安装可通过管理器的 `start --project <控制目录> --codex <CLI完整路径>` 启动。
 - Python 3.11+；pi 必须包含本次更新后的 agent-team-loop 扩展。已有安装使用项目原有构建/安装流程更新，再启动新窗口；仅改源码不会更新已有 dist 或常驻进程。
 - 无需独立 `PI_CODING_AGENT_DIR`，也无需 pi `/login`：本地模型以 `openai-codex-local` 身份注册，避免旧 `openai-codex` OAuth 触发刷新；不读取或改写 Codex 认证文件，不修改 pi `auth.json`。
 
