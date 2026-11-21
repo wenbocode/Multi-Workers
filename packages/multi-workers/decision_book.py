@@ -121,6 +121,9 @@ _PLACEHOLDER_WRAP_RE = re.compile(r"^<[^<>]+>$")
 EVIDENCE_PLACEHOLDER = "<待填: path:line 或命令原文>"
 #: 依据目录的单条占位符（id/text/refs/applies_to 任一留空都不可发送）。
 BASIS_PLACEHOLDER = "<待填: 本依据引用的真实材料事实>"
+BASIS_MATERIAL_REF_PLACEHOLDER = (
+    "<待填: 本次 material 内的字段路径（不带 material. 前缀，非文件 path:line）>"
+)
 BASIS_ID_PLACEHOLDER = "<待填: 依据 ID>"
 BASIS_CHOICE_PLACEHOLDER = "<待填: 适用的选择 ID>"
 PREPARED_AT_PLACEHOLDER = "<待填: ISO-8601 含时区>"
@@ -450,7 +453,7 @@ def scaffold_preparation(dp_id: str) -> dict:
             {
                 "id": BASIS_ID_PLACEHOLDER,
                 "text": BASIS_PLACEHOLDER,
-                "material_refs": [BASIS_PLACEHOLDER],
+                "material_refs": [BASIS_MATERIAL_REF_PLACEHOLDER],
                 "applies_to": [BASIS_CHOICE_PLACEHOLDER],
             }
         ],

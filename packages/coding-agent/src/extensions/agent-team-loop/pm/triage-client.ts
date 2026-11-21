@@ -13,6 +13,7 @@ import {
 	type DecisionPreparation,
 	decisionActorAllowed,
 	decisionIdRefusal,
+	type MaterialReferenceIssue,
 	type PreparedBasis,
 	preparationProblems,
 	selectedDecisionBasis,
@@ -864,7 +865,7 @@ export function validateDecisionMeta(meta: DecisionEnvelopeMeta): string[] {
 /** Result of preparing one material envelope for the wire. */
 export type DecisionEnvelopePreparation =
 	| { ok: true; envelope: DecisionMaterialEnvelope; bytes: number }
-	| { ok: false; reason: string; missing: string[] };
+	| { ok: false; reason: string; missing: string[]; material_ref_issues?: MaterialReferenceIssue[] };
 
 /** Validate → canonicalise → bound the business material, in that order.
  *
@@ -915,8 +916,15 @@ export function prepareDecisionEnvelope(
 			reason: TRIAGE_REASON_INPUT_INCOMPLETE,
 			missing: validated.issues.map((issue) => issue.field),
 		};
-	const problems = preparationProblems(dpId, validated.material, preparation, context);
-	if (!preparation || problems.length) return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: problems };
+	const materialRefIssues: MaterialReferenceIssue[] = [];
+	const problems = preparationProblems(dpId, validated.material, preparation, context, materialRefIssues);
+	if (!preparation || problems.length)
+		return {
+			ok: false,
+			reason: TRIAGE_REASON_INPUT_INCOMPLETE,
+			missing: problems,
+			...(materialRefIssues.length ? { material_ref_issues: materialRefIssues } : {}),
+		};
 	let bytes: number;
 	try {
 		bytes = canonicalStateBytes({ material, preparation, context });

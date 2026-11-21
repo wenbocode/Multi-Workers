@@ -215,6 +215,11 @@ export interface MaterialIssue {
 	rule: string;
 }
 
+/** Local reference diagnosis; field names only, never submitted material values. */
+export interface MaterialReferenceIssue extends MaterialIssue {
+	allowed_fields: string[];
+}
+
 export type MaterialValidation =
 	| { ok: true; material: Record<string, unknown> }
 	| { ok: false; issues: MaterialIssue[] };
@@ -346,9 +351,19 @@ export function preparationProblems(
 	material: Record<string, unknown>,
 	preparation: unknown,
 	context: unknown,
+	materialRefIssues?: MaterialReferenceIssue[],
 ): string[] {
 	const entry = DECIDE_REGISTRY[dp];
 	const problems: string[] = [];
+	const referenceIssue = (field: string, rule: string): void => {
+		materialRefIssues?.push({
+			field,
+			rule,
+			allowed_fields: [...new Set([...Object.keys(material), ...(entry.modelStateFields ?? [])])].filter(
+				(ref) => fieldValue(material, ref) !== undefined,
+			),
+		});
+	};
 	if (context !== undefined) {
 		if (!isRecord(context)) problems.push("context");
 		else
@@ -382,14 +397,28 @@ export function preparationProblems(
 		if (
 			!Array.isArray(item.material_refs) ||
 			!item.material_refs.length ||
-			!item.material_refs.every(
-				(ref) =>
+			!item.material_refs.every((ref, index) => {
+				const valid =
 					nonblank(ref) &&
 					fieldValue(material, ref) !== undefined &&
-					(Object.hasOwn(material, ref) || entry.modelStateFields?.includes(ref)),
-			)
-		)
+					(Object.hasOwn(material, ref) || entry.modelStateFields?.includes(ref));
+				if (!valid)
+					referenceIssue(
+						`${path}.material_refs[${index}]`,
+						"must be a non-empty string referencing an existing field path in this material, without the material. prefix; " +
+							"repository file path:line belongs in evidence field values, not material_refs",
+					);
+				return valid;
+			})
+		) {
 			problems.push(`${path}.material_refs`);
+			if (!Array.isArray(item.material_refs) || !item.material_refs.length)
+				referenceIssue(
+					`${path}.material_refs`,
+					"must be a non-empty array of field paths in this material, without the material. prefix; " +
+						"repository file path:line belongs in evidence field values, not material_refs",
+				);
+		}
 		if (
 			!Array.isArray(item.applies_to) ||
 			!item.applies_to.length ||

@@ -16,6 +16,7 @@ import {
 	type DecisionPreparation,
 	decisionActorAllowed,
 	decisionIdRefusal,
+	type MaterialReferenceIssue,
 	type PreparedBasis,
 	selectedDecisionBasis,
 	validateDecisionMaterial,
@@ -1021,6 +1022,7 @@ function unavailable(
 	extra: {
 		escalated_reason?: string;
 		missing_fields?: string[];
+		material_ref_issues?: MaterialReferenceIssue[];
 		input_diagnostics?: DecisionInputDiagnostics;
 		original_blocked_event_id?: string;
 	} = {},
@@ -1040,7 +1042,8 @@ function unavailable(
 		payload,
 		text:
 			`${jsonText(payload)}\n${unavailableDirective(reason, dp)}` +
-			(extra.input_diagnostics ? `\n${formatInputDiagnostics(extra.input_diagnostics)}` : ""),
+			(extra.input_diagnostics ? `\n${formatInputDiagnostics(extra.input_diagnostics)}` : "") +
+			(extra.material_ref_issues?.length ? `\nMATERIAL_REFS_DIAGNOSIS: ${jsonText(extra.material_ref_issues)}` : ""),
 		spawned,
 	};
 }
@@ -1094,7 +1097,11 @@ export async function runAskDecision(input: AskDecisionInput): Promise<AskDecisi
 		input.context,
 		input.parentDecisionRef,
 	);
-	if (!prepared.ok) return unavailable(prepared.reason, dp, false, { missing_fields: prepared.missing });
+	if (!prepared.ok)
+		return unavailable(prepared.reason, dp, false, {
+			missing_fields: prepared.missing,
+			material_ref_issues: prepared.material_ref_issues,
+		});
 	const envelope: DecisionToolEnvelope =
 		input.evidenceRefs === undefined
 			? prepared.envelope
@@ -1583,7 +1590,12 @@ const PREPARATION_SCHEMA = Type.Optional(
 					{
 						id: Type.String(),
 						text: Type.String(),
-						material_refs: Type.Array(Type.String()),
+						material_refs: Type.Array(Type.String(), {
+							description:
+								"Existing field paths in this request's material, without the material. prefix. " +
+								"For dp-auto: background.current_state; for dp-QG: review_evidence or review_findings. " +
+								"Not repository file path:line (e.g. src/example.ts:12); put file locations in evidence field values.",
+						}),
 						applies_to: Type.Array(Type.String()),
 					},
 					{ additionalProperties: false },
@@ -1841,7 +1853,8 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			"mode=suggest only archives an advisory row; acted is the service's verdict and never your own " +
 				"inference from the mode.",
 			...Object.values(DECISION_MATERIAL_PROMPTS),
-			"Prepare material and a separately timestamped basis_catalog. Each item cites existing material_refs and names its applicable choices. No preparation means this request is blocked; never invent evidence. An L0 note cannot substitute for pm_note.",
+			"Prepare material and a separately timestamped basis_catalog. Each item's material_refs is a non-empty array of existing field paths in this request's material, " +
+				"without the material. prefix, not repository file path:line. Each item names its applicable choices.",
 			"task_before is an optional local Agent report of this task BEFORE the decision, never model material. Use source=agent-report, an ISO timestamp with timezone, and null for unrecorded progress; do not substitute current state for past state or invent observations.",
 			"Generated roleScope governs the entry. Only the current worker can ask dp-w-check-task; a worker is refused on PM entries and must report the block " +
 				"instead of asking.",
