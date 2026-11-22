@@ -19,7 +19,7 @@ def _project(tmp_path: pathlib.Path) -> pathlib.Path:
     return project
 
 
-@pytest.mark.parametrize("case", ["handoff", "no-review", "evidence-drift", "approval-pending", "approval-rejected"])
+@pytest.mark.parametrize("case", ["handoff", "conductor-output", "no-review", "evidence-drift", "approval-pending", "approval-rejected"])
 @pytest.mark.parametrize("default_done", [False, True])
 def test_reviewed_evidence_signoff_survives_handoff(tmp_path, monkeypatch, capsys, case, default_done):
     project = _project(tmp_path)
@@ -52,16 +52,25 @@ def test_reviewed_evidence_signoff_survives_handoff(tmp_path, monkeypatch, capsy
     (key_dir / "tasks/review.md").write_bytes(card)
     pin = hashlib.sha256(card).hexdigest()
     envelope = task / "task.md"
-    envelope.write_text(f"type: review\ncard_path: tasks/review.md\ncard_sha256: {pin}\n", encoding="utf-8")
-    (task / "report.md").write_text(qg + "\n" + achieved, encoding="utf-8")
+    conductor_review = case == "conductor-output"
+    kind = "reviewer" if conductor_review else "review"
+    artifact = "output.md" if conductor_review else "report.md"
+    head = f"type: reviewer\norigin: conductor\nloop: l3:{KEY}\n" if conductor_review else (
+        f"type: review\ncard_path: tasks/review.md\ncard_sha256: {pin}\n"
+    )
+    envelope.write_text(head, encoding="utf-8")
+    (task / artifact).write_text(qg + "\n" + achieved, encoding="utf-8")
+    if conductor_review:
+        (task / "trace.log").write_text("verified terminal review\n", encoding="utf-8")
     started = "2026-11-22T01:00:00Z"
     (task / "run.json").write_text(json.dumps({
-        "kind": "review", "owner_key": KEY, "task_key": "review-1", "status": "done", "exit": 0,
+        "kind": kind, "owner_key": KEY, "task_key": "review-1", "status": "done", "exit": 0,
         "started_at": started, "ended_at": "2026-11-22T01:01:00Z", "run_id": f"review-1@{started}",
-        "artifacts": ["report.md"],
+        "artifacts": [artifact],
     }), encoding="utf-8")
     (doc / "_workers.parallel").write_text(
-        f"review-1 | done | pi | local | {envelope} | {started} | {started}\n", encoding="utf-8"
+        f"review-1 | done | pi | local | {envelope} | {started} | {started} | | "
+        + ("conductor\n" if conductor_review else "manual\n"), encoding="utf-8"
     )
     if case == "no-review":
         (task / "run.json").unlink()
@@ -75,10 +84,10 @@ def test_reviewed_evidence_signoff_survives_handoff(tmp_path, monkeypatch, capsy
     monkeypatch.delenv("PI_WORKER_TASK", raising=False)
     index.write_text(f"| {KEY} | active | VERIFY | new-pm:2 | | | |\n", encoding="utf-8")
     args = argparse.Namespace(json=True, retry_write=None, for_done=True, key=KEY, key_pos=None)
-    request = {"decision_source": "pm-evidence", "review_task": "review-1", "review_source": "workers/review-1/report.md"}
+    request = {"decision_source": "pm-evidence", "review_task": "review-1", "review_source": f"workers/review-1/{artifact}"}
     rc = mw._decide_sign(args, project) if default_done else mw._decide_sign_reviewed(args, key_dir, KEY, request)
     receipt = json.loads(capsys.readouterr().out)
-    if case != "handoff":
+    if case not in {"handoff", "conductor-output"}:
         assert rc == 2
         expected_problem = {
             "no-review": "file is missing",

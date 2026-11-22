@@ -2338,6 +2338,7 @@ def _l3_prompt(key: str, attempt: int) -> str:
         "如发现跨 key 红，本行内须含一行机器行："
         "cross_key_test=<path>::<test_id> owner=<key> handoff=registered "
         "not_fixed_by_this_key=True）\n"
+        "- 逐项审查冻结 AC、FLOW 和 VC。每行格式为 | ID | PASS/FAIL | 项目相对证据路径@文件SHA256 | 复核说明 |。\n"
         "  ## Achieved（达成摘要：做了什么 / 目标收益 / 遗留什么）\n"
         "- 两节承载于 output.md（首选）；长报告可置于 report.md 作为**文档化回退源**"
         "（判定按 output.md → report.md 优先级读取，"

@@ -1148,7 +1148,7 @@ def capture_reviewed_signoff(key_dir: pathlib.Path, key: str, review_task: str, 
     """Recheck durable independent review and approval evidence from the control workspace."""
     import decide_signoff
     import mw_common
-    from autopilot.conductor import _md_section
+    from autopilot.conductor import _l3_provenance_record, _md_section
 
     if not isinstance(review_task, str) or not re.fullmatch(r"[\w-]+[\w.-]*", review_task):
         raise SignoffResultError("invalid independent review task")
@@ -1159,16 +1159,26 @@ def capture_reviewed_signoff(key_dir: pathlib.Path, key: str, review_task: str, 
     task_dir = key_dir / "workers" / review_task
     envelope = task_dir / "task.md"
     envelope_text = _safe_read_text(key_dir, envelope)
-    headers = dict(re.findall(r"(?m)^(type|card_path|card_sha256):[ \t]+([^\n]+)$", envelope_text.split("\n\n", 1)[0]))
+    headers = dict(re.findall(
+        r"(?m)^(type|origin|loop|card_path|card_sha256):[ \t]+([^\n]+)$",
+        envelope_text.split("\n\n", 1)[0],
+    ))
+    conductor_review = (
+        headers.get("type") == "reviewer"
+        and headers.get("origin") == "conductor"
+        and headers.get("loop") == f"l3:{key}"
+    )
     card = headers.get("card_path", "")
-    if headers.get("type") != "review" or not re.fullmatch(r"tasks/(?:[\w-]+/)*[\w.-]+\.md", card):
-        raise SignoffResultError("independent review must have a dispatched review card")
-    card_path = _assert_safe_target(key_dir, key_dir / card)
-    if mw_common.sha256_eol_normalized(card_path) != headers.get("card_sha256"):
-        raise SignoffResultError("independent review card changed")
+    if not conductor_review:
+        if headers.get("type") != "review" or not re.fullmatch(r"tasks/(?:[\w-]+/)*[\w.-]+\.md", card):
+            raise SignoffResultError("independent review must have a dispatched review card")
+        card_path = _assert_safe_target(key_dir, key_dir / card)
+        if mw_common.sha256_eol_normalized(card_path) != headers.get("card_sha256"):
+            raise SignoffResultError("independent review card changed")
     run_text = _safe_read_text(key_dir, task_dir / "run.json")
     run = json.loads(run_text)
-    report_path = task_dir / "report.md"
+    output_ref = (task_dir / "output.md").relative_to(key_dir).as_posix()
+    report_path = task_dir / ("output.md" if review_source == output_ref else "report.md")
     report = _safe_read_text(key_dir, report_path)
     queue = mw_common.parse_workers_queue(key_dir.parent / "_workers.parallel")
     rows = [
@@ -1177,14 +1187,20 @@ def capture_reviewed_signoff(key_dir: pathlib.Path, key: str, review_task: str, 
     ]
     if (
         len(rows) != 1 or rows[0]["status"] != "done" or rows[0]["task_key"] != review_task
-        or not isinstance(run, dict) or run.get("kind") != "review"
+        or not isinstance(run, dict) or run.get("kind") != ("reviewer" if conductor_review else "review")
         or run.get("task_key") != review_task or run.get("owner_key") != key
         or run.get("status") != "done" or type(run.get("exit")) is not int or run["exit"] != 0
         or not isinstance(run.get("started_at"), str) or not run.get("ended_at")
         or run.get("run_id") != f"{review_task}@{run['started_at']}"
-        or not isinstance(run.get("artifacts"), list) or "report.md" not in run["artifacts"]
+        or not isinstance(run.get("artifacts"), list) or report_path.name not in run["artifacts"]
     ):
         raise SignoffResultError("independent review has no successful recorded terminal run")
+    if conductor_review:
+        if rows[0].get("origin") != "conductor" or review_source != report_path.relative_to(key_dir).as_posix():
+            raise SignoffResultError("conductor review must use its own terminal artifact")
+        provenance = _l3_provenance_record(key_dir, review_task, report_path, "meets")
+        if provenance["suspect"] or provenance["anchor_path"] is None:
+            raise SignoffResultError("conductor review is missing current L3 trace provenance")
     if review_source != report_path.relative_to(key_dir).as_posix() and f"`{review_source}`" not in report:
         raise SignoffResultError("terminal reviewer did not reference the selected evidence")
     source = _safe_read_text(key_dir, key_dir / review_source)
@@ -1320,7 +1336,8 @@ def prepare_reviewed_done(key_dir: pathlib.Path, key: str) -> dict:
         if not validation.valid or not validation.native_basis_verified:
             raise SignoffResultError(f"existing sign-off is not current: {validation.reason}")
         return {"signoff_status": "existing", "logical_id": validation.logical_id}
-    candidates = sorted((key_dir / "workers").glob("*/report.md"))
+    workers = key_dir / "workers"
+    candidates = sorted([*workers.glob("*/report.md"), *workers.glob("*/output.md")])
     failures = []
     for candidate in candidates:
         try:
