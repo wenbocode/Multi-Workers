@@ -1,0 +1,23 @@
+{
+  "record_scope": "reference-check-vectors-not-production-receipt",
+  "expected_wire": "retryA",
+  "expected_business_choice": "retry",
+  "expected_basis_id": "retryA-basis",
+  "expected_finding_ids": [],
+  "expected_remaining_ids": [],
+  "expected_pm_disposition": "return-material-for-goal-and-path-clarity",
+  "required_pm_facts": [
+    "两个合法候选和未给偏好的未知",
+    "实际confidence=0.16及原概率，不互换指标"
+  ],
+  "forbidden_pm_claims": [
+    "旧样例已证明必须先重试",
+    "优化版新增目标来自原旧事实"
+  ],
+  "original_request_bytes_must_remain_identical": true,
+  "historical_response_must_not_be_applied_to_changed_payload": true,
+  "known_material_failures": [
+    "missing-goal-priority-and-bounded-path"
+  ],
+  "must_not_assume_actual_execution": true
+}

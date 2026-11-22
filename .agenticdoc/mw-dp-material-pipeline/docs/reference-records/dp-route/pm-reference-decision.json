@@ -1,0 +1,38 @@
+{
+  "record_kind": "current_session_pm_reference_adjudication",
+  "recorded_on": "2026-11-19",
+  "author": "Codex PM 当前设计整理会话",
+  "historical_runtime_pm_record": null,
+  "scope": "针对所列真实API回包的离线PM参考裁定；不是原生产窗口已采纳/执行的记录",
+  "model_wire_id": "route4",
+  "decoded_choice": "dp-QG",
+  "basis_id": "route4-basis",
+  "finding_ids": [],
+  "remaining_ids": [],
+  "summary": "参考路由到dp-QG准备入口；组织同范围独审/AC/VC材料，不把路由当质量结论。",
+  "disposition": "route-to-qg-preparation-in-reference",
+  "reasoning": [
+    "问题问当前产物能否满足已确认标准，属于正式质量审查职责。",
+    "route4只选入口，不批准动作、不完成独审或QG。"
+  ],
+  "follow_up": [
+    "原PM确认目标产物、适用AC/VC和独立review来源，再由正确主体准备QG材料。",
+    "目标DP仍按自己的前提和原预算核验；不直接把route简述当完整QG输入，不代实际Worker自评。"
+  ],
+  "must_preserve": [
+    "七入口职责",
+    "目标入口自己的准备/角色/预算前提"
+  ],
+  "must_not_claim": [
+    "QG已经通过或已经实际请求过目标入口"
+  ],
+  "pending_real_host_checks": [
+    "原真实owner/matter/run与对象版本",
+    "原权限/取消/停止和当前余额",
+    "该DP必要独审/业务writer前提"
+  ],
+  "runtime_business_acceptance": null,
+  "actual_dispatch_run_ids": [],
+  "actual_business_receipt": null,
+  "production_executed": false
+}

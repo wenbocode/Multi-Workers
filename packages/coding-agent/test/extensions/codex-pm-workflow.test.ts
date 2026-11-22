@@ -138,7 +138,7 @@ async function fixture() {
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 
 function adapter(fx: Fixture) {
-	return createCodexDispatchAdapter(fx.root, fx.index, KEY, "codex");
+	return createCodexDispatchAdapter(fx.root, fx.index, KEY, "codex", "coding");
 }
 
 function expectNoDispatch(fx: Fixture) {
@@ -243,7 +243,7 @@ describe("Codex lightweight dispatch adapter", () => {
 
 	it("binds the trusted adapter to its explicit key and codex claim", async () => {
 		const fx = await fixture();
-		fx.register(createCodexDispatchAdapter(fx.root, fx.index, KEY, "other"));
+		fx.register(createCodexDispatchAdapter(fx.root, fx.index, KEY, "other", "coding"));
 		expect(await fx.dispatch()).toContain("explicit key and ClaimId codex");
 		expectNoDispatch(fx);
 		fx.register(adapter(fx));

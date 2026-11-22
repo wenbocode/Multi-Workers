@@ -1,0 +1,18 @@
+# Key sign-off
+
+record_version: 4
+product_type: key-signoff
+decision_source: pm-evidence
+key: mw-dp-material-pipeline
+conclusion: finalize
+review_task: cx-ee474fbc353feb7aba95
+review_run_id: cx-ee474fbc353feb7aba95@2026-11-22T16:49:12.378Z
+review_source: workers/cx-ee474fbc353feb7aba95/report.md
+basis_version: 1
+basis_sha256: 934bd54d2cc403d2bcf1c62cda5a195bfee644cf121c9b406989115185edf15a
+material_sha256: 6acf1b1a0da493f3a62fd99354e4eedb708a5c60ad88aaf72b2380c668ce5bb2
+evidence_sha256: e80c31dda65657263345e7c6a28d3f613237aeef8272d3bb70f10cad99620d9f
+rows_sha256: 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+counted_rows: 0
+logical_id: eb478840f8ddc14578e47c3bc0bce1cb
+snapshot_sha256: 2b4fd3394c07afb5ac55071ff35577997d9f0474b4c932ef1c2b7767f2da17a8

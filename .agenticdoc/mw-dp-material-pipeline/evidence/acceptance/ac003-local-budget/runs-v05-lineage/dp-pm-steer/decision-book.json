@@ -1,0 +1,116 @@
+{
+  "material": {
+    "task_goal": "Cover two independent rejection cases without side effects.",
+    "task_requirements": "keep the goal",
+    "task_deliverables": "W1 unauthorized request regression and W2 stale version conflict regression.",
+    "pm_decision_background": "Both remain unfinished. They target different test files with a shared interface and no ordering dependency. 18 worker minutes each, 50 remaining and independent review additional."
+  },
+  "preparation": {
+    "basis_catalog": [
+      {
+        "id": "narrowA-basis",
+        "text": "narrow：先处理原目标内的一块可完成工作，明确保留其它未完成项；不缩减原验收目标。",
+        "applies_to": [
+          "narrow"
+        ],
+        "material_refs": [
+          "pm_decision_background"
+        ],
+        "finding_ids": [],
+        "remaining_ids": [
+          "W2"
+        ]
+      },
+      {
+        "id": "splitA-basis",
+        "text": "split：将可独立且写面协调的剩余工作拆分，保留整体回收和复核。",
+        "applies_to": [
+          "split"
+        ],
+        "material_refs": [
+          "pm_decision_background"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "directA-basis",
+        "text": "direct-exec：PM在当前权限与预算内直接完成剩余工作，并保留必要独立复核。",
+        "applies_to": [
+          "direct-exec"
+        ],
+        "material_refs": [
+          "pm_decision_background"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "escalateA-basis",
+        "text": "escalate：仅针对真实且不可自取的外部条件介入；普通未测/服务失败不等于缺授权。",
+        "applies_to": [
+          "escalate"
+        ],
+        "material_refs": [
+          "pm_decision_background"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      }
+    ],
+    "prepared_at": "2026-11-08T10:00:00+00:00",
+    "model_context": {
+      "desc": [
+        "Cover both negative cases.",
+        "The remaining cases are independent and each is estimated at 18 minutes.",
+        "There are 50 worker minutes left and independent review is additional."
+      ],
+      "enum_meanings": {
+        "available_executors": "当前可用执行者数量。",
+        "direct-exec": "管理Agent在现有权限预算内直接执行。",
+        "escalate": "仅对真实外部条件寻求介入。",
+        "known": "对应约束或条件已由本次来源确认。",
+        "narrow": "先收窄本轮执行范围，仍保留原整体目标。",
+        "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+        "split": "将可独立并协调写面的剩余工作拆分。",
+        "worker_minutes": "总工时分钟：并行执行者工时相加，区别于墙钟耗时。"
+      },
+      "terminology": {
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "PM": "Project Manager agent: 管理当前项目事项、组织任务并回收证据的项目管理Agent；不能冒充实际执行者或独立审查者。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "未测": "尚未执行验证: 对应验证尚未运行，不表示通过。",
+        "直执": "直接执行: 由当前项目管理者在原权限与剩余预算内直接完成工作，必要独立复核仍保留。"
+      },
+      "references": {
+        "W1": {
+          "kind": "remaining_work",
+          "path": "v05-reference-W1.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        },
+        "W2": {
+          "kind": "remaining_work",
+          "path": "v05-reference-W2.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        }
+      },
+      "reasons": {
+        "W2": "证明过期版本冲突无副作用"
+      }
+    }
+  },
+  "meta": {
+    "record_version": 2,
+    "logical_id": "current-receipt-1",
+    "key": "key-1",
+    "task_key": null,
+    "initiator_role": "pm",
+    "retry_of": null
+  }
+}

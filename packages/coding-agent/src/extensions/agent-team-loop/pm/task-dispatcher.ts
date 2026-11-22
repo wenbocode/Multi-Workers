@@ -31,6 +31,7 @@ import {
 	type WriteFaceRejectCode,
 	writeFacesOverlap,
 } from "../shared/write-face.ts";
+import { PREPARE_PROFILE } from "./prepare-tool.ts";
 import { replanAdmission, requestReplan } from "./replan.ts";
 import {
 	buildMatterBudgetFromCard,
@@ -540,6 +541,33 @@ export async function dispatchTask(
 		const inputPath = oldCard?.resolvedPath ?? entry.taskPath;
 		const pinnedBytes = fs.existsSync(inputPath) ? fs.readFileSync(inputPath) : Buffer.alloc(0);
 		const prior = pinnedBytes.toString("utf8");
+		const prepareProfile = readTaskHeaderScalar(prior, "prepare_profile");
+		const prepareModel = readTaskHeaderScalar(prior, "model");
+		const prepareSources = (readTaskHeaderScalar(prior, "prepare_sources") ?? "")
+			.split(",")
+			.map((item) => item.trim());
+		if (prepareProfile !== undefined) {
+			const route = prepareModel ? parseModelValue(prepareModel) : undefined;
+			if (
+				prepareProfile !== PREPARE_PROFILE ||
+				readTaskType(prior).type !== "decide_prepare" ||
+				!oldCard ||
+				!FIXED_PARENT_FIELD.test(prior) ||
+				entry.cli !== "pi" ||
+				!route?.modelId ||
+				!["claude", "deepseek", "openai", "toa", "zhient", "zai"].includes(route.prefix) ||
+				!readTaskHeaderScalar(prior, "prepare_dp") ||
+				prepareSources.length > 16 ||
+				prepareSources.some(
+					(item) =>
+						!/^[^\\:\x00-\x1f]+$/.test(item) || item.split("/").some((part) => !part || part.startsWith(".")),
+				)
+			) {
+				const reason =
+					"Restricted preparation requires a pinned decide_prepare card, original fixed budget, exact sources and an isolated model route.";
+				return { ok: false, code: "resource-limited", reason: "invalid-prepare-profile", detail: reason };
+			}
+		}
 		let deadlineRequest:
 			| { operation: string; key: string; task: string; card: string; card_hash: string; parent: string }
 			| undefined;
@@ -712,7 +740,14 @@ export async function dispatchTask(
 				allocation.max_steps - allocation.steps_consumed,
 				Math.floor(allocation.remaining_cost),
 			);
-			const envelope = fs.readFileSync(entry.taskPath, "utf8");
+			let envelope = fs.readFileSync(entry.taskPath, "utf8");
+			if (prepareProfile === PREPARE_PROFILE) {
+				const scope =
+					readTaskHeaderScalar(envelope, "read_scope") === undefined
+						? `read_scope:\n${prepareSources.map((item) => `  - ${item}`).join("\n")}\n`
+						: "";
+				envelope = `prepare_profile: ${PREPARE_PROFILE}\nprepare_model: ${prepareModel}\n${scope}${envelope}`;
+			}
 			const taskDir = path.dirname(entry.taskPath);
 			const grantFile = deadlineRequest ? deadlineAllocationFile(taskDir, oldCard.sha256) : allocationFile(taskDir);
 			const grant = {
@@ -721,6 +756,16 @@ export async function dispatchTask(
 				pin: oldCard.sha256,
 				steps,
 				deadline: allocation.deadline,
+				...(prepareProfile === PREPARE_PROFILE
+					? {
+							prepare: {
+								parent_matter_ref: parent,
+								budget_ref: allocation.budget_ref,
+								dp: readTaskHeaderScalar(prior, "prepare_dp"),
+								model: prepareModel,
+							},
+						}
+					: {}),
 			};
 			fs.mkdirSync(path.dirname(grantFile), { recursive: true });
 			if (deadlineRequest) {

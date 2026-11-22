@@ -1,0 +1,41 @@
+{
+  "dp": "dp-QG",
+  "choice": "fix",
+  "basis_id": "order-and-anchor",
+  "normalized": {
+    "choice": "fix",
+    "basis_id": "order-and-anchor",
+    "finding_ids": [
+      "F1",
+      "F2"
+    ],
+    "remaining_ids": []
+  },
+  "desc_measurement": {
+    "local_budget": {
+      "rule": "desc-local-v1",
+      "count": 58,
+      "limit": 1000,
+      "passed": true
+    },
+    "estimated_tokens": 58,
+    "exact_count": null,
+    "exact_limit_passed": null
+  },
+  "writer": "L3 done transaction and mw decide lifecycle",
+  "decision_id": "dp-QG:qg-repair-and-review-1",
+  "call_id": "6e681c6868a0463395b07643245b0a71",
+  "repair_hashes": {
+    "checks.py": "a1f0c41ba713df39587282fcf856af617f4b5c816a3d5c185701542ee7d98fb9",
+    "anchors.json": "42013cc0d3b1901e96aea656c093c879fb193554323f08af45f8ba4b7f8be150"
+  },
+  "review_run_id": "ap-key-1-l3-a1@2026-11-22T16:46:27.909Z",
+  "qg_path": ".agenticdoc/key-1/evidence/quality-gate-report-20261123-004628.md",
+  "qg_sha256": "04590b1bacb6dc35cd9b878025bfcc4e0a1ff7302d8d50250ae81c0b6db34981",
+  "local_signoff_id": "88d7e2a35262aaa9f5b33cebe81aa642",
+  "receipts": {
+    "consumed": "2e073045cb4743e1b97d215bc54ebb64",
+    "executed": "c70bf86020e94bfc804e837891cc6b46",
+    "settled": "qg-repair-reviewed-settlement"
+  }
+}

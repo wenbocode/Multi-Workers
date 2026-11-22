@@ -1,0 +1,1 @@
+The fixture replay is read-only and configured to preserve the full diff. Scope is one frozen sample.

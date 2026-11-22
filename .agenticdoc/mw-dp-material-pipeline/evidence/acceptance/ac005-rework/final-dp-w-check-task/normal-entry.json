@@ -1,0 +1,867 @@
+{
+  "case_id": "dp-w-check-task",
+  "role": "worker",
+  "window_pid": 111568,
+  "key": "mw-dp-material-pipeline",
+  "worker_task": "task-1",
+  "mode": "production extension with isolated faux role and loopback decision transport",
+  "author_inputs": {
+    "dp": "dp-w-check-task",
+    "key": "mw-dp-material-pipeline",
+    "trigger": "t09-prepared",
+    "material": {
+      "task_goal": "Verify non-ASCII fields against the actual encoding contract.",
+      "reachability_facts": "the write face is free and the budget is enough",
+      "completed": "ASCII parsing passed in the reference fixture.",
+      "remaining": "Non-ASCII validation.",
+      "blockers": "Input encoding not yet established.",
+      "constraints": "One read, at most 1024 bytes and within the original 8 minutes.",
+      "investigation": {
+        "unknown": "which input encoding the test uses",
+        "evidence_source": "E:\\gitlite\\Multi-Workers\\.tmp\\ac005-dp-w-check-task-diagnostics\\encoding-note.txt:1",
+        "budget": "one read, 1024 bytes and 8 minutes remaining",
+        "stop_condition": "stop after the read or at the original host boundary"
+      }
+    },
+    "preparation": {
+      "basis_catalog": [
+        {
+          "id": "continueA-basis",
+          "text": "continue：下一步条件已充足时继续；未知编码不能当成已知。",
+          "applies_to": [
+            "continue"
+          ],
+          "material_refs": [
+            "remaining"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        },
+        {
+          "id": "terminateA-basis",
+          "text": "terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。",
+          "applies_to": [
+            "terminate"
+          ],
+          "material_refs": [
+            "remaining"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        },
+        {
+          "id": "investigateA-basis",
+          "text": "investigate：按probe做一次既有授权读取后重评，不能刷新原预算。",
+          "applies_to": [
+            "investigate"
+          ],
+          "material_refs": [
+            "remaining"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        }
+      ],
+      "prepared_at": "2026-11-08T10:00:00+00:00",
+      "model_context": {
+        "desc": [
+          "ASCII parsing passed in the reference fixture.",
+          "The worker still needs to verify non-ASCII fields.",
+          "A single authorized read can establish the encoding within the original budget."
+        ],
+        "enum_meanings": {
+          "bytes": "字节数，限制本次读取数据量。",
+          "continue": "继续原授权范围内的工作或补证。",
+          "investigate": "在原工具范围及累计预算内对明确未知做有界补证。",
+          "minutes": "分钟；本例对应原执行的剩余额度。",
+          "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+          "reads": "允许的读取次数。",
+          "terminate": "真实交付完成/未完成情况并结束本次执行，不取消整体目标。"
+        },
+        "terminology": {
+          "ASCII": "American Standard Code for Information Interchange: 美国信息交换标准代码字符集；本例ASCII样本通过不能证明非ASCII字段可按真实编码正确解析。",
+          "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+          "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+          "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+          "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+          "run": "task execution run: 一次具体任务执行；结束本run不等于取消整个目标或项目事项。",
+          "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+        },
+        "references": {
+          "W1": {
+            "kind": "remaining_work",
+            "text": "按真实编码约定验证非ASCII字段"
+          }
+        }
+      }
+    },
+    "evidence_refs": []
+  },
+  "explicit_followup_from_fixture": null,
+  "target_wire": "continueA",
+  "expected_choice": "investigate",
+  "observations": [
+    {
+      "name": "Current contract citation checks",
+      "tool_results": [
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"input-incomplete\",\"action\":\"blocked-ask-human\",\"escalated_reason\":\"input-incomplete\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"a0ae69b6-f5be-4bbb-b9f1-8850ed8e27d1\",\"matter_ref\":\"79b8ad28edb7fa86caffe2e0ca2eddc7\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"input-gap\",\"raw_reason\":\"input-incomplete\",\"raw_payload\":{\"available\":false,\"transport\":\"none\",\"model\":null,\"confidence_source\":\"unknown\",\"attempts\":0,\"latency_ms\":0,\"answers\":null,\"reason\":\"input-incomplete\",\"decision_id\":\"dp-w-check-task:bf8fef87-18fd-436d-8913-d280f20a3843\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":\"input-incomplete\",\"state_digest\":null,\"logical_id\":\"bf8fef87-18fd-436d-8913-d280f20a3843\",\"dp\":\"dp-w-check-task\",\"replayed\":false,\"record_start\":\"written\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"desc_measurement\":null,\"basis_source\":null,\"business_decisions\":0,\"transport_attempts\":0,\"issues\":[{\"field\":\"model_context.references.AC-999\",\"issue\":\"missing current criterion text in the bound spec or design\"}],\"detail\":\"file evidence preparation failed; no request sent\",\"prepared_at\":null,\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\workers\\\\task-1\\\\task.md\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\workers\\\\task-1\\\\task.md\",\"sha256\":\"93bf1884b3e771ba2577f2efe97376fa70ddac912af70b050577543dcfe292ed\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\criterion-current.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\criterion-current.txt\",\"sha256\":\"6521389fa13b8218db7392489bdc5e3378ebaf97eaa10f4f52b74f3f5a503329\"}],\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"blocked_event_id\":\"890e3ee9-f1d3-4b0b-9569-ec924b0efcd3\",\"unavailable\":\"input-incomplete\",\"raw_reason\":\"input-incomplete\"},\"escalated_reason\":\"input-incomplete\",\"owner\":\"mw-dp-material-pipeline\",\"binding\":{\"role\":\"coding\",\"owner\":\"mw-dp-material-pipeline\",\"key\":\"mw-dp-material-pipeline\",\"task_key\":\"task-1\",\"run_id\":\"task-1@2026-11-22T16:05:23.828Z\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:05:24.054Z\"},\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:fc53e273f98b0eb866fa03d47e6e1d39d4d0b8b92d109f01634907a7e4900e8f\",\"local_ref\":\"lref:fc53e273f98b0eb866fa03d47e6e1d39\",\"dp\":\"dp-w-check-task\",\"candidates\":[\"continue\",\"terminate\",\"investigate\"],\"basis_ids\":[\"continueA-basis\",\"terminateA-basis\",\"investigateA-basis\"]}}\nUNAVAILABLE(input-incomplete) — 不要自行猜测，不要执行被门控的动作，不要用别的工具绕过。上报 \"blocked on decision dp-w-check-task\" 与本条 decision_feedback 的具体缺口；同一事项同一事实不要重发（返回已有反馈），在现有权限/角色/写面内可继续其他独立合法工具；只有真实用户停止、父取消、权限/预算或角色事实才停止更大范围工作。"
+        },
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"input-incomplete\",\"action\":\"blocked-ask-human\",\"escalated_reason\":\"input-incomplete\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"a272ceb3-d179-41e2-8caf-81547befe340\",\"matter_ref\":\"41a391d4fce3b5297059ca15a28877b9\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"input-gap\",\"raw_reason\":\"input-incomplete\",\"raw_payload\":{\"available\":false,\"transport\":\"none\",\"model\":null,\"confidence_source\":\"unknown\",\"attempts\":0,\"latency_ms\":16,\"answers\":null,\"reason\":\"input-incomplete\",\"decision_id\":\"dp-w-check-task:82450157-fa39-4b6f-9986-85986eeee88a\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":\"input-incomplete\",\"state_digest\":null,\"logical_id\":\"82450157-fa39-4b6f-9986-85986eeee88a\",\"dp\":\"dp-w-check-task\",\"replayed\":false,\"record_start\":\"written\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"desc_measurement\":null,\"basis_source\":null,\"business_decisions\":0,\"transport_attempts\":0,\"issues\":[{\"field\":\"model_context.references.VC-999\",\"issue\":\"missing current criterion text in the bound spec or design\"}],\"detail\":\"file evidence preparation failed; no request sent\",\"prepared_at\":null,\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\workers\\\\task-1\\\\task.md\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\workers\\\\task-1\\\\task.md\",\"sha256\":\"93bf1884b3e771ba2577f2efe97376fa70ddac912af70b050577543dcfe292ed\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\criterion-missing.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\criterion-missing.txt\",\"sha256\":\"011089128327f4bbf05a9fda91898167bb5c34352c08c74ec3323569420d0ca6\"}],\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"blocked_event_id\":\"29984094-51aa-4aa7-8f89-79ae62128274\",\"unavailable\":\"input-incomplete\",\"raw_reason\":\"input-incomplete\"},\"escalated_reason\":\"input-incomplete\",\"owner\":\"mw-dp-material-pipeline\",\"binding\":{\"role\":\"coding\",\"owner\":\"mw-dp-material-pipeline\",\"key\":\"mw-dp-material-pipeline\",\"task_key\":\"task-1\",\"run_id\":\"task-1@2026-11-22T16:05:23.828Z\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:05:25.372Z\"},\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:db039044028cb86266ac04192e9ce4ef3400164762d1ee4716d98a057d418f62\",\"local_ref\":\"lref:db039044028cb86266ac04192e9ce4ef\",\"dp\":\"dp-w-check-task\",\"candidates\":[\"continue\",\"terminate\",\"investigate\"],\"basis_ids\":[\"continueA-basis\",\"terminateA-basis\",\"investigateA-basis\"]}}\nUNAVAILABLE(input-incomplete) — 不要自行猜测，不要执行被门控的动作，不要用别的工具绕过。上报 \"blocked on decision dp-w-check-task\" 与本条 decision_feedback 的具体缺口；同一事项同一事实不要重发（返回已有反馈），在现有权限/角色/写面内可继续其他独立合法工具；只有真实用户停止、父取消、权限/预算或角色事实才停止更大范围工作。"
+        },
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"input-incomplete\",\"action\":\"blocked-ask-human\",\"escalated_reason\":\"input-incomplete\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"3b461860-a64b-47fd-b67f-3fe2bda8578c\",\"matter_ref\":\"244a7cd072a7ba9e3601da50917035d7\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"input-gap\",\"raw_reason\":\"input-incomplete\",\"raw_payload\":{\"available\":false,\"transport\":\"none\",\"model\":null,\"confidence_source\":\"unknown\",\"attempts\":0,\"latency_ms\":0,\"answers\":null,\"reason\":\"input-incomplete\",\"decision_id\":\"dp-w-check-task:caf90f3a-73aa-43b9-88b2-ed5ccc6c343e\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":\"input-incomplete\",\"state_digest\":null,\"logical_id\":\"caf90f3a-73aa-43b9-88b2-ed5ccc6c343e\",\"dp\":\"dp-w-check-task\",\"replayed\":false,\"record_start\":\"written\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"desc_measurement\":null,\"basis_source\":null,\"business_decisions\":0,\"transport_attempts\":0,\"issues\":[{\"field\":\"state.<key>\",\"issue\":\"AC-005 is qualified by an object outside the bound key\"}],\"detail\":\"file evidence preparation failed; no request sent\",\"prepared_at\":null,\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\workers\\\\task-1\\\\task.md\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\workers\\\\task-1\\\\task.md\",\"sha256\":\"93bf1884b3e771ba2577f2efe97376fa70ddac912af70b050577543dcfe292ed\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\criterion-current.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\criterion-current.txt\",\"sha256\":\"6521389fa13b8218db7392489bdc5e3378ebaf97eaa10f4f52b74f3f5a503329\"}],\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"blocked_event_id\":\"5dad72b0-ceb7-4e5e-b093-2920d0a9fbc6\",\"unavailable\":\"input-incomplete\",\"raw_reason\":\"input-incomplete\"},\"escalated_reason\":\"input-incomplete\",\"owner\":\"mw-dp-material-pipeline\",\"binding\":{\"role\":\"coding\",\"owner\":\"mw-dp-material-pipeline\",\"key\":\"mw-dp-material-pipeline\",\"task_key\":\"task-1\",\"run_id\":\"task-1@2026-11-22T16:05:23.828Z\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:05:26.548Z\"},\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:487913783d53fcd639f00198cb2d16fcbf7ccd22f59d01a6c428bfbf2c5e4807\",\"local_ref\":\"lref:487913783d53fcd639f00198cb2d16fc\",\"dp\":\"dp-w-check-task\",\"candidates\":[\"continue\",\"terminate\",\"investigate\"],\"basis_ids\":[\"continueA-basis\",\"terminateA-basis\",\"investigateA-basis\"]}}\nUNAVAILABLE(input-incomplete) — 不要自行猜测，不要执行被门控的动作，不要用别的工具绕过。上报 \"blocked on decision dp-w-check-task\" 与本条 decision_feedback 的具体缺口；同一事项同一事实不要重发（返回已有反馈），在现有权限/角色/写面内可继续其他独立合法工具；只有真实用户停止、父取消、权限/预算或角色事实才停止更大范围工作。"
+        },
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"input-incomplete\",\"action\":\"blocked-ask-human\",\"escalated_reason\":\"input-incomplete\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"d04c101c-1098-4000-b932-2dfd35d0d5b2\",\"matter_ref\":\"4ad868f5058d5c49bcf5dc8e67d08900\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"input-gap\",\"raw_reason\":\"input-incomplete\",\"raw_payload\":{\"available\":false,\"transport\":\"none\",\"model\":null,\"confidence_source\":\"unknown\",\"attempts\":0,\"latency_ms\":0,\"answers\":null,\"reason\":\"input-incomplete\",\"decision_id\":\"dp-w-check-task:bff36548-ecfb-4d0f-8c38-b76f2e7b8153\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":\"input-incomplete\",\"state_digest\":null,\"logical_id\":\"bff36548-ecfb-4d0f-8c38-b76f2e7b8153\",\"dp\":\"dp-w-check-task\",\"replayed\":false,\"record_start\":\"written\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"desc_measurement\":null,\"basis_source\":null,\"business_decisions\":0,\"transport_attempts\":0,\"issues\":[{\"field\":\"state.<key>.text\",\"issue\":\"AC-005 is qualified by an object outside the bound key\"}],\"detail\":\"file evidence preparation failed; no request sent\",\"prepared_at\":null,\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\workers\\\\task-1\\\\task.md\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\workers\\\\task-1\\\\task.md\",\"sha256\":\"93bf1884b3e771ba2577f2efe97376fa70ddac912af70b050577543dcfe292ed\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\criterion-qualified.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\criterion-qualified.txt\",\"sha256\":\"562d53adb42b659662b21bd7b2ef02d311221a051a68a31678c395c2ec6b2414\"}],\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"blocked_event_id\":\"7669ee5d-bd91-4786-a44f-48d89fb8b912\",\"unavailable\":\"input-incomplete\",\"raw_reason\":\"input-incomplete\"},\"escalated_reason\":\"input-incomplete\",\"owner\":\"mw-dp-material-pipeline\",\"binding\":{\"role\":\"coding\",\"owner\":\"mw-dp-material-pipeline\",\"key\":\"mw-dp-material-pipeline\",\"task_key\":\"task-1\",\"run_id\":\"task-1@2026-11-22T16:05:23.828Z\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:05:27.656Z\"},\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:bf783ec0409478ad47f3d241233524107749e2743d0b4615041f27d16bc1a2ac\",\"local_ref\":\"lref:bf783ec0409478ad47f3d24123352410\",\"dp\":\"dp-w-check-task\",\"candidates\":[\"continue\",\"terminate\",\"investigate\"],\"basis_ids\":[\"continueA-basis\",\"terminateA-basis\",\"investigateA-basis\"]}}\nUNAVAILABLE(input-incomplete) — 不要自行猜测，不要执行被门控的动作，不要用别的工具绕过。上报 \"blocked on decision dp-w-check-task\" 与本条 decision_feedback 的具体缺口；同一事项同一事实不要重发（返回已有反馈），在现有权限/角色/写面内可继续其他独立合法工具；只有真实用户停止、父取消、权限/预算或角色事实才停止更大范围工作。"
+        },
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"input-incomplete\",\"action\":\"blocked-ask-human\",\"escalated_reason\":\"input-incomplete\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"f99fc893-80c8-4106-9eb6-fe3cab1fa731\",\"matter_ref\":\"d7135354b173f447b254cf70a3c665f3\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"input-gap\",\"raw_reason\":\"input-incomplete\",\"raw_payload\":{\"available\":false,\"transport\":\"none\",\"model\":null,\"confidence_source\":\"unknown\",\"attempts\":0,\"latency_ms\":16,\"answers\":null,\"reason\":\"input-incomplete\",\"decision_id\":\"dp-w-check-task:5afe38de-74fa-4bea-a103-83648cdf16ca\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":\"input-incomplete\",\"state_digest\":null,\"logical_id\":\"5afe38de-74fa-4bea-a103-83648cdf16ca\",\"dp\":\"dp-w-check-task\",\"replayed\":false,\"record_start\":\"written\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"desc_measurement\":null,\"basis_source\":null,\"business_decisions\":0,\"transport_attempts\":0,\"issues\":[{\"field\":\"state.<key>.text\",\"issue\":\"AC-005 is cited from a source outside the bound key\"}],\"detail\":\"file evidence preparation failed; no request sent\",\"prepared_at\":null,\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\workers\\\\task-1\\\\task.md\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\workers\\\\task-1\\\\task.md\",\"sha256\":\"93bf1884b3e771ba2577f2efe97376fa70ddac912af70b050577543dcfe292ed\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\other-criterion-key\\\\criterion-note.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\other-criterion-key\\\\criterion-note.txt\",\"sha256\":\"8f624c1606181466bcd457783763d117e77ca4fce0518a51aa9fa46e4a892f41\"}],\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"blocked_event_id\":\"8d754906-1964-468d-afcc-1d307c3ad297\",\"unavailable\":\"input-incomplete\",\"raw_reason\":\"input-incomplete\"},\"escalated_reason\":\"input-incomplete\",\"owner\":\"mw-dp-material-pipeline\",\"binding\":{\"role\":\"coding\",\"owner\":\"mw-dp-material-pipeline\",\"key\":\"mw-dp-material-pipeline\",\"task_key\":\"task-1\",\"run_id\":\"task-1@2026-11-22T16:05:23.828Z\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:05:28.785Z\"},\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:e5d6989274022081b54f0a154a5d3122ecd3858afb72aca7a85c1919a06ea7e0\",\"local_ref\":\"lref:e5d6989274022081b54f0a154a5d3122\",\"dp\":\"dp-w-check-task\",\"candidates\":[\"continue\",\"terminate\",\"investigate\"],\"basis_ids\":[\"continueA-basis\",\"terminateA-basis\",\"investigateA-basis\"]}}\nUNAVAILABLE(input-incomplete) — 不要自行猜测，不要执行被门控的动作，不要用别的工具绕过。上报 \"blocked on decision dp-w-check-task\" 与本条 decision_feedback 的具体缺口；同一事项同一事实不要重发（返回已有反馈），在现有权限/角色/写面内可继续其他独立合法工具；只有真实用户停止、父取消、权限/预算或角色事实才停止更大范围工作。"
+        },
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":true,\"decision_id\":\"dp-w-check-task:d69673ae-f70e-4945-b45c-86029f16c664\",\"mode\":\"auto\",\"acted\":false,\"answers\":{\"reachability\":{\"value\":\"continue\",\"confidence\":0.91},\"basis_id\":{\"value\":\"continueA-basis\",\"confidence\":0.91}},\"confidence_source\":\"api\",\"latency_ms\":32,\"selection\":{\"question\":\"reachability\",\"id\":\"continue\"},\"basis\":{\"id\":\"continueA-basis\",\"text\":\"continue：下一步条件已充足时继续；未知编码不能当成已知。\",\"applies_to\":[\"continue\"],\"material_refs\":[\"remaining\"],\"finding_ids\":[],\"remaining_ids\":[]},\"feedback\":{\"stage\":\"consumed\",\"status\":\"written\",\"recorded\":true}}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"0befcc3c-4414-4df1-b5ff-c4400711c7d2\",\"matter_ref\":\"384a1ca0a28e90e7e0c0cec9ccdc2bdb\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"answer\",\"raw_payload\":{\"available\":true,\"transport\":\"timi-decisions\",\"model\":\"jev-latest\",\"confidence_source\":\"api\",\"attempts\":1,\"latency_ms\":32,\"answers\":{\"reachability\":{\"value\":\"continue\",\"confidence\":0.91},\"basis_id\":{\"value\":\"continueA-basis\",\"confidence\":0.91}},\"reason\":null,\"decision_id\":\"dp-w-check-task:d69673ae-f70e-4945-b45c-86029f16c664\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":null,\"state_digest\":\"f875b82c01bca442\",\"logical_id\":\"d69673ae-f70e-4945-b45c-86029f16c664\",\"dp\":\"dp-w-check-task\",\"replayed\":false,\"record_start\":\"written\",\"choice\":\"continue\",\"basis_id\":\"continueA-basis\",\"basis_text\":\"continue：下一步条件已充足时继续；未知编码不能当成已知。\",\"finding_ids\":[],\"remaining_ids\":[],\"desc_measurement\":{\"estimated_tokens\":8,\"exact_count\":null,\"exact_limit_passed\":null},\"basis_source\":\"pm-prepared\",\"business_decisions\":1,\"transport_attempts\":1,\"issues\":[],\"detail\":\"\",\"prepared_at\":\"2026-11-08T10:00:00+00:00\",\"snapshot_ref\":\"state-57fdd51b23f41214\",\"call_id\":\"1beda8d572d24119818035098dd2acff\",\"capture_status\":\"ok\",\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\workers\\\\task-1\\\\task.md\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\workers\\\\task-1\\\\task.md\",\"sha256\":\"93bf1884b3e771ba2577f2efe97376fa70ddac912af70b050577543dcfe292ed\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\criterion-current.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\criterion-current.txt\",\"sha256\":\"6521389fa13b8218db7392489bdc5e3378ebaf97eaa10f4f52b74f3f5a503329\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\evidence\\\\contract-freeze.json\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\evidence\\\\contract-freeze.json\",\"sha256\":\"349d666131a3cc8fef6399b0af07db3153529a5797bce5248a63ba8dd0ee6925\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\spec.md\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\spec.md\",\"sha256\":\"8b3e042d27ea553c40b9aea596d71eb3099f8f2bd170adf39c232c0fef58dcbb\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\design.md\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-check-task-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\design.md\",\"sha256\":\"a9dcffdf60ec6dad4f05dd4c93a649e6e5e3686ea95e291c4c0bfb4ae0b46a27\"}],\"feedback_status\":\"recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[{\"stage\":\"request\",\"status\":\"written\",\"event_id\":\"rq-3f7860d7606408792a13df79af68b147\"}]},\"owner\":\"mw-dp-material-pipeline\",\"binding\":{\"role\":\"coding\",\"owner\":\"mw-dp-material-pipeline\",\"key\":\"mw-dp-material-pipeline\",\"task_key\":\"task-1\",\"run_id\":\"task-1@2026-11-22T16:05:23.828Z\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:05:29.920Z\"},\"gaps\":[\"raw_reason\"],\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:f38488db50ec357f04f5ef5cabea84e3aaaf504acd9fec529f8f7eb4a84a53c2\",\"local_ref\":\"lref:f38488db50ec357f04f5ef5cabea84e3\",\"dp\":\"dp-w-check-task\",\"candidates\":[\"continue\",\"terminate\",\"investigate\"],\"basis_ids\":[\"continueA-basis\",\"terminateA-basis\",\"investigateA-basis\"]}}"
+        }
+      ],
+      "http_delta": 1
+    }
+  ],
+  "criterion_cases": [
+    {
+      "name": "Dangling criterion in desc",
+      "input": {
+        "dp": "dp-w-check-task",
+        "key": "mw-dp-material-pipeline",
+        "trigger": "dangling-criterion-in-desc",
+        "material": {
+          "task_goal": "Verify non-ASCII fields against the actual encoding contract.",
+          "reachability_facts": "the write face is free and the budget is enough",
+          "completed": "ASCII parsing passed in the reference fixture.",
+          "remaining": "Non-ASCII validation.",
+          "blockers": "Input encoding not yet established.",
+          "constraints": "One read, at most 1024 bytes and within the original 8 minutes.",
+          "investigation": {
+            "unknown": "which input encoding the test uses",
+            "evidence_source": "E:\\gitlite\\Multi-Workers\\.tmp\\ac005-dp-w-check-task-diagnostics\\encoding-note.txt:1",
+            "budget": "one read, 1024 bytes and 8 minutes remaining",
+            "stop_condition": "stop after the read or at the original host boundary"
+          }
+        },
+        "preparation": {
+          "basis_catalog": [
+            {
+              "id": "continueA-basis",
+              "text": "continue：下一步条件已充足时继续；未知编码不能当成已知。",
+              "applies_to": [
+                "continue"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "terminateA-basis",
+              "text": "terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。",
+              "applies_to": [
+                "terminate"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "investigateA-basis",
+              "text": "investigate：按probe做一次既有授权读取后重评，不能刷新原预算。",
+              "applies_to": [
+                "investigate"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            }
+          ],
+          "prepared_at": "2026-11-08T10:00:00+00:00",
+          "model_context": {
+            "desc": [
+              "Check AC-999 before acting."
+            ],
+            "enum_meanings": {
+              "bytes": "字节数，限制本次读取数据量。",
+              "continue": "继续原授权范围内的工作或补证。",
+              "investigate": "在原工具范围及累计预算内对明确未知做有界补证。",
+              "minutes": "分钟；本例对应原执行的剩余额度。",
+              "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+              "reads": "允许的读取次数。",
+              "terminate": "真实交付完成/未完成情况并结束本次执行，不取消整体目标。"
+            },
+            "terminology": {
+              "ASCII": "American Standard Code for Information Interchange: 美国信息交换标准代码字符集；本例ASCII样本通过不能证明非ASCII字段可按真实编码正确解析。",
+              "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+              "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+              "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+              "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+              "run": "task execution run: 一次具体任务执行；结束本run不等于取消整个目标或项目事项。",
+              "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+            },
+            "references": {
+              "W1": {
+                "kind": "remaining_work",
+                "text": "按真实编码约定验证非ASCII字段"
+              },
+              "proof": {
+                "kind": "evidence",
+                "path": "criterion-current.txt"
+              }
+            }
+          }
+        },
+        "evidence_refs": []
+      },
+      "verdict": {
+        "available": false,
+        "unavailable": "input-incomplete",
+        "action": "blocked-ask-human",
+        "escalated_reason": "input-incomplete"
+      },
+      "transport_attempts": 0,
+      "blocked_event_id": "890e3ee9-f1d3-4b0b-9569-ec924b0efcd3",
+      "input_diagnostics": {
+        "stage": "evidence-preparation",
+        "transport": "not-sent",
+        "issues": [
+          {
+            "field": "model_context.references.AC-999",
+            "code": "criterion-reference-unresolved",
+            "criterion": "AC-999",
+            "source_field": "state.desc[0]"
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "Dangling criterion in hydrated text",
+      "input": {
+        "dp": "dp-w-check-task",
+        "key": "mw-dp-material-pipeline",
+        "trigger": "dangling-criterion-in-hydrated-text",
+        "material": {
+          "task_goal": "Verify non-ASCII fields against the actual encoding contract.",
+          "reachability_facts": "the write face is free and the budget is enough",
+          "completed": "ASCII parsing passed in the reference fixture.",
+          "remaining": "Non-ASCII validation.",
+          "blockers": "Input encoding not yet established.",
+          "constraints": "One read, at most 1024 bytes and within the original 8 minutes.",
+          "investigation": {
+            "unknown": "which input encoding the test uses",
+            "evidence_source": "E:\\gitlite\\Multi-Workers\\.tmp\\ac005-dp-w-check-task-diagnostics\\encoding-note.txt:1",
+            "budget": "one read, 1024 bytes and 8 minutes remaining",
+            "stop_condition": "stop after the read or at the original host boundary"
+          }
+        },
+        "preparation": {
+          "basis_catalog": [
+            {
+              "id": "continueA-basis",
+              "text": "continue：下一步条件已充足时继续；未知编码不能当成已知。",
+              "applies_to": [
+                "continue"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "terminateA-basis",
+              "text": "terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。",
+              "applies_to": [
+                "terminate"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "investigateA-basis",
+              "text": "investigate：按probe做一次既有授权读取后重评，不能刷新原预算。",
+              "applies_to": [
+                "investigate"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            }
+          ],
+          "prepared_at": "2026-11-08T10:00:00+00:00",
+          "model_context": {
+            "desc": [
+              "Review the referenced note."
+            ],
+            "enum_meanings": {
+              "bytes": "字节数，限制本次读取数据量。",
+              "continue": "继续原授权范围内的工作或补证。",
+              "investigate": "在原工具范围及累计预算内对明确未知做有界补证。",
+              "minutes": "分钟；本例对应原执行的剩余额度。",
+              "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+              "reads": "允许的读取次数。",
+              "terminate": "真实交付完成/未完成情况并结束本次执行，不取消整体目标。"
+            },
+            "terminology": {
+              "ASCII": "American Standard Code for Information Interchange: 美国信息交换标准代码字符集；本例ASCII样本通过不能证明非ASCII字段可按真实编码正确解析。",
+              "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+              "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+              "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+              "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+              "run": "task execution run: 一次具体任务执行；结束本run不等于取消整个目标或项目事项。",
+              "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+            },
+            "references": {
+              "W1": {
+                "kind": "remaining_work",
+                "text": "按真实编码约定验证非ASCII字段"
+              },
+              "proof": {
+                "kind": "evidence",
+                "path": "criterion-missing.txt"
+              }
+            }
+          }
+        },
+        "evidence_refs": []
+      },
+      "verdict": {
+        "available": false,
+        "unavailable": "input-incomplete",
+        "action": "blocked-ask-human",
+        "escalated_reason": "input-incomplete"
+      },
+      "transport_attempts": 0,
+      "blocked_event_id": "29984094-51aa-4aa7-8f89-79ae62128274",
+      "input_diagnostics": {
+        "stage": "evidence-preparation",
+        "transport": "not-sent",
+        "issues": [
+          {
+            "field": "model_context.references.VC-999",
+            "code": "criterion-reference-unresolved",
+            "criterion": "VC-999",
+            "source_field": "state.evidence_sources[0].text"
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "Foreign key anchor in desc",
+      "input": {
+        "dp": "dp-w-check-task",
+        "key": "mw-dp-material-pipeline",
+        "trigger": "foreign-key-anchor-in-desc",
+        "material": {
+          "task_goal": "Verify non-ASCII fields against the actual encoding contract.",
+          "reachability_facts": "the write face is free and the budget is enough",
+          "completed": "ASCII parsing passed in the reference fixture.",
+          "remaining": "Non-ASCII validation.",
+          "blockers": "Input encoding not yet established.",
+          "constraints": "One read, at most 1024 bytes and within the original 8 minutes.",
+          "investigation": {
+            "unknown": "which input encoding the test uses",
+            "evidence_source": "E:\\gitlite\\Multi-Workers\\.tmp\\ac005-dp-w-check-task-diagnostics\\encoding-note.txt:1",
+            "budget": "one read, 1024 bytes and 8 minutes remaining",
+            "stop_condition": "stop after the read or at the original host boundary"
+          }
+        },
+        "preparation": {
+          "basis_catalog": [
+            {
+              "id": "continueA-basis",
+              "text": "continue：下一步条件已充足时继续；未知编码不能当成已知。",
+              "applies_to": [
+                "continue"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "terminateA-basis",
+              "text": "terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。",
+              "applies_to": [
+                "terminate"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "investigateA-basis",
+              "text": "investigate：按probe做一次既有授权读取后重评，不能刷新原预算。",
+              "applies_to": [
+                "investigate"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            }
+          ],
+          "prepared_at": "2026-11-08T10:00:00+00:00",
+          "model_context": {
+            "desc": [
+              "Review .agenticdoc/other-criterion-key/spec.md#AC-005 before acting."
+            ],
+            "enum_meanings": {
+              "bytes": "字节数，限制本次读取数据量。",
+              "continue": "继续原授权范围内的工作或补证。",
+              "investigate": "在原工具范围及累计预算内对明确未知做有界补证。",
+              "minutes": "分钟；本例对应原执行的剩余额度。",
+              "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+              "reads": "允许的读取次数。",
+              "terminate": "真实交付完成/未完成情况并结束本次执行，不取消整体目标。"
+            },
+            "terminology": {
+              "ASCII": "American Standard Code for Information Interchange: 美国信息交换标准代码字符集；本例ASCII样本通过不能证明非ASCII字段可按真实编码正确解析。",
+              "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+              "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+              "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+              "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+              "run": "task execution run: 一次具体任务执行；结束本run不等于取消整个目标或项目事项。",
+              "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+            },
+            "references": {
+              "W1": {
+                "kind": "remaining_work",
+                "text": "按真实编码约定验证非ASCII字段"
+              },
+              "proof": {
+                "kind": "evidence",
+                "path": "criterion-current.txt"
+              }
+            }
+          }
+        },
+        "evidence_refs": []
+      },
+      "verdict": {
+        "available": false,
+        "unavailable": "input-incomplete",
+        "action": "blocked-ask-human",
+        "escalated_reason": "input-incomplete"
+      },
+      "transport_attempts": 0,
+      "blocked_event_id": "5dad72b0-ceb7-4e5e-b093-2920d0a9fbc6",
+      "input_diagnostics": {
+        "stage": "evidence-preparation",
+        "transport": "not-sent",
+        "issues": [
+          {
+            "field": "state.desc[0]",
+            "code": "criterion-reference-other-object",
+            "criterion": "AC-005"
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "Foreign key anchor in hydrated text",
+      "input": {
+        "dp": "dp-w-check-task",
+        "key": "mw-dp-material-pipeline",
+        "trigger": "foreign-key-anchor-in-hydrated-text",
+        "material": {
+          "task_goal": "Verify non-ASCII fields against the actual encoding contract.",
+          "reachability_facts": "the write face is free and the budget is enough",
+          "completed": "ASCII parsing passed in the reference fixture.",
+          "remaining": "Non-ASCII validation.",
+          "blockers": "Input encoding not yet established.",
+          "constraints": "One read, at most 1024 bytes and within the original 8 minutes.",
+          "investigation": {
+            "unknown": "which input encoding the test uses",
+            "evidence_source": "E:\\gitlite\\Multi-Workers\\.tmp\\ac005-dp-w-check-task-diagnostics\\encoding-note.txt:1",
+            "budget": "one read, 1024 bytes and 8 minutes remaining",
+            "stop_condition": "stop after the read or at the original host boundary"
+          }
+        },
+        "preparation": {
+          "basis_catalog": [
+            {
+              "id": "continueA-basis",
+              "text": "continue：下一步条件已充足时继续；未知编码不能当成已知。",
+              "applies_to": [
+                "continue"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "terminateA-basis",
+              "text": "terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。",
+              "applies_to": [
+                "terminate"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "investigateA-basis",
+              "text": "investigate：按probe做一次既有授权读取后重评，不能刷新原预算。",
+              "applies_to": [
+                "investigate"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            }
+          ],
+          "prepared_at": "2026-11-08T10:00:00+00:00",
+          "model_context": {
+            "desc": [
+              "Read the qualified criterion in the note."
+            ],
+            "enum_meanings": {
+              "bytes": "字节数，限制本次读取数据量。",
+              "continue": "继续原授权范围内的工作或补证。",
+              "investigate": "在原工具范围及累计预算内对明确未知做有界补证。",
+              "minutes": "分钟；本例对应原执行的剩余额度。",
+              "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+              "reads": "允许的读取次数。",
+              "terminate": "真实交付完成/未完成情况并结束本次执行，不取消整体目标。"
+            },
+            "terminology": {
+              "ASCII": "American Standard Code for Information Interchange: 美国信息交换标准代码字符集；本例ASCII样本通过不能证明非ASCII字段可按真实编码正确解析。",
+              "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+              "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+              "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+              "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+              "run": "task execution run: 一次具体任务执行；结束本run不等于取消整个目标或项目事项。",
+              "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+            },
+            "references": {
+              "W1": {
+                "kind": "remaining_work",
+                "text": "按真实编码约定验证非ASCII字段"
+              },
+              "proof": {
+                "kind": "evidence",
+                "path": "criterion-qualified.txt"
+              }
+            }
+          }
+        },
+        "evidence_refs": []
+      },
+      "verdict": {
+        "available": false,
+        "unavailable": "input-incomplete",
+        "action": "blocked-ask-human",
+        "escalated_reason": "input-incomplete"
+      },
+      "transport_attempts": 0,
+      "blocked_event_id": "7669ee5d-bd91-4786-a44f-48d89fb8b912",
+      "input_diagnostics": {
+        "stage": "evidence-preparation",
+        "transport": "not-sent",
+        "issues": [
+          {
+            "field": "state.evidence_sources[0].text",
+            "code": "criterion-reference-other-object",
+            "criterion": "AC-005"
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "Same criterion number sourced from another key",
+      "input": {
+        "dp": "dp-w-check-task",
+        "key": "mw-dp-material-pipeline",
+        "trigger": "same-criterion-number-sourced-from-another-key",
+        "material": {
+          "task_goal": "Verify non-ASCII fields against the actual encoding contract.",
+          "reachability_facts": "the write face is free and the budget is enough",
+          "completed": "ASCII parsing passed in the reference fixture.",
+          "remaining": "Non-ASCII validation.",
+          "blockers": "Input encoding not yet established.",
+          "constraints": "One read, at most 1024 bytes and within the original 8 minutes.",
+          "investigation": {
+            "unknown": "which input encoding the test uses",
+            "evidence_source": "E:\\gitlite\\Multi-Workers\\.tmp\\ac005-dp-w-check-task-diagnostics\\encoding-note.txt:1",
+            "budget": "one read, 1024 bytes and 8 minutes remaining",
+            "stop_condition": "stop after the read or at the original host boundary"
+          }
+        },
+        "preparation": {
+          "basis_catalog": [
+            {
+              "id": "continueA-basis",
+              "text": "continue：下一步条件已充足时继续；未知编码不能当成已知。",
+              "applies_to": [
+                "continue"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "terminateA-basis",
+              "text": "terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。",
+              "applies_to": [
+                "terminate"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "investigateA-basis",
+              "text": "investigate：按probe做一次既有授权读取后重评，不能刷新原预算。",
+              "applies_to": [
+                "investigate"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            }
+          ],
+          "prepared_at": "2026-11-08T10:00:00+00:00",
+          "model_context": {
+            "desc": [
+              "Read the different object before acting."
+            ],
+            "enum_meanings": {
+              "bytes": "字节数，限制本次读取数据量。",
+              "continue": "继续原授权范围内的工作或补证。",
+              "investigate": "在原工具范围及累计预算内对明确未知做有界补证。",
+              "minutes": "分钟；本例对应原执行的剩余额度。",
+              "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+              "reads": "允许的读取次数。",
+              "terminate": "真实交付完成/未完成情况并结束本次执行，不取消整体目标。"
+            },
+            "terminology": {
+              "ASCII": "American Standard Code for Information Interchange: 美国信息交换标准代码字符集；本例ASCII样本通过不能证明非ASCII字段可按真实编码正确解析。",
+              "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+              "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+              "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+              "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+              "run": "task execution run: 一次具体任务执行；结束本run不等于取消整个目标或项目事项。",
+              "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+            },
+            "references": {
+              "W1": {
+                "kind": "remaining_work",
+                "text": "按真实编码约定验证非ASCII字段"
+              },
+              "proof": {
+                "kind": "evidence",
+                "path": ".agenticdoc/other-criterion-key/criterion-note.txt"
+              }
+            }
+          }
+        },
+        "evidence_refs": []
+      },
+      "verdict": {
+        "available": false,
+        "unavailable": "input-incomplete",
+        "action": "blocked-ask-human",
+        "escalated_reason": "input-incomplete"
+      },
+      "transport_attempts": 0,
+      "blocked_event_id": "8d754906-1964-468d-afcc-1d307c3ad297",
+      "input_diagnostics": {
+        "stage": "evidence-preparation",
+        "transport": "not-sent",
+        "issues": [
+          {
+            "field": "state.evidence_sources[0].text",
+            "code": "criterion-reference-other-object",
+            "criterion": "AC-005"
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "Same-key desc and hydrated criterion",
+      "input": {
+        "dp": "dp-w-check-task",
+        "key": "mw-dp-material-pipeline",
+        "trigger": "same-key-desc-and-hydrated-criterion",
+        "material": {
+          "task_goal": "Verify non-ASCII fields against the actual encoding contract.",
+          "reachability_facts": "the write face is free and the budget is enough",
+          "completed": "ASCII parsing passed in the reference fixture.",
+          "remaining": "Non-ASCII validation.",
+          "blockers": "Input encoding not yet established.",
+          "constraints": "One read, at most 1024 bytes and within the original 8 minutes.",
+          "investigation": {
+            "unknown": "which input encoding the test uses",
+            "evidence_source": "E:\\gitlite\\Multi-Workers\\.tmp\\ac005-dp-w-check-task-diagnostics\\encoding-note.txt:1",
+            "budget": "one read, 1024 bytes and 8 minutes remaining",
+            "stop_condition": "stop after the read or at the original host boundary"
+          }
+        },
+        "preparation": {
+          "basis_catalog": [
+            {
+              "id": "continueA-basis",
+              "text": "continue：下一步条件已充足时继续；未知编码不能当成已知。",
+              "applies_to": [
+                "continue"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "terminateA-basis",
+              "text": "terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。",
+              "applies_to": [
+                "terminate"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "investigateA-basis",
+              "text": "investigate：按probe做一次既有授权读取后重评，不能刷新原预算。",
+              "applies_to": [
+                "investigate"
+              ],
+              "material_refs": [
+                "remaining"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            }
+          ],
+          "prepared_at": "2026-11-08T10:00:00+00:00",
+          "model_context": {
+            "desc": [
+              "核对AC-005的引用。"
+            ],
+            "enum_meanings": {
+              "bytes": "字节数，限制本次读取数据量。",
+              "continue": "继续原授权范围内的工作或补证。",
+              "investigate": "在原工具范围及累计预算内对明确未知做有界补证。",
+              "minutes": "分钟；本例对应原执行的剩余额度。",
+              "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+              "reads": "允许的读取次数。",
+              "terminate": "真实交付完成/未完成情况并结束本次执行，不取消整体目标。"
+            },
+            "terminology": {
+              "ASCII": "American Standard Code for Information Interchange: 美国信息交换标准代码字符集；本例ASCII样本通过不能证明非ASCII字段可按真实编码正确解析。",
+              "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+              "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+              "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+              "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+              "run": "task execution run: 一次具体任务执行；结束本run不等于取消整个目标或项目事项。",
+              "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+            },
+            "references": {
+              "W1": {
+                "kind": "remaining_work",
+                "text": "按真实编码约定验证非ASCII字段"
+              },
+              "proof": {
+                "kind": "evidence",
+                "path": "criterion-current.txt"
+              }
+            }
+          }
+        },
+        "evidence_refs": []
+      },
+      "verdict": {
+        "available": true,
+        "decision_id": "dp-w-check-task:d69673ae-f70e-4945-b45c-86029f16c664",
+        "mode": "auto",
+        "acted": false,
+        "answers": {
+          "reachability": {
+            "value": "continue",
+            "confidence": 0.91
+          },
+          "basis_id": {
+            "value": "continueA-basis",
+            "confidence": 0.91
+          }
+        },
+        "confidence_source": "api",
+        "latency_ms": 32,
+        "selection": {
+          "question": "reachability",
+          "id": "continue"
+        },
+        "basis": {
+          "id": "continueA-basis",
+          "text": "continue：下一步条件已充足时继续；未知编码不能当成已知。",
+          "applies_to": [
+            "continue"
+          ],
+          "material_refs": [
+            "remaining"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        },
+        "feedback": {
+          "stage": "consumed",
+          "status": "written",
+          "recorded": true
+        }
+      },
+      "transport_attempts": 1
+    }
+  ]
+}

@@ -1,0 +1,629 @@
+{
+  "candidates": {
+    "decision_selection": [
+      {
+        "id": "passA",
+        "label": "结论 pass: 满足明确质量/验收要求，必要证据充分且无未解决阻断\n依据 pass-review: All current ACs and the independent evidence checks pass."
+      },
+      {
+        "id": "fixA",
+        "label": "结论 fix: 要求/依据明确，但产物或证据有具体整改缺口\n依据 order-only: F1: Add the missing ordering assertion, with F2 outstanding.\nfinding_ids: F1\nremaining_ids: F2"
+      },
+      {
+        "id": "fixB",
+        "label": "结论 fix: 要求/依据明确，但产物或证据有具体整改缺口\n依据 order-and-anchor: F1: Add the ordering assertion. F2: Update the stale evidence anchor.\nfinding_ids: F1, F2"
+      },
+      {
+        "id": "reopenA",
+        "label": "结论 reopen: 要求、设计或验收依据本身有实质问题，需重新讨论确认\n依据 reopen-contract: A substantive conflict in the accepted quality requirements needs adjudication."
+      }
+    ]
+  },
+  "decision_id": "dp-QG:qg-repair-and-review-1",
+  "dp": "dp-QG",
+  "field_trace": {
+    "fields": {
+      "/model": {
+        "sources": [
+          "transport:resolved_model"
+        ],
+        "transform": "resolve-config"
+      },
+      "/questions/decision_selection/criteria/fixA": {
+        "sources": [
+          "book:/preparation/basis_catalog/1",
+          "registry:dp-QG/qg_verdict/labels/fix"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/fixB": {
+        "sources": [
+          "book:/preparation/basis_catalog/2",
+          "registry:dp-QG/qg_verdict/labels/fix"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/passA": {
+        "sources": [
+          "book:/preparation/basis_catalog/0",
+          "registry:dp-QG/qg_verdict/labels/pass"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/reopenA": {
+        "sources": [
+          "book:/preparation/basis_catalog/3",
+          "registry:dp-QG/qg_verdict/labels/reopen"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/instructions": {
+        "sources": [
+          "registry:dp-QG/instructions",
+          "registry:prepared_basis_instructions"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/questions/decision_selection/type": {
+        "sources": [
+          "registry:dp-QG/protocol"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/state/desc/0": {
+        "sources": [
+          "book:/preparation/model_context/desc/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/1": {
+        "sources": [
+          "book:/preparation/model_context/desc/1"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/2": {
+        "sources": [
+          "book:/preparation/model_context/desc/2"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/fix": {
+        "sources": [
+          "registry:dp-QG/qg_verdict/labels/fix"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/pass": {
+        "sources": [
+          "registry:dp-QG/qg_verdict/labels/pass"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/reopen": {
+        "sources": [
+          "registry:dp-QG/qg_verdict/labels/reopen"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/unmet": {
+        "sources": [
+          "registry:review/unmet"
+        ],
+        "transform": "copy"
+      },
+      "/state/evidence_sources/0": {
+        "sources": [
+          "source:src-36cd9a9ce621aa1ece01",
+          "material.review_evidence[0]"
+        ],
+        "transform": "full"
+      },
+      "/state/evidence_sources/1": {
+        "sources": [
+          "source:src-9c17d79fe0ce8a4091cb",
+          "material.review_evidence[1]"
+        ],
+        "transform": "full"
+      },
+      "/state/evidence_sources/2": {
+        "sources": [
+          "source:src-062d4a7972635173ba3a",
+          "material.review_evidence[2]"
+        ],
+        "transform": "full"
+      },
+      "/state/evidence_sources/3": {
+        "sources": [
+          "source:src-0083d4a2e85a3ae92258",
+          "preparation.model_context.review.AC-001.evidence",
+          "preparation.model_context.review.AC-002.evidence",
+          "preparation.model_context.review.VC-001.evidence",
+          "preparation.model_context.review.VC-002.evidence"
+        ],
+        "transform": "excerpt"
+      },
+      "/state/material/review_evidence/0": {
+        "sources": [
+          "book:/material/review_evidence/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/review_evidence/1": {
+        "sources": [
+          "book:/material/review_evidence/1"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/review_evidence/2": {
+        "sources": [
+          "book:/material/review_evidence/2"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/review_findings": {
+        "sources": [
+          "book:/material/review_findings"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/review_requirements": {
+        "sources": [
+          "book:/material/review_requirements"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/uncovered_scope": {
+        "sources": [
+          "book:/material/uncovered_scope"
+        ],
+        "transform": "copy"
+      },
+      "/state/reasons/F1": {
+        "sources": [
+          "book:/preparation/model_context/reasons/F1"
+        ],
+        "transform": "copy"
+      },
+      "/state/reasons/F2": {
+        "sources": [
+          "book:/preparation/model_context/reasons/F2"
+        ],
+        "transform": "copy"
+      },
+      "/state/references/AC-001": {
+        "sources": [
+          "contract:key-1/spec.md#AC-001"
+        ],
+        "transform": "current-criterion"
+      },
+      "/state/references/AC-001/review": {
+        "sources": [
+          "book:/preparation/model_context/review/AC-001"
+        ],
+        "transform": "copy"
+      },
+      "/state/references/AC-002": {
+        "sources": [
+          "contract:key-1/spec.md#AC-002"
+        ],
+        "transform": "current-criterion"
+      },
+      "/state/references/AC-002/review": {
+        "sources": [
+          "book:/preparation/model_context/review/AC-002"
+        ],
+        "transform": "copy"
+      },
+      "/state/references/VC-001": {
+        "sources": [
+          "contract:key-1/design.md#VC-001"
+        ],
+        "transform": "current-criterion"
+      },
+      "/state/references/VC-001/review": {
+        "sources": [
+          "book:/preparation/model_context/review/VC-001"
+        ],
+        "transform": "copy"
+      },
+      "/state/references/VC-002": {
+        "sources": [
+          "contract:key-1/design.md#VC-002"
+        ],
+        "transform": "current-criterion"
+      },
+      "/state/references/VC-002/review": {
+        "sources": [
+          "book:/preparation/model_context/review/VC-002"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/AC": {
+        "sources": [
+          "registry:terminology/AC"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/FAIL": {
+        "sources": [
+          "registry:terminology/FAIL"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/PM": {
+        "sources": [
+          "registry:terminology/PM"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/VC": {
+        "sources": [
+          "registry:terminology/VC"
+        ],
+        "transform": "copy"
+      }
+    },
+    "local_only": [
+      "/meta",
+      "/notes",
+      "/preparation/prepared_at",
+      "/preparation/basis_catalog"
+    ]
+  },
+  "file_evidence": [
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\.agenticdoc\\target.yml",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\.agenticdoc\\target.yml",
+      "sha256": "5e48f12f562359b1a285d5d901fdb5e1852367f18c4e73d26d837cf638804c45"
+    },
+    {
+      "canonical_path": null,
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\.mw\\decision-evidence.yml",
+      "sha256": null,
+      "status": "missing"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\review-before.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\review-before.txt",
+      "sha256": "3dac8f5dc2b44ba99037ed46b2b753085f6dd6a16171067bdb810da3e6229dc6"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\checks.py",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\checks.py",
+      "sha256": "36e572082bb4e5847d5f3f604ecd172229638a9e2c2e2d6c92f64d6100fba778"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\anchors.json",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\anchors.json",
+      "sha256": "305e8d08401ccaea69d32f18127488d038c278ebb4997368a1e3df69a3bbaff8"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\.agenticdoc\\key-1\\evidence\\contract-freeze.json",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\.agenticdoc\\key-1\\evidence\\contract-freeze.json",
+      "sha256": "376e97403fae118798a2df8260096158ebddcd5b772cdc8789452c8d15c62d6b"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\.agenticdoc\\key-1\\spec.md",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\.agenticdoc\\key-1\\spec.md",
+      "sha256": "70f033522b9ad756efebe3cbcc6575dbee2919c7cbc24cadeccfb76118659184"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\.agenticdoc\\key-1\\design.md",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\.agenticdoc\\key-1\\design.md",
+      "sha256": "80fe8b03c15e6f7b5927ce46485dc7e7735c7b156e70bb7e97a3b7d25631cf63"
+    }
+  ],
+  "kind": "input-state",
+  "local_preparation": {
+    "basis_catalog": [
+      {
+        "applies_to": [
+          "pass"
+        ],
+        "id": "pass-review",
+        "material_refs": [
+          "review_requirements"
+        ],
+        "text": "All current ACs and the independent evidence checks pass."
+      },
+      {
+        "applies_to": [
+          "fix"
+        ],
+        "finding_ids": [
+          "F1"
+        ],
+        "id": "order-only",
+        "material_refs": [
+          "review_findings"
+        ],
+        "remaining_ids": [
+          "F2"
+        ],
+        "text": "F1: Add the missing ordering assertion, with F2 outstanding."
+      },
+      {
+        "applies_to": [
+          "fix"
+        ],
+        "finding_ids": [
+          "F1",
+          "F2"
+        ],
+        "id": "order-and-anchor",
+        "material_refs": [
+          "review_findings"
+        ],
+        "remaining_ids": [],
+        "text": "F1: Add the ordering assertion. F2: Update the stale evidence anchor."
+      },
+      {
+        "applies_to": [
+          "reopen"
+        ],
+        "id": "reopen-contract",
+        "material_refs": [
+          "review_requirements"
+        ],
+        "text": "A substantive conflict in the accepted quality requirements needs adjudication."
+      }
+    ],
+    "model_context": {
+      "desc": [
+        "Verify that imports preserve row order and that the evidence anchor reaches that assertion.",
+        "The independent check found missing ordering coverage and a stale anchor.",
+        "The check output and current files provide the review evidence."
+      ],
+      "reasons": {
+        "F1": "The existing assertion checks length only.",
+        "F2": "The evidence anchor points at the wrong line."
+      },
+      "review": {
+        "AC-001": {
+          "evidence": "review-before.txt:1",
+          "status": "unmet"
+        },
+        "AC-002": {
+          "evidence": "review-before.txt:1",
+          "status": "unmet"
+        },
+        "VC-001": {
+          "evidence": "review-before.txt:1",
+          "status": "unmet"
+        },
+        "VC-002": {
+          "evidence": "review-before.txt:1",
+          "status": "unmet"
+        }
+      }
+    },
+    "prepared_at": "2026-11-08T10:00:00+00:00"
+  },
+  "pair_map": {
+    "fixA": {
+      "basis_id": "order-only",
+      "basis_text": "F1: Add the missing ordering assertion, with F2 outstanding.",
+      "choice": "fix",
+      "choice_label": "要求/依据明确，但产物或证据有具体整改缺口",
+      "choice_label_source": "registry:dp-QG/qg_verdict/labels/fix",
+      "finding_ids": [
+        "F1"
+      ],
+      "label": "结论 fix: 要求/依据明确，但产物或证据有具体整改缺口\n依据 order-only: F1: Add the missing ordering assertion, with F2 outstanding.\nfinding_ids: F1\nremaining_ids: F2",
+      "remaining_ids": [
+        "F2"
+      ]
+    },
+    "fixB": {
+      "basis_id": "order-and-anchor",
+      "basis_text": "F1: Add the ordering assertion. F2: Update the stale evidence anchor.",
+      "choice": "fix",
+      "choice_label": "要求/依据明确，但产物或证据有具体整改缺口",
+      "choice_label_source": "registry:dp-QG/qg_verdict/labels/fix",
+      "finding_ids": [
+        "F1",
+        "F2"
+      ],
+      "label": "结论 fix: 要求/依据明确，但产物或证据有具体整改缺口\n依据 order-and-anchor: F1: Add the ordering assertion. F2: Update the stale evidence anchor.\nfinding_ids: F1, F2",
+      "remaining_ids": []
+    },
+    "passA": {
+      "basis_id": "pass-review",
+      "basis_text": "All current ACs and the independent evidence checks pass.",
+      "choice": "pass",
+      "choice_label": "满足明确质量/验收要求，必要证据充分且无未解决阻断",
+      "choice_label_source": "registry:dp-QG/qg_verdict/labels/pass",
+      "finding_ids": [],
+      "label": "结论 pass: 满足明确质量/验收要求，必要证据充分且无未解决阻断\n依据 pass-review: All current ACs and the independent evidence checks pass.",
+      "remaining_ids": []
+    },
+    "reopenA": {
+      "basis_id": "reopen-contract",
+      "basis_text": "A substantive conflict in the accepted quality requirements needs adjudication.",
+      "choice": "reopen",
+      "choice_label": "要求、设计或验收依据本身有实质问题，需重新讨论确认",
+      "choice_label_source": "registry:dp-QG/qg_verdict/labels/reopen",
+      "finding_ids": [],
+      "label": "结论 reopen: 要求、设计或验收依据本身有实质问题，需重新讨论确认\n依据 reopen-contract: A substantive conflict in the accepted quality requirements needs adjudication.",
+      "remaining_ids": []
+    }
+  },
+  "policy": null,
+  "questions_version": "q-b8e9bfe6",
+  "state": {
+    "desc": [
+      "Verify that imports preserve row order and that the evidence anchor reaches that assertion.",
+      "The independent check found missing ordering coverage and a stale anchor.",
+      "The check output and current files provide the review evidence."
+    ],
+    "enum_meanings": {
+      "fix": "要求/依据明确，但产物或证据有具体整改缺口",
+      "pass": "满足明确质量/验收要求，必要证据充分且无未解决阻断",
+      "reopen": "要求、设计或验收依据本身有实质问题，需重新讨论确认",
+      "unmet": "The current criterion was checked and failed."
+    },
+    "evidence_sources": [
+      {
+        "included_lines": [
+          [
+            1,
+            2
+          ]
+        ],
+        "line_range": [
+          1,
+          2
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\review-before.txt",
+        "references": [
+          "material.review_evidence[0]"
+        ],
+        "representation": "full",
+        "sha256": "3dac8f5dc2b44ba99037ed46b2b753085f6dd6a16171067bdb810da3e6229dc6",
+        "source_bytes": 213,
+        "source_id": "src-36cd9a9ce621aa1ece01",
+        "source_lines": 2,
+        "text": "AC-001 / VC-001 FAIL: checks.py must contain one explicit assertion for input row order.\r\nAC-002 / VC-002 FAIL: The ordering_assertion anchor points to checks.py:2, which does not contain the ordering assertion.\r\n"
+      },
+      {
+        "included_lines": [
+          [
+            1,
+            4
+          ]
+        ],
+        "line_range": [
+          1,
+          4
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\checks.py",
+        "references": [
+          "material.review_evidence[1]"
+        ],
+        "representation": "full",
+        "sha256": "36e572082bb4e5847d5f3f604ecd172229638a9e2c2e2d6c92f64d6100fba778",
+        "source_bytes": 110,
+        "source_id": "src-9c17d79fe0ce8a4091cb",
+        "source_lines": 4,
+        "text": "from ordered_rows import ordered_rows\r\n\r\nrows = (\"z\", \"a\", \"m\")\r\nassert len(ordered_rows(rows)) == len(rows)\r\n"
+      },
+      {
+        "included_lines": [
+          [
+            1,
+            6
+          ]
+        ],
+        "line_range": [
+          1,
+          6
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\anchors.json",
+        "references": [
+          "material.review_evidence[2]"
+        ],
+        "representation": "full",
+        "sha256": "305e8d08401ccaea69d32f18127488d038c278ebb4997368a1e3df69a3bbaff8",
+        "source_bytes": 79,
+        "source_id": "src-062d4a7972635173ba3a",
+        "source_lines": 6,
+        "text": "{\r\n  \"ordering_assertion\": {\r\n    \"path\": \"checks.py\",\r\n    \"line\": 2\r\n  }\r\n}\r\n"
+      },
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_qg_fix_run_independent_re0\\review-before.txt",
+        "references": [
+          "preparation.model_context.review.AC-001.evidence",
+          "preparation.model_context.review.AC-002.evidence",
+          "preparation.model_context.review.VC-001.evidence",
+          "preparation.model_context.review.VC-002.evidence"
+        ],
+        "representation": "excerpt",
+        "sha256": "3dac8f5dc2b44ba99037ed46b2b753085f6dd6a16171067bdb810da3e6229dc6",
+        "source_bytes": 213,
+        "source_id": "src-0083d4a2e85a3ae92258",
+        "source_lines": 2,
+        "text": "AC-001 / VC-001 FAIL: checks.py must contain one explicit assertion for input row order.\r\n"
+      }
+    ],
+    "material": {
+      "review_evidence": [
+        "review-before.txt",
+        "checks.py",
+        "anchors.json"
+      ],
+      "review_findings": "F1: Missing ordering assertion. F2: Stale assertion anchor.",
+      "review_requirements": "AC-001: Detect row reordering. AC-002: Cite the ordering assertion at its actual line.",
+      "uncovered_scope": "Application runtime outside the isolated import remains unverified."
+    },
+    "reasons": {
+      "F1": "The existing assertion checks length only.",
+      "F2": "The evidence anchor points at the wrong line."
+    },
+    "references": {
+      "AC-001": {
+        "kind": "acceptance-criterion",
+        "review": {
+          "evidence": "review-before.txt:1",
+          "status": "unmet"
+        },
+        "text": "The check detects reordering of imported rows."
+      },
+      "AC-002": {
+        "kind": "acceptance-criterion",
+        "review": {
+          "evidence": "review-before.txt:1",
+          "status": "unmet"
+        },
+        "text": "The evidence index points to the exact ordering assertion."
+      },
+      "VC-001": {
+        "expected_output": "[VERIFY] ordering",
+        "kind": "verification-criterion",
+        "layer": "L2",
+        "review": {
+          "evidence": "review-before.txt:1",
+          "status": "unmet"
+        },
+        "source_criteria": [
+          "AC-001"
+        ],
+        "text": "Run the check against the implementation and against a reordered mutant."
+      },
+      "VC-002": {
+        "expected_output": "[VERIFY] anchor",
+        "kind": "verification-criterion",
+        "layer": "L2",
+        "review": {
+          "evidence": "review-before.txt:1",
+          "status": "unmet"
+        },
+        "source_criteria": [
+          "AC-002"
+        ],
+        "text": "Resolve the indexed path and line against the actual assertion."
+      }
+    },
+    "terminology": {
+      "AC": "Acceptance criterion: a required delivery outcome.",
+      "FAIL": "A check ran and did not meet its expected condition.",
+      "PM": "Project manager: the current decision owner and result consumer.",
+      "VC": "Verification criterion: the check and its evidence for a requirement."
+    }
+  },
+  "state_digest": "c2aee67b5232af50"
+}

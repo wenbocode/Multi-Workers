@@ -112,6 +112,7 @@ export const TRANSPORT_REASON_CATEGORIES: Readonly<Record<string, FeedbackCatego
 	timeout: "service-unavailable",
 	"rate-limited": "service-unavailable",
 	"upstream-error": "service-unavailable",
+	"transport-unknown": "service-unavailable",
 	"bad-response": "service-unavailable",
 	"input-incomplete": "input-gap",
 	"input-oversize": "input-gap",
@@ -124,6 +125,7 @@ const SERVICE_REQUEST_REASONS: ReadonlySet<string> = new Set([
 	"timeout",
 	"rate-limited",
 	"upstream-error",
+	"transport-unknown",
 	"bad-response",
 ]);
 

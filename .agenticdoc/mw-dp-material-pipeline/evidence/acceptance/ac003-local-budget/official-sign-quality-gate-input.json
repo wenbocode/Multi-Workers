@@ -1,0 +1,254 @@
+{
+  "status": "verified",
+  "conclusion": "pass",
+  "object": "mw-dp-material-pipeline",
+  "scope": {
+    "kind": "whole-key",
+    "criteria": [
+      {
+        "id": "AC-001",
+        "status": "met",
+        "evidence_sha256": "2f6800a7c15720997e6dff242d8803bcb58f26dc0b76341d1a32d7434f9ff99c",
+        "text": "在固定DP或auto准备发送时，候选校验器保留该DP完整业务闭集、QG含pass/fix/reopen、auto含2..5真实不同路径；缺固定项或只剩一个候选时network_attempts=0并返回具体缺项。"
+      },
+      {
+        "id": "AC-002",
+        "status": "met",
+        "evidence_sha256": "496da2992cff5b54adab488fa428b8f9c8e88110b8828c87d759c73271ae1047",
+        "text": "在必要材料含文件引用或超限正文时，实际payload包含所需正文/有来源摘要；仅路径或丢失失败/未知/逐AC覆盖/候选判据时发送次数为0并返回来源级缺口。"
+      },
+      {
+        "id": "AC-003",
+        "status": "met",
+        "evidence_sha256": "b809b408c42da7b8713ecd5ef7da8e8e2bec511065558fb7eac633728453db29",
+        "text": "在 PM 和 Worker 正常决策入口对 desc 应用同一发送前本地预算规则。最多 10 句且本地计数为 1000 时可发送，超过 10 句或本地计数为 1001 时拒绝，决策网络尝试为 0，并给出 desc 字段诊断。计量无需访问 Timi。"
+      },
+      {
+        "id": "AC-004",
+        "status": "met",
+        "evidence_sha256": "496da2992cff5b54adab488fa428b8f9c8e88110b8828c87d759c73271ae1047",
+        "text": "在任意DP完成请求投影时，所有模型可见叶子字段都有来源/变换/发送落点；本地身份、准备日志、actionplan、作者expected均不作为整体state透传。"
+      },
+      {
+        "id": "AC-005",
+        "status": "met",
+        "evidence_sha256": "91f8ceaefa4b778c94a4112a2b405d3336741529d2ede26ce373bcaa0874b24a",
+        "text": "在请求引用AC/VC/发现/工作项/入口、缩写或业务代码时，body内各引用均有当前适用正文或解释；悬空、同ID错对象、冲突定义在发送前检出并给字段路径。"
+      },
+      {
+        "id": "AC-006",
+        "status": "met",
+        "evidence_sha256": "04590b1bacb6dc35cd9b878025bfcc4e0a1ff7302d8d50250ae81c0b6db34981",
+        "text": "在QG缺当前独审/漏AC或sign引用过期、错对象QG时，前提检查返回needs-review/needs-evidence或stale且不形成正式pass/finalize；合法输入逐项保留fail/not-run/unknown及全部未关闭项。"
+      },
+      {
+        "id": "AC-007",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "在prepare工具越序、越范围、换模型未记录或旧revision发布/吸收时，host拒绝动作且产品写入/认领变更/越权读取均为0；合法同版流程从bound到absorbed可回放。"
+      },
+      {
+        "id": "AC-008",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "在auto有n个候选时，可区分性报告覆盖n×(n−1)/2个无序对；缺关键偏好或方案等价分别返回needs-evidence/equivalent，不新增假业务候选或私删合理候选。"
+      },
+      {
+        "id": "AC-009",
+        "status": "met",
+        "evidence_sha256": "98856edb61359406f0986919ad44fb789f529e41c1c3087c8639ace3da2c1058",
+        "text": "在auto路径含循环、无停止、重复次数或全程超原预算时，路径验证/执行前检查拒绝该路径；合法路径每步有条件后继、信息价值、上限和终止出口，原次数余额不增长。"
+      },
+      {
+        "id": "AC-010",
+        "status": "met",
+        "evidence_sha256": "496da2992cff5b54adab488fa428b8f9c8e88110b8828c87d759c73271ae1047",
+        "text": "在收到本次合法fix wire时，按该次revision恢复choice/basis_id及全部finding_ids/remaining_ids；未知wire、错revision、遗漏原因不能产生business_accepted=true。"
+      },
+      {
+        "id": "AC-011",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "在同事项重复准备、仅prepared_at变化、并发提交或已发未获完整响应时，既有去重与账本保持单一原matter，等价请求network_attempts不增加，transport-unknown不盲目补发，原预算无重置。"
+      },
+      {
+        "id": "AC-012",
+        "status": "met",
+        "evidence_sha256": "496da2992cff5b54adab488fa428b8f9c8e88110b8828c87d759c73271ae1047",
+        "text": "在一次请求返回或失败后，记录分别保留本地材料、Request.data原字节、响应原字节/id/usage、解码/业务检查/执行状态；monitor有直接原始返回入口，展示内容与捕获逐字节或等值校验一致。"
+      },
+      {
+        "id": "AC-013",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "在DP关闭/不可用或prepare失败时，原PM/实际Worker沿既有continuity在原权限/预算内接回；新增用户审批数为0，不强制全局等待，不发生PM代Worker或助手代独审。"
+      },
+      {
+        "id": "AC-014",
+        "status": "met",
+        "evidence_sha256": "e0aef786788f6f87b430d2cf18a6eff9ed11ebefcedf27b4d30e4dc9666326bd",
+        "text": "在声明生产接入完成前，全部AC有当前源码/当前spec绑定的必要定向验证和另一执行者独立复核；未运行/失败/历史基线均如实记录，历史合成API实验不能标为本key实现通过。"
+      },
+      {
+        "id": "AC-015",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "[REVISED 2026-11-19 用户澄清] 在提交开发范本时，v0.5全部八DP均可按决策本→实际完整payload→真实原始返回/同版反解→PM参考裁定四段读取；原版八份和优化auto对照共9个唯一案例，四段参考覆盖8/8，原始输入/响应与来源字节一致。"
+      },
+      {
+        "id": "AC-016",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "[REVISED 2026-11-19] 在对比范本时，两个八DP版本组合明确列出，模型ID/usage/来源hash/候选映射不可串版；PM参考解释采纳或退回、保留原因、后续工作/原检查及禁止错误声明，事实变更不被称为同事实confidence提升。"
+      },
+      {
+        "id": "AC-017",
+        "status": "met",
+        "evidence_sha256": "6508643684b6b51ad181c1289fa00852f4cb4a21832b080af6d398c9f023f20b",
+        "text": "[REVISED 2026-11-19 逐项复核] 实现验收须按reference-comparison-contract.md输出9例×4段共36行对比，每行有原件回放和当前实现观测、逐字段基准/当前值或证据指针、规则/结果/差异依据及AC/VC；wire/basis/全部原因严格核对，PM核处置/理由/后续/必要事实/禁止声明。已知QG及旧auto负例检出；缺行、错版、原因丢失、无依据差异、未验证或假执行均不通过。 2026-11-22 澄清：旧 `dp-auto` 历史回执为空时，保存历史缺失事实。第四段验收采用当前 PM 正常入口复跑同一负例后的接回记录。记录须与本次发送前拒绝事件和当前 PM 身份关联，列出具体理由和下一步，核实模型调用为零、业务动作未执行、原权限及余量未扩大。证据齐全时第四段记 `expected-rejection`。"
+      },
+      {
+        "id": "AC-018",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "[REVISED 2026-11-19] 在使用四段范本时，前三段历史保存记录与本次PM参考裁定有明确来源性质；缺失的历史生产PM采纳/派发/writer仍为null/未执行，不补造；本交付不要求新API/新派发，额外真实采集不得作为该范本完成前置。"
+      },
+      {
+        "id": "VC-001",
+        "status": "met",
+        "evidence_sha256": "496da2992cff5b54adab488fa428b8f9c8e88110b8828c87d759c73271ae1047",
+        "text": "当八DP候选校验运行时，fixed_missing=0且auto_count位于2..5；缺项/单候选反例network_attempts=0。"
+      },
+      {
+        "id": "VC-002",
+        "status": "met",
+        "evidence_sha256": "98856edb61359406f0986919ad44fb789f529e41c1c3087c8639ace3da2c1058",
+        "text": "当引用文件和超限正文准备时，required_content_present=true、critical_omissions=0，路径-only反例被拒绝。"
+      },
+      {
+        "id": "VC-003",
+        "status": "met",
+        "evidence_sha256": "9bad839b2373ab49a5b170d01eb85e498269c167b3157336476b3cc531dc882a",
+        "text": "通过 PM 和 Worker 正常入口按 desc-local-v1 本地预计算。10 句和本地计数 1000 的合法样例各发送一次，11 句和本地计数 1001 的样例发送零次，保留字段诊断和本地预算读数。计量不调用 Timi。"
+      },
+      {
+        "id": "VC-004",
+        "status": "met",
+        "evidence_sha256": "496da2992cff5b54adab488fa428b8f9c8e88110b8828c87d759c73271ae1047",
+        "text": "当真实producer投影八DP材料时，untraced_model_fields=0且local_metadata_leaks=0。"
+      },
+      {
+        "id": "VC-005",
+        "status": "met",
+        "evidence_sha256": "d026ae13488e3048ee3f2a79b3f02959caf518c7003a0cbee287020ed42057ce",
+        "text": "当请求解析所有编号/缩写/代码时，unresolved_refs=0；错对象/冲突定义反例发送0次。"
+      },
+      {
+        "id": "VC-006",
+        "status": "met",
+        "evidence_sha256": "206c0e6ab7b641296d222fae2d5a52c2b37907c13122cccc13235db94940bedd",
+        "text": "当QG/sign前提反例运行时，fake_review_accepted=0、stale_qg_finalizes=0、missing_ac=0且未测未被写为pass。"
+      },
+      {
+        "id": "VC-007",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "当prepare越序/越权/旧版/模型换绑反例运行时，invalid_publish_count=0且out_of_scope_effects=0；合法同版可absorbed。"
+      },
+      {
+        "id": "VC-008",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "当n=2和n=5路径输入比较时，pair_counts分别=1/10；缺偏好/等价状态精确为needs-evidence/equivalent。"
+      },
+      {
+        "id": "VC-009",
+        "status": "met",
+        "evidence_sha256": "98856edb61359406f0986919ad44fb789f529e41c1c3087c8639ace3da2c1058",
+        "text": "当循环/重复额度/超预算路径运行时，invalid_path_accepted=0且retry_budget_growth=0，合法路径停止出口齐全。"
+      },
+      {
+        "id": "VC-010",
+        "status": "met",
+        "evidence_sha256": "496da2992cff5b54adab488fa428b8f9c8e88110b8828c87d759c73271ae1047",
+        "text": "当合法fixB和未知/错版wire接回时，原因集合与pair-map逐项一致、wrong_wire_business_accepts=0。"
+      },
+      {
+        "id": "VC-011",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "当重复/并发/时间戳变化/transport-unknown接回时，same_semantics_attempts=1、budget_resets=0、unknown_blind_retries=0。"
+      },
+      {
+        "id": "VC-012",
+        "status": "met",
+        "evidence_sha256": "98856edb61359406f0986919ad44fb789f529e41c1c3087c8639ace3da2c1058",
+        "text": "当真实离线传输和monitor回放时，wire_bytes_equal=true、raw_response_visible=true，未执行状态不被标为executed。"
+      },
+      {
+        "id": "VC-013",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "当关闭/不可用/prepare失败和取消场景接回时，new_user_approvals=0、new_global_waits=0、role_impersonations=0。"
+      },
+      {
+        "id": "VC-014",
+        "status": "met",
+        "evidence_sha256": "98856edb61359406f0986919ad44fb789f529e41c1c3087c8639ace3da2c1058",
+        "text": "当准备最终验收时，全部AC有当前源码证据并经另一执行者复核，缺/失败项不可声明完成。"
+      },
+      {
+        "id": "VC-015",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "当v0.5范本提交/消费时，八DP四段范本齐全，原版与优化auto共9个唯一案例，原始请求/响应与来源字节一致。"
+      },
+      {
+        "id": "VC-016",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "当v0.5范本提交/消费时，两个八DP组合不串版，9份PM参考说明理由/保留原因/后续及禁止声明，优化auto事实变化明确。"
+      },
+      {
+        "id": "VC-017",
+        "status": "met",
+        "evidence_sha256": "496da2992cff5b54adab488fa428b8f9c8e88110b8828c87d759c73271ae1047",
+        "text": "依四段逐项对比合同核9例×4段36行原件/实现对比，字段差异有当前观测及AC依据、全部原因一致、PM语义经复核；缺行/重复/串版/假执行/未验证不得通过。 旧 dp-auto 保留历史回执为 null。用当前 PM 正常入口同案例的拒绝事件和身份绑定校验第四段，核对拒绝理由、接回主体、下一步、零发送和原授权余额。"
+      },
+      {
+        "id": "VC-018",
+        "status": "met",
+        "evidence_sha256": "5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+        "text": "当v0.5范本提交/消费时，前三段历史记录与第四段当前PM参考明确分开，缺历史生产PM/执行回执仍为空，不新调用或伪造。"
+      },
+      {
+        "id": "FLOW-001",
+        "status": "met",
+        "evidence_sha256": "b809b408c42da7b8713ecd5ef7da8e8e2bec511065558fb7eac633728453db29"
+      },
+      {
+        "id": "FLOW-002",
+        "status": "met",
+        "evidence_sha256": "9232c0485bb689a4270264a7e43077c6a33b0dee0ec9a7225265756de6b9402c"
+      },
+      {
+        "id": "FLOW-003",
+        "status": "met",
+        "evidence_sha256": "206c0e6ab7b641296d222fae2d5a52c2b37907c13122cccc13235db94940bedd"
+      }
+    ]
+  },
+  "open_criteria": [],
+  "version": {
+    "contract_sha256": "934bd54d2cc403d2bcf1c62cda5a195bfee644cf121c9b406989115185edf15a",
+    "quality_gate_sha256": "93e23a31b424b7c97e56818a6f2e6f3a8a6f81305a044db159086d3b2b2c7043",
+    "artifact": "evidence/quality-gate-report-ac003-cx-ee474fbc353feb7aba95.md",
+    "publication_sha256": "6b212b31319d078d4d9896713f85e763b51c7f116999649ff967b0269ab55594"
+  },
+  "independent_review": {
+    "run_id": "cx-ee474fbc353feb7aba95@2026-11-22T16:49:12.378Z",
+    "source": "workers/cx-ee474fbc353feb7aba95/report.md",
+    "evidence_sha256": "51c1906d483b69ed645691f71ed2b4950909e9cde74317f2c02646db47157e63"
+  },
+  "meaning": "Use these independently verified outcomes for the current delivery if prepared claims differ. AC means acceptance criterion, VC means verification criterion, and FLOW means function flow."
+}

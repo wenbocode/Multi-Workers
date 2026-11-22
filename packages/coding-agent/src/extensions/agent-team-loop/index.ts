@@ -3,6 +3,11 @@ import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { initiatorRoleFromWorkerTask, registerAskDecisionTool } from "./pm/decision-tool.ts";
 import { registerSubmitDecisionHandoffTool, type SubmitDecisionHostHandle } from "./pm/host-submit.ts";
 import { pmActivate } from "./pm/pm-orchestrator.ts";
+import {
+	registerAbsorbDecisionPreparation,
+	registerRestrictedPrepareWorker,
+	restrictedPrepareEnvelope,
+} from "./pm/prepare-tool.ts";
 import { ProductionRuntimeHost, registerProductionRuntimeEvents } from "./pm/runtime-host-adapter.ts";
 import { registerLocalCodex } from "./shared/codex-local.ts";
 import { registerContextPolicy } from "./shared/context-extension.ts";
@@ -102,6 +107,7 @@ async function compose(pi: ExtensionAPI): Promise<AgentTeamLoopComposition> {
 	registerProductionRuntimeEvents(pi, host, taskPath ? undefined : { pmStage: { projectDir } });
 	let submitHandle: SubmitDecisionHostHandle;
 	if (taskPath) {
+		const prepareEnvelope = restrictedPrepareEnvelope(taskPath);
 		await workerModeActivate(pi, {
 			submitHandle: () => submitHandle,
 			runtimeHost: host,
@@ -112,6 +118,10 @@ async function compose(pi: ExtensionAPI): Promise<AgentTeamLoopComposition> {
 			hostRuntime: host,
 			runtimeHost: host.adapterHooks(),
 		});
+		if (prepareEnvelope !== undefined) {
+			registerRestrictedPrepareWorker(pi, projectDir, taskPath, prepareEnvelope);
+			return { submitHandle, host };
+		}
 		// `ask_decision` + `decision_receipt` (mw-decision-substitution T-05, design
 		// D-017/Q1 §1.3; mw-decision-context T04): ONE shared material entry for
 		// both asking roles. Registered AFTER workerModeActivate so this module's
@@ -124,6 +134,7 @@ async function compose(pi: ExtensionAPI): Promise<AgentTeamLoopComposition> {
 			initiatorRole: initiatorRoleFromWorkerTask(taskPath),
 			submitHandle,
 		});
+		registerAbsorbDecisionPreparation(pi, projectDir);
 	} else {
 		submitHandle = registerSubmitDecisionHandoffTool(pi, {
 			projectDir,
@@ -141,6 +152,7 @@ async function compose(pi: ExtensionAPI): Promise<AgentTeamLoopComposition> {
 			submitHandle,
 			stageSource: () => host.stageIdentity(),
 		});
+		registerAbsorbDecisionPreparation(pi, projectDir);
 	}
 	return { submitHandle, host };
 }

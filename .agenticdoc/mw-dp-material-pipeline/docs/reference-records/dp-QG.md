@@ -1,0 +1,529 @@
+# dp-QG：决策本到PM参考决策
+
+真实回包 `fixB`，confidence=0.64。PM参考裁定：**fixB反解为F1/F2；质量参考为fix，但payload缺reopen须退回补齐候选。**
+
+前三段为已保存的实际输入/真实API返回；第四段为2026-11-19当前会话补写的PM参考裁定，未实际派发/写业务结果，不能冒充原生产PM记录。
+
+机器可校验全记录：[reference-chain.json](dp-QG/reference-chain.json)。原捕获版本：`v0.5-draft`；实际响应ID：`gen-JyIrLOcq7kAB4XTjl30gEIBxHbSV5HCRo0No`。
+
+## 一 本地决策本
+
+完整冻结决策本如下，整体不发送。其actual_capture等字段是发送前冻结时点，不能把not-sent旧值理解为没有后来真实API调用；实际发送/返回看第三段捕获。
+
+```json
+{
+  "schema": "dp-reference-v0.5-draft",
+  "sample_kind": "synthetic-reference",
+  "dp": "dp-QG",
+  "role_scope": "pm",
+  "binding": {
+    "owner_ref": null,
+    "matter_ref": null,
+    "budget_ref": null,
+    "status": "合成参考，无生产身份"
+  },
+  "sources": [
+    {
+      "id": "S1",
+      "label": "当前质量标准",
+      "path": "sources/S1.txt",
+      "sha256": "019f057aaef838b7437a893f356a9ac05fe4e35e8076e55b2cda390610fd8ce3",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    },
+    {
+      "id": "S2",
+      "label": "独立审查与复现实测",
+      "path": "sources/S2.txt",
+      "sha256": "b4335424644f449c28c788b0a2370d09f254363d3e198ab5e63643a816c23a16",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    }
+  ],
+  "field_trace": {
+    "file": "field-trace.json",
+    "note": "真实原件与字段变换留本地；本例源正文见sources/。"
+  },
+  "preparation": {
+    "prepared_at": "由实际准备者/host落盘",
+    "basis_catalog": "见pair-map.json",
+    "material_refs": "每个选项关联本次材料",
+    "applies_to": "本地校验，不能据此裁剪固定候选",
+    "producer": "原PM/实际Worker，或受托prepare Worker起草后由原主体工具吸收"
+  },
+  "pair_map": {
+    "file": "pair-map.json"
+  },
+  "host_exclusions": [
+    {
+      "choice": "reopen",
+      "rule_ref": "decision_points.entry_choice_issues:dp-QG/reopen",
+      "source_ids": [
+        "S1"
+      ],
+      "reason": "合成S1明确无实质标准争议；依现有规则推演排除，不伪造争议。"
+    }
+  ],
+  "execution_plan": {
+    "status": "未制定；选择方向后由原主体按授权准备",
+    "send": false
+  },
+  "expected": {
+    "choices": [
+      "fix"
+    ],
+    "status": "作者参考预期，禁止发给模型"
+  },
+  "actual_capture": {
+    "request": "not-sent-v0.5",
+    "response": "not-observed-v0.5"
+  },
+  "post_checks": "核适用标准完整、真实独审及来源版本；pass须必要证据齐备，fix保留全部已知原因和剩余面，reopen须实质标准问题；不直接写QG产品。",
+  "freeze": {
+    "file": "payload.json",
+    "sha256": "3384f2220388912607c490868eefc7758989f372906ba64d7b2576d6a83e09ae",
+    "bytes": 5288
+  },
+  "desc_preparation": {
+    "sentences": [
+      "本次审核导入事务适配器是否满足重复键无写入和并发顺序两项验收标准。",
+      "本合成示例的独立review已完成对全部AC和关联VC的核对，这不表示AC通过。",
+      "AC-001未满足：VC-001复现了拒绝重复键后仍发生一条写入，对应F1。",
+      "AC-002未验证：VC-002并发检查尚未执行，对应F2。",
+      "依据是同一冻结版本的review矩阵和观测；标准无实质争议，当前问题是质量结论及需处理的范围。"
+    ],
+    "sentence_count": 5,
+    "max_sentences": 10,
+    "max_tokens": 1000,
+    "estimated_tokens": 154,
+    "token_count": null,
+    "meter": "existing-estimator-precheck; target-model exact count not available",
+    "source_note": "从v0.3合成来源归纳；QG/sign增加显式同范围fixture，非当前业务事实",
+    "source_pointers": [
+      "review-fixture.json"
+    ],
+    "sentence_sources": [
+      {
+        "sentence": 1,
+        "sources": [
+          "review-fixture.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 2,
+        "sources": [
+          "review-fixture.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 3,
+        "sources": [
+          "review-fixture.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 4,
+        "sources": [
+          "review-fixture.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 5,
+        "sources": [
+          "review-fixture.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      }
+    ],
+    "claims": "目标/偏差/事件/证据与未知，不写推荐答案"
+  },
+  "review_fixture": {
+    "sample_kind": "synthetic-review-fixture-not-actual-review",
+    "artifact": "导入事务适配器",
+    "version": "demo-import-v04",
+    "reviewer_role": "independent-reviewer-fixture",
+    "review_status": "completed",
+    "covered_ac_ids": [
+      "AC-001",
+      "AC-002"
+    ],
+    "ac_completion": [
+      {
+        "ac_id": "AC-001",
+        "requirement": "拒绝重复键且失败时不写入",
+        "status": "not-met",
+        "vc_results": [
+          {
+            "vc_id": "VC-001",
+            "verification": "重复键拒绝后检查写入数",
+            "status": "fail",
+            "observation": "仍有一条写入",
+            "evidence": "同版本review记录的复现实测"
+          }
+        ],
+        "deviation": "无副作用要求未满足",
+        "finding_ids": [
+          "F1"
+        ]
+      },
+      {
+        "ac_id": "AC-002",
+        "requirement": "并发导入保持规定顺序",
+        "status": "unverified",
+        "vc_results": [
+          {
+            "vc_id": "VC-002",
+            "verification": "并发顺序检查",
+            "status": "not-run",
+            "observation": "尚未执行，review已明确核对这一缺口",
+            "evidence": "同版本review的覆盖说明"
+          }
+        ],
+        "deviation": "尚无并发顺序证据",
+        "finding_ids": [
+          "F2"
+        ]
+      }
+    ],
+    "criteria_dispute": "已核无实质标准争议",
+    "note": "AC/VC为示例逻辑映射，不是新完成的生产review或测试"
+  },
+  "definition_sources": {
+    "AC": "已确认验收正文；本例来自v0.4合成scope",
+    "VC": "项目设计Verification Contract；本例来自v0.4合成review矩阵",
+    "other_refs": "本次来源中的发现/剩余工作/入口职责",
+    "registry": "仅使用当前请求出现的术语，未知项拒绝准备"
+  }
+}
+```
+
+## 二 实际模型输入
+
+完整body等值排版，未删字段。字节原件：[model-input.json](dp-QG/model-input.json)；SHA-256 `3384f2220388912607c490868eefc7758989f372906ba64d7b2576d6a83e09ae`，5288字节。
+
+```json
+{
+  "model": "jev-latest",
+  "state": {
+    "scenario": "合成案例：只评估下列材料并选择，不执行任何业务动作。",
+    "desc": "本次审核导入事务适配器是否满足重复键无写入和并发顺序两项验收标准。本合成示例的独立review已完成对全部AC和关联VC的核对，这不表示AC通过。AC-001未满足：VC-001复现了拒绝重复键后仍发生一条写入，对应F1。AC-002未验证：VC-002并发检查尚未执行，对应F2。依据是同一冻结版本的review矩阵和观测；标准无实质争议，当前问题是质量结论及需处理的范围。",
+    "material": {
+      "review_scope": {
+        "subject": "导入事务适配器",
+        "ac_ids": [
+          "AC-001",
+          "AC-002"
+        ]
+      },
+      "review_summary": {
+        "status": "completed",
+        "coverage": "全部适用AC及其VC已核对；VC-002仍未运行",
+        "independence": "来自示例独立review角色；实际运行须验真实review身份"
+      },
+      "ac_completion": [
+        {
+          "ac_id": "AC-001",
+          "requirement": "拒绝重复键且失败时不写入",
+          "status": "not-met",
+          "vc_results": [
+            {
+              "vc_id": "VC-001",
+              "verification": "重复键拒绝后检查写入数",
+              "status": "fail",
+              "observation": "仍有一条写入",
+              "evidence": "同版本review记录的复现实测"
+            }
+          ],
+          "deviation": "无副作用要求未满足",
+          "finding_ids": [
+            "F1"
+          ]
+        },
+        {
+          "ac_id": "AC-002",
+          "requirement": "并发导入保持规定顺序",
+          "status": "unverified",
+          "vc_results": [
+            {
+              "vc_id": "VC-002",
+              "verification": "并发顺序检查",
+              "status": "not-run",
+              "observation": "尚未执行，review已明确核对这一缺口",
+              "evidence": "同版本review的覆盖说明"
+            }
+          ],
+          "deviation": "尚无并发顺序证据",
+          "finding_ids": [
+            "F2"
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "id": "F1",
+          "ac_id": "AC-001",
+          "status": "open",
+          "observation": "重复键拒绝仍有写入"
+        },
+        {
+          "id": "F2",
+          "ac_id": "AC-002",
+          "status": "open",
+          "observation": "并发顺序未验证"
+        }
+      ]
+    },
+    "references": {
+      "AC-001": {
+        "kind": "acceptance_criterion",
+        "scope": "导入事务适配器",
+        "content": "拒绝重复键且失败时不写入"
+      },
+      "VC-001": {
+        "kind": "verification_contract",
+        "scope": "导入事务适配器",
+        "ac_ids": [
+          "AC-001"
+        ],
+        "content": "重复键拒绝后检查写入数",
+        "expected_result": "拒绝重复键且失败时不写入"
+      },
+      "AC-002": {
+        "kind": "acceptance_criterion",
+        "scope": "导入事务适配器",
+        "content": "并发导入保持规定顺序"
+      },
+      "VC-002": {
+        "kind": "verification_contract",
+        "scope": "导入事务适配器",
+        "ac_ids": [
+          "AC-002"
+        ],
+        "content": "并发顺序检查",
+        "expected_result": "并发导入保持规定顺序"
+      },
+      "F1": {
+        "kind": "review_finding",
+        "scope": "导入事务适配器",
+        "ac_ids": [
+          "AC-001"
+        ],
+        "content": "重复键拒绝仍有写入"
+      },
+      "F2": {
+        "kind": "review_finding",
+        "scope": "导入事务适配器",
+        "ac_ids": [
+          "AC-002"
+        ],
+        "content": "并发顺序未验证"
+      }
+    },
+    "terminology": {
+      "AC": {
+        "full_name": "Acceptance Criterion / Acceptance Criteria",
+        "meaning": "验收标准：已确认的应达到的业务结果；具体编号的完整正文在references中。"
+      },
+      "ID": {
+        "full_name": "Identifier",
+        "meaning": "标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。"
+      },
+      "QG": {
+        "full_name": "Quality Gate",
+        "meaning": "质量门禁/正式质量审核：按已确认验收标准、验证结果和独立审查形成pass/fix/reopen业务结论；不等于模型置信度。"
+      },
+      "VC": {
+        "full_name": "Verification Contract",
+        "meaning": "验证合同/验证项：本项目设计文档规定如何验证关联验收标准、应观察什么结果；具体编号定义在references中。"
+      },
+      "desc": {
+        "full_name": "description",
+        "meaning": "本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+      },
+      "review": {
+        "full_name": "independent review",
+        "meaning": "独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+      },
+      "独审": {
+        "full_name": "独立审查",
+        "meaning": "由与实现/准备角色独立的审查来源核对当前标准、实际证据和未覆盖面，不能以作者自评替代。"
+      },
+      "补证": {
+        "full_name": "补充证据",
+        "meaning": "通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+      }
+    },
+    "enum_meanings": {
+      "completed": "此处所指核对过程已结束，不代表所有验收标准通过。",
+      "fail": "该验证实际失败。",
+      "fix": "有明确产物缺陷或证据缺口，需修复/补证后复核。",
+      "not-met": "验收标准已确认未满足。",
+      "not-run": "这条验证尚未执行，不能填通过。",
+      "open": "该发现或缺口尚未关闭。",
+      "pass": "在当前检查/审核上下文满足要求；不能由局部检查扩大为整体验收。",
+      "unverified": "验收标准尚无足够验证，不能当作完成。"
+    }
+  },
+  "questions": {
+    "decision_selection": {
+      "type": "choice",
+      "instructions": "按当前适用标准，受审产物应pass、fix还是reopen？ 只根据本次材料选择一个候选ID；选项是条件式判据，不是条件已成立的事实。不要输出额外原因或执行动作。",
+      "criteria": {
+        "passA": "pass：全部适用AC满足且VC和独审证据充分、无未覆盖面时通过；不能忽略当前失败和未验证项。",
+        "fixA": "fix：先处理F1并复评F2，保留AC-002未验证状态；不表示全范围质量已关闭。",
+        "fixB": "fix：处理F1和F2，即修复重复键写入并补并发检查，再对照AC/VC独立复核。"
+      }
+    }
+  }
+}
+```
+
+## 三 模型原始返回与反解
+
+原文直接取自response字节，非预计响应。原件：[model-return.raw.json](dp-QG/model-return.raw.json)。
+
+```json
+{"model": "jev-latest", "answers": {"decision_selection": {"type": "choice", "choice": "fixB", "confidence": 0.64, "probabilities": {"fixA": 0.24, "fixB": 0.76, "passA": 0.0}}}, "usage": {"input_tokens": 2433, "output_tokens": 43, "cached_tokens": 0, "cache_write_tokens": 0}, "id": "gen-JyIrLOcq7kAB4XTjl30gEIBxHbSV5HCRo0No"}
+```
+
+实际官方解码、本地配对和当时未执行的host检查：
+
+```json
+{
+  "official_decode": {
+    "valid": true,
+    "error": "",
+    "answers": {
+      "decision_selection": {
+        "value": "fixB",
+        "confidence": 0.64,
+        "probabilities": {
+          "fixA": 0.24,
+          "fixB": 0.76,
+          "passA": 0.0
+        }
+      }
+    }
+  },
+  "local_decode": {
+    "valid": true,
+    "wire_id": "fixB",
+    "choice": "fix",
+    "basis_id": "fixB-basis",
+    "finding_ids": [
+      "F1",
+      "F2"
+    ],
+    "remaining_ids": [],
+    "confidence": 0.64,
+    "probabilities": {
+      "fixA": 0.24,
+      "fixB": 0.76,
+      "passA": 0.0
+    },
+    "expected_match": true,
+    "confidence_policy": "not-evaluated-for-business",
+    "executed": false
+  },
+  "host_checks": "not-executed: synthetic reference, no real business owner/authorization",
+  "http_status": 200,
+  "usage": {
+    "input_tokens": 2433,
+    "output_tokens": 43,
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "request_sha256": "3384f2220388912607c490868eefc7758989f372906ba64d7b2576d6a83e09ae",
+  "response_sha256": "a518ccee792c9a4dea13c99f0361f3d25288513c966c2329d8caf20010e45321"
+}
+```
+
+## 四 PM参考决策与开发校验
+
+以下是当前PM基于上述材料/真实回包补写的参考接回，不是历史生产执行回执。语义采纳、材料退回、后续安排和实际执行明确分开。
+
+```json
+{
+  "record_kind": "current_session_pm_reference_adjudication",
+  "recorded_on": "2026-11-19",
+  "author": "Codex PM 当前设计整理会话",
+  "historical_runtime_pm_record": null,
+  "scope": "针对所列真实API回包的离线PM参考裁定；不是原生产窗口已采纳/执行的记录",
+  "model_wire_id": "fixB",
+  "decoded_choice": "fix",
+  "basis_id": "fixB-basis",
+  "finding_ids": [
+    "F1",
+    "F2"
+  ],
+  "remaining_ids": [],
+  "summary": "fixB反解为F1/F2；质量参考为fix，但payload缺reopen须退回补齐候选。",
+  "disposition": "return-material-for-fixed-choice-coverage",
+  "reasoning": [
+    "AC-001 not-met/VC-001 fail，F1为拒绝后仍写入；AC-002 unverified/VC-002 not-run，F2为并发顺序未验证。",
+    "fixB确实覆盖F1/F2且remaining_ids为空，但这只表示选中原因集合，不表示修复或验收已完成。",
+    "历史实际criteria缺reopen，不能把该请求当当前固定闭集合规发送正例；保留为映射正例和候选缺项负例。"
+  ],
+  "follow_up": [
+    "材料先补reopen条件判据并重验；旧请求/回包不改写，也不套到新请求。",
+    "以F1/F2作为参考修复范围：修复重复键副作用、补并发顺序验证，再对同范围AC/VC独立复核。",
+    "本范本不写正式QG产品、不实际派修复卡；原主体仍须真实review/权限/版本/预算检查。"
+  ],
+  "must_preserve": [
+    "F1与F2全部原因",
+    "AC-002未验证、VC-002未运行",
+    "QG固定候选缺reopen这一已知缺口"
+  ],
+  "must_not_claim": [
+    "当前质量通过",
+    "F1/F2已修复",
+    "旧请求满足全部当前发送规则"
+  ],
+  "pending_real_host_checks": [
+    "原真实owner/matter/run与对象版本",
+    "原权限/取消/停止和当前余额",
+    "该DP必要独审/业务writer前提"
+  ],
+  "runtime_business_acceptance": null,
+  "actual_dispatch_run_ids": [],
+  "actual_business_receipt": null,
+  "production_executed": false
+}
+```
+
+开发预期：wire/全部原因严格按原件校验；PM文本按保留事实、禁止错误声明和参考处置校验，不要求自然语言逐字相同。已知缺陷是负例，不冻结成正确实现。
+
+```json
+{
+  "record_scope": "reference-check-vectors-not-production-receipt",
+  "expected_wire": "fixB",
+  "expected_business_choice": "fix",
+  "expected_basis_id": "fixB-basis",
+  "expected_finding_ids": [
+    "F1",
+    "F2"
+  ],
+  "expected_remaining_ids": [],
+  "expected_pm_disposition": "return-material-for-fixed-choice-coverage",
+  "required_pm_facts": [
+    "F1与F2全部原因",
+    "AC-002未验证、VC-002未运行",
+    "QG固定候选缺reopen这一已知缺口"
+  ],
+  "forbidden_pm_claims": [
+    "当前质量通过",
+    "F1/F2已修复",
+    "旧请求满足全部当前发送规则"
+  ],
+  "original_request_bytes_must_remain_identical": true,
+  "historical_response_must_not_be_applied_to_changed_payload": true,
+  "known_material_failures": [
+    "missing-fixed-choice:reopen"
+  ],
+  "must_not_assume_actual_execution": true
+}
+```

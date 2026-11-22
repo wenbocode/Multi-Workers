@@ -1,0 +1,33 @@
+{
+  "case_id": "dp-pm-steer",
+  "dp": "dp-pm-steer",
+  "decision_id": "dp-pm-steer:current-receipt-1",
+  "call_id": "99b50a00bbd64638989d13a951210233",
+  "writer": "mw decide lifecycle",
+  "normalized": {
+    "choice": "split",
+    "basis_id": "splitA-basis",
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  "desc_measurement": {
+    "local_budget": {
+      "rule": "desc-local-v1",
+      "count": 43,
+      "limit": 1000,
+      "passed": true
+    },
+    "estimated_tokens": 43,
+    "exact_count": null,
+    "exact_limit_passed": null
+  },
+  "choice": "split",
+  "basis_id": "splitA-basis",
+  "observed": null,
+  "pm_reason": "Adopt split as a planning direction. W1 and W2 are unfinished and write distinct tests with a shared interface. 18 plus 18 worker minutes leaves 14 of 50 before independent review. Recheck review cost, roles and scope before preparing the two cards. No dispatch.",
+  "consumer_role": "pm",
+  "receipts": {
+    "consumed": "c3033f91b2144b7495e7c15265730be9",
+    "settled": "settlement-dp-pm-steer"
+  }
+}

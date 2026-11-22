@@ -1,0 +1,384 @@
+{
+  "status": "incomplete",
+  "comparison": "evidence/acceptance/ac003-local-budget/v05-four-stage-comparison.json",
+  "spec_sha256": "44658e3f68adb97d1987e8fc809badc1822a28202c941fd7bf83b5db48a5a662",
+  "source_head": "5216ae70167ebaa497491cf6bacc685948d4213a",
+  "source_file_sha256": {
+    "packages/multi-workers/mw.py": "06da530383ecb7f2be58be6a3a9482a4b011813ce479f85180f6b9b5b71a0186",
+    "packages/multi-workers/decision_lifecycle.py": "0ee691daf029846f67992f9f87c4097b7119cb02974c4c2560ae75a0141738cf",
+    "packages/multi-workers/decision.py": "ef78881f67732051e918eb28b45d11bacd42ac0471740b269be61f117da65d5c",
+    "packages/multi-workers/decision_points.py": "bcdf745d352aac3a7b9586e00c2e424253ca0cced2e4798088eb366a9669439a",
+    "packages/multi-workers/decision_model_context.py": "afa3c00fd09c651077a5bb45d1997227edce687663320ece794f8d39fc9fd7a2",
+    "packages/multi-workers/decision_backends.py": "3bf3c557933af986c1612e7dd40dd51b457aa03282d6d836b2856bb964a44502",
+    "packages/multi-workers/decision_material_sources.py": "8b5565724580aa39c8612e1e3e6809c96b3ce1f263945b751cab9d0f6dde08db",
+    "packages/multi-workers/decision_book.py": "ce47d1bd6cd27a7e28e6f2e90c6ae54e216b3b24ba781de2a5d83e1cd365bf06",
+    "packages/multi-workers/decision_playground.py": "c002f748a4297a18363bd27bbe729d23d4bf06053e018691f451264db72f1448",
+    "packages/multi-workers/decision_file_evidence.py": "c0541cdf1cb470b0b5fc9e92f9bc821b055007e8257b8f3e6286975f32c7a90e",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts": "61d77a45e9384bb34c5300ccb0b5a4748c0b3c79e7f3e80d31707be2bb6d4ecb",
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-policy.ts": "138137beb1c40d64ce4ab6eb6a1561eac0969a5aad683000f2ea64d3b5372e66",
+    "packages/multi-workers/decision_wire.py": "c2f1d796c41987f66c064de1c4699c9bf9ca3902e40e414d6bc69e695d336f36",
+    "packages/multi-workers/test/test_dp_material_pipeline_l2.py": "960c7a583f46bb5c30b839370b9e8fef73958240e19211c1ff7d53de9c7dcada",
+    "packages/multi-workers/autopilot/conductor.py": "a65621f3754c2defc9665e90cea265e14bc3fdd5df0e91f94d2700e28e89f668",
+    "packages/multi-workers/autopilot/contract_guard.py": "25e6a0c7a960225152a92612c8e60f817d01bf16640239dfeb720eac7116b104",
+    "packages/multi-workers/codex_pm.py": "c42992cde9b172323827bd0ed0cd9d8c9e7bb0b6102f2ec228c7b430ad91e1b4",
+    "packages/multi-workers/codex_dispatch.mjs": "8a6f553ad3121f8a8453666ec27fbcc7dc27133dfe48065f58e7c1246e91c61e",
+    "packages/multi-workers/decision_prepare.py": "2dfb542edbd00f687954a075f00f7c2f1411d10e53f456596cc8e5b11165c09f",
+    "packages/multi-workers/decision_signoff_result.py": "a1e025cb8a0047a7151a8336fbf09c829aa2a8b9f998dfe9972c769df76ff56f",
+    "packages/multi-workers/decision_source_scope.py": "d34f989209c46b0d9d2b1a7e03eb7ecec2b4c7949ba388d2ecd6134fe7f5b0df",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/prepare-tool.ts": "614ab6e610e1d8dd11221a0337a20a201aa9d30ef953381020c0e6636f0ee1df",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts": "72d51cd0a191a7dd18bbc349d8a7dee7d836c5bd39642bcde000f5a8e9d35930",
+    "packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts": "b6226b4fb69b4893f30a649e142951e8fcd7c92c0161d332ba8e44e200b7a56c"
+  },
+  "integration": {
+    "log": "evidence/acceptance/ac003-local-budget/integration.log",
+    "cases": {
+      "dp-w-type": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-w-type/manifest.json",
+      "dp-pm-steer": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-pm-steer/manifest.json",
+      "dp-w-check-task": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-w-check-task/manifest.json",
+      "dp-auto-optimized": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-auto-optimized/manifest.json",
+      "dp-auto-original": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-auto-original/manifest.json",
+      "dp-route": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-route/manifest.json",
+      "dp-QG": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-QG/manifest.json",
+      "dp-gate-approve": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-gate-approve/manifest.json",
+      "dp-sign-key": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-sign-key/manifest.json"
+    }
+  },
+  "supplemental_runs": {
+    "dp-gate-approve": "evidence/acceptance/ac003-local-budget/supplements-v05-lineage/dp-gate-approve/manifest.json",
+    "dp-QG": "evidence/acceptance/ac003-local-budget/supplements-v05-lineage/dp-QG/manifest.json"
+  },
+  "independent_review": "evidence/acceptance/ac003-local-budget/independent-qg-review.md",
+  "ac_observations": {
+    "AC-001": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/decision_book",
+        "dp-w-type/model_input",
+        "dp-pm-steer/decision_book",
+        "dp-pm-steer/model_input",
+        "dp-w-check-task/decision_book",
+        "dp-w-check-task/model_input",
+        "dp-QG/decision_book",
+        "dp-QG/model_input",
+        "dp-gate-approve/decision_book",
+        "dp-gate-approve/model_input",
+        "dp-sign-key/decision_book",
+        "dp-sign-key/model_input",
+        "dp-auto-original/decision_book",
+        "dp-auto-original/model_input",
+        "dp-route/decision_book",
+        "dp-route/model_input",
+        "dp-auto-optimized/decision_book",
+        "dp-auto-optimized/model_input"
+      ]
+    },
+    "AC-002": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/decision_book",
+        "dp-w-type/model_input",
+        "dp-pm-steer/decision_book",
+        "dp-pm-steer/model_input",
+        "dp-w-check-task/decision_book",
+        "dp-w-check-task/model_input",
+        "dp-QG/decision_book",
+        "dp-QG/model_input",
+        "dp-gate-approve/decision_book",
+        "dp-gate-approve/model_input",
+        "dp-sign-key/decision_book",
+        "dp-sign-key/model_input",
+        "dp-auto-original/decision_book",
+        "dp-auto-original/model_input",
+        "dp-route/decision_book",
+        "dp-route/model_input",
+        "dp-auto-optimized/decision_book",
+        "dp-auto-optimized/model_input"
+      ]
+    },
+    "AC-003": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/model_input",
+        "dp-pm-steer/model_input",
+        "dp-w-check-task/model_input",
+        "dp-QG/model_input",
+        "dp-gate-approve/model_input",
+        "dp-sign-key/model_input",
+        "dp-auto-original/model_input",
+        "dp-route/model_input",
+        "dp-auto-optimized/model_input"
+      ]
+    },
+    "AC-004": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/decision_book",
+        "dp-w-type/model_input",
+        "dp-pm-steer/decision_book",
+        "dp-pm-steer/model_input",
+        "dp-w-check-task/decision_book",
+        "dp-w-check-task/model_input",
+        "dp-QG/decision_book",
+        "dp-QG/model_input",
+        "dp-gate-approve/decision_book",
+        "dp-gate-approve/model_input",
+        "dp-sign-key/decision_book",
+        "dp-sign-key/model_input",
+        "dp-auto-original/decision_book",
+        "dp-auto-original/model_input",
+        "dp-route/decision_book",
+        "dp-route/model_input",
+        "dp-auto-optimized/decision_book",
+        "dp-auto-optimized/model_input"
+      ]
+    },
+    "AC-005": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/model_input",
+        "dp-pm-steer/model_input",
+        "dp-w-check-task/model_input",
+        "dp-QG/model_input",
+        "dp-gate-approve/model_input",
+        "dp-sign-key/model_input",
+        "dp-auto-original/model_input",
+        "dp-route/model_input",
+        "dp-auto-optimized/model_input"
+      ]
+    },
+    "AC-006": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/model_input",
+        "dp-w-type/pm_decision",
+        "dp-pm-steer/model_input",
+        "dp-pm-steer/pm_decision",
+        "dp-w-check-task/model_input",
+        "dp-w-check-task/pm_decision",
+        "dp-QG/model_input",
+        "dp-QG/pm_decision",
+        "dp-gate-approve/model_input",
+        "dp-gate-approve/pm_decision",
+        "dp-sign-key/model_input",
+        "dp-sign-key/pm_decision",
+        "dp-auto-original/model_input",
+        "dp-auto-original/pm_decision",
+        "dp-route/model_input",
+        "dp-route/pm_decision",
+        "dp-auto-optimized/model_input",
+        "dp-auto-optimized/pm_decision"
+      ]
+    },
+    "AC-007": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/decision_book",
+        "dp-pm-steer/decision_book",
+        "dp-w-check-task/decision_book",
+        "dp-QG/decision_book",
+        "dp-gate-approve/decision_book",
+        "dp-sign-key/decision_book",
+        "dp-auto-original/decision_book",
+        "dp-route/decision_book",
+        "dp-auto-optimized/decision_book"
+      ]
+    },
+    "AC-008": {
+      "status": "not-signed-off",
+      "related_rows": []
+    },
+    "AC-009": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/pm_decision",
+        "dp-pm-steer/pm_decision",
+        "dp-w-check-task/pm_decision",
+        "dp-QG/pm_decision",
+        "dp-gate-approve/pm_decision",
+        "dp-sign-key/pm_decision",
+        "dp-auto-original/pm_decision",
+        "dp-route/pm_decision",
+        "dp-auto-optimized/pm_decision"
+      ]
+    },
+    "AC-010": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/model_return",
+        "dp-pm-steer/model_return",
+        "dp-w-check-task/model_return",
+        "dp-QG/model_return",
+        "dp-gate-approve/model_return",
+        "dp-sign-key/model_return",
+        "dp-auto-original/model_return",
+        "dp-route/model_return",
+        "dp-auto-optimized/model_return"
+      ]
+    },
+    "AC-011": {
+      "status": "not-signed-off",
+      "related_rows": []
+    },
+    "AC-012": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/model_return",
+        "dp-w-type/pm_decision",
+        "dp-pm-steer/model_return",
+        "dp-pm-steer/pm_decision",
+        "dp-w-check-task/model_return",
+        "dp-w-check-task/pm_decision",
+        "dp-QG/model_return",
+        "dp-QG/pm_decision",
+        "dp-gate-approve/model_return",
+        "dp-gate-approve/pm_decision",
+        "dp-sign-key/model_return",
+        "dp-sign-key/pm_decision",
+        "dp-auto-original/model_return",
+        "dp-auto-original/pm_decision",
+        "dp-route/model_return",
+        "dp-route/pm_decision",
+        "dp-auto-optimized/model_return",
+        "dp-auto-optimized/pm_decision"
+      ]
+    },
+    "AC-013": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/pm_decision",
+        "dp-pm-steer/pm_decision",
+        "dp-w-check-task/pm_decision",
+        "dp-QG/pm_decision",
+        "dp-gate-approve/pm_decision",
+        "dp-sign-key/pm_decision",
+        "dp-auto-original/pm_decision",
+        "dp-route/pm_decision",
+        "dp-auto-optimized/pm_decision"
+      ]
+    },
+    "AC-014": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/pm_decision",
+        "dp-pm-steer/pm_decision",
+        "dp-w-check-task/pm_decision",
+        "dp-QG/pm_decision",
+        "dp-gate-approve/pm_decision",
+        "dp-sign-key/pm_decision",
+        "dp-auto-original/pm_decision",
+        "dp-route/pm_decision",
+        "dp-auto-optimized/pm_decision"
+      ]
+    },
+    "AC-015": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/decision_book",
+        "dp-w-type/model_input",
+        "dp-w-type/model_return",
+        "dp-pm-steer/decision_book",
+        "dp-pm-steer/model_input",
+        "dp-pm-steer/model_return",
+        "dp-w-check-task/decision_book",
+        "dp-w-check-task/model_input",
+        "dp-w-check-task/model_return",
+        "dp-QG/decision_book",
+        "dp-QG/model_input",
+        "dp-QG/model_return",
+        "dp-gate-approve/decision_book",
+        "dp-gate-approve/model_input",
+        "dp-gate-approve/model_return",
+        "dp-sign-key/decision_book",
+        "dp-sign-key/model_input",
+        "dp-sign-key/model_return",
+        "dp-auto-original/decision_book",
+        "dp-auto-original/model_input",
+        "dp-auto-original/model_return",
+        "dp-route/decision_book",
+        "dp-route/model_input",
+        "dp-route/model_return",
+        "dp-auto-optimized/decision_book",
+        "dp-auto-optimized/model_input",
+        "dp-auto-optimized/model_return"
+      ]
+    },
+    "AC-016": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/model_return",
+        "dp-w-type/pm_decision",
+        "dp-pm-steer/model_return",
+        "dp-pm-steer/pm_decision",
+        "dp-w-check-task/model_return",
+        "dp-w-check-task/pm_decision",
+        "dp-QG/model_return",
+        "dp-QG/pm_decision",
+        "dp-gate-approve/model_return",
+        "dp-gate-approve/pm_decision",
+        "dp-sign-key/model_return",
+        "dp-sign-key/pm_decision",
+        "dp-auto-original/model_return",
+        "dp-auto-original/pm_decision",
+        "dp-route/model_return",
+        "dp-route/pm_decision",
+        "dp-auto-optimized/model_return",
+        "dp-auto-optimized/pm_decision"
+      ]
+    },
+    "AC-017": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/decision_book",
+        "dp-w-type/model_input",
+        "dp-w-type/model_return",
+        "dp-w-type/pm_decision",
+        "dp-pm-steer/decision_book",
+        "dp-pm-steer/model_input",
+        "dp-pm-steer/model_return",
+        "dp-pm-steer/pm_decision",
+        "dp-w-check-task/decision_book",
+        "dp-w-check-task/model_input",
+        "dp-w-check-task/model_return",
+        "dp-w-check-task/pm_decision",
+        "dp-QG/decision_book",
+        "dp-QG/model_input",
+        "dp-QG/model_return",
+        "dp-QG/pm_decision",
+        "dp-gate-approve/decision_book",
+        "dp-gate-approve/model_input",
+        "dp-gate-approve/model_return",
+        "dp-gate-approve/pm_decision",
+        "dp-sign-key/decision_book",
+        "dp-sign-key/model_input",
+        "dp-sign-key/model_return",
+        "dp-sign-key/pm_decision",
+        "dp-auto-original/decision_book",
+        "dp-auto-original/model_input",
+        "dp-auto-original/model_return",
+        "dp-auto-original/pm_decision",
+        "dp-route/decision_book",
+        "dp-route/model_input",
+        "dp-route/model_return",
+        "dp-route/pm_decision",
+        "dp-auto-optimized/decision_book",
+        "dp-auto-optimized/model_input",
+        "dp-auto-optimized/model_return",
+        "dp-auto-optimized/pm_decision"
+      ]
+    },
+    "AC-018": {
+      "status": "not-signed-off",
+      "related_rows": [
+        "dp-w-type/pm_decision",
+        "dp-pm-steer/pm_decision",
+        "dp-w-check-task/pm_decision",
+        "dp-QG/pm_decision",
+        "dp-gate-approve/pm_decision",
+        "dp-sign-key/pm_decision",
+        "dp-auto-original/pm_decision",
+        "dp-route/pm_decision",
+        "dp-auto-optimized/pm_decision"
+      ]
+    }
+  }
+}

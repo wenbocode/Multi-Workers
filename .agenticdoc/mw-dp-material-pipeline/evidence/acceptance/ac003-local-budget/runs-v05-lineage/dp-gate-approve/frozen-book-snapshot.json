@@ -1,0 +1,536 @@
+{
+  "candidates": {
+    "decision_selection": [
+      {
+        "id": "approveA",
+        "label": "结论 approve: 满足本 gate 条件，按 note 中的受限动作继续或收尾\n依据 approveA-basis: approve：当前计划满足C1/C2且仍在原权限/预算内时批准该限定动作。"
+      },
+      {
+        "id": "steerA",
+        "label": "结论 steer: 任务组织/主线/拆分/执行主体需调整，交 PM 发起 dp-pm-steer\n依据 steerA-basis: steer：若问题在组织/执行安排，交PM重排，不扩大当前动作范围。"
+      },
+      {
+        "id": "need_fixA",
+        "label": "结论 need_fix: 推进方式基本明确但有具体技术/材料缺口，交 PM 发起 dp-auto\n依据 needFixA-basis: need_fix：若安排明确但存在技术/材料缺口，交PM形成具体修复。"
+      },
+      {
+        "id": "rejectA",
+        "label": "结论 reject: 拒绝本次推进方案；只有 note 另有明确获授权遗留方案才按其收尾\n依据 rejectA-basis: reject：若计划不应推进则拒绝；仅允许原授权的证据整理。"
+      }
+    ]
+  },
+  "decision_id": "dp-gate-approve:v05-original-scope",
+  "dp": "dp-gate-approve",
+  "field_trace": {
+    "fields": {
+      "/model": {
+        "sources": [
+          "transport:resolved_model"
+        ],
+        "transform": "resolve-config"
+      },
+      "/questions/decision_selection/criteria/approveA": {
+        "sources": [
+          "book:/preparation/basis_catalog/0",
+          "registry:dp-gate-approve/gate_decision/labels/approve"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/need_fixA": {
+        "sources": [
+          "book:/preparation/basis_catalog/2",
+          "registry:dp-gate-approve/gate_decision/labels/need_fix"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/rejectA": {
+        "sources": [
+          "book:/preparation/basis_catalog/3",
+          "registry:dp-gate-approve/gate_decision/labels/reject"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/steerA": {
+        "sources": [
+          "book:/preparation/basis_catalog/1",
+          "registry:dp-gate-approve/gate_decision/labels/steer"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/instructions": {
+        "sources": [
+          "registry:dp-gate-approve/instructions",
+          "registry:prepared_basis_instructions"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/questions/decision_selection/type": {
+        "sources": [
+          "registry:dp-gate-approve/protocol"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/state/desc/0": {
+        "sources": [
+          "book:/preparation/model_context/desc/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/1": {
+        "sources": [
+          "book:/preparation/model_context/desc/1"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/2": {
+        "sources": [
+          "book:/preparation/model_context/desc/2"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/approve": {
+        "sources": [
+          "registry:dp-gate-approve/gate_decision/labels/approve"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/known": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/known"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/need_fix": {
+        "sources": [
+          "registry:dp-gate-approve/gate_decision/labels/need_fix"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/pass": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/pass"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/reject": {
+        "sources": [
+          "registry:dp-gate-approve/gate_decision/labels/reject"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/steer": {
+        "sources": [
+          "registry:dp-gate-approve/gate_decision/labels/steer"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/evidence_sources/0": {
+        "sources": [
+          "source:src-1ed2b7426307247ad384",
+          "material.condition_evidence[0]",
+          "material.pm_note.basis.evidence"
+        ],
+        "transform": "full"
+      },
+      "/state/evidence_sources/1": {
+        "sources": [
+          "source:src-f69d1ac638425075fe7a",
+          "preparation.model_context.references.C1.path"
+        ],
+        "transform": "full"
+      },
+      "/state/evidence_sources/2": {
+        "sources": [
+          "source:src-8c88dcda438c35a02f2b",
+          "preparation.model_context.references.C2.path"
+        ],
+        "transform": "full"
+      },
+      "/state/material/condition_evidence/0": {
+        "sources": [
+          "book:/material/condition_evidence/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/current_state": {
+        "sources": [
+          "book:/material/current_state"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/gate_background": {
+        "sources": [
+          "book:/material/gate_background"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/pm_note/basis/authority": {
+        "sources": [
+          "book:/material/pm_note/basis/authority"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/pm_note/basis/budget": {
+        "sources": [
+          "book:/material/pm_note/basis/budget"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/pm_note/basis/evidence": {
+        "sources": [
+          "book:/material/pm_note/basis/evidence"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/pm_note/basis/goal": {
+        "sources": [
+          "book:/material/pm_note/basis/goal"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/pm_note/planned_action": {
+        "sources": [
+          "book:/material/pm_note/planned_action"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/pm_note/subject": {
+        "sources": [
+          "book:/material/pm_note/subject"
+        ],
+        "transform": "copy"
+      },
+      "/state/references/C1": {
+        "sources": [
+          "book:/preparation/model_context/references/C1",
+          "source:src-f69d1ac638425075fe7a"
+        ],
+        "transform": "file-reference"
+      },
+      "/state/references/C2": {
+        "sources": [
+          "book:/preparation/model_context/references/C2",
+          "source:src-8c88dcda438c35a02f2b"
+        ],
+        "transform": "file-reference"
+      },
+      "/state/terminology/ID": {
+        "sources": [
+          "book:/preparation/model_context/terminology/ID"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/PM": {
+        "sources": [
+          "book:/preparation/model_context/terminology/PM"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/desc": {
+        "sources": [
+          "book:/preparation/model_context/terminology/desc"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/gate": {
+        "sources": [
+          "book:/preparation/model_context/terminology/gate"
+        ],
+        "transform": "copy"
+      }
+    },
+    "local_only": [
+      "/meta",
+      "/notes",
+      "/preparation/prepared_at",
+      "/preparation/basis_catalog"
+    ]
+  },
+  "file_evidence": [
+    {
+      "canonical_path": null,
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_original_quality_and_gate1\\.agenticdoc\\target.yml",
+      "sha256": null,
+      "status": "missing"
+    },
+    {
+      "canonical_path": null,
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_original_quality_and_gate1\\.mw\\decision-evidence.yml",
+      "sha256": null,
+      "status": "missing"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_original_quality_and_gate1\\replay-plan.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_original_quality_and_gate1\\replay-plan.txt",
+      "sha256": "cf5d5a5bcd7bb53f9cc0b0b6ddbf5f88fe3ba1b601829bc4cd6b54964518a1c4"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_original_quality_and_gate1\\v05-reference-C1.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_original_quality_and_gate1\\v05-reference-C1.txt",
+      "sha256": "a8403f2e8a625968b6756bc14c27176ec36e66421dd0816c18f218a087c51d08"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_original_quality_and_gate1\\v05-reference-C2.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_original_quality_and_gate1\\v05-reference-C2.txt",
+      "sha256": "dc6f8ff3144e0097c055f5922b3b3577aea0640fdadfd49e473557ea9f6c5bd7"
+    }
+  ],
+  "kind": "input-state",
+  "local_preparation": {
+    "basis_catalog": [
+      {
+        "applies_to": [
+          "approve"
+        ],
+        "finding_ids": [],
+        "id": "approveA-basis",
+        "material_refs": [
+          "condition_evidence"
+        ],
+        "remaining_ids": [],
+        "text": "approve：当前计划满足C1/C2且仍在原权限/预算内时批准该限定动作。"
+      },
+      {
+        "applies_to": [
+          "steer"
+        ],
+        "finding_ids": [],
+        "id": "steerA-basis",
+        "material_refs": [
+          "condition_evidence"
+        ],
+        "remaining_ids": [],
+        "text": "steer：若问题在组织/执行安排，交PM重排，不扩大当前动作范围。"
+      },
+      {
+        "applies_to": [
+          "need_fix"
+        ],
+        "finding_ids": [],
+        "id": "needFixA-basis",
+        "material_refs": [
+          "condition_evidence"
+        ],
+        "remaining_ids": [],
+        "text": "need_fix：若安排明确但存在技术/材料缺口，交PM形成具体修复。"
+      },
+      {
+        "applies_to": [
+          "reject"
+        ],
+        "finding_ids": [],
+        "id": "rejectA-basis",
+        "material_refs": [
+          "condition_evidence"
+        ],
+        "remaining_ids": [],
+        "text": "reject：若计划不应推进则拒绝；仅允许原授权的证据整理。"
+      }
+    ],
+    "model_context": {
+      "desc": [
+        "Compare the gate conditions for one frozen replay.",
+        "The fixture records read-only mode and complete diff retention.",
+        "Verify actual remaining authorization and budget before any execution."
+      ],
+      "enum_meanings": {
+        "approve": "既有准入条件允许当前限定动作。",
+        "known": "对应约束或条件已由本次来源确认。",
+        "need_fix": "推进安排明确，但存在具体技术或材料缺口。",
+        "pass": "在当前检查/审核上下文满足要求；不能由局部检查扩大为整体验收。",
+        "reject": "拒绝当前推进方案，不隐含额外清理/写权限。",
+        "steer": "组织安排需由管理Agent调整。"
+      },
+      "references": {
+        "C1": {
+          "kind": "gate_condition",
+          "lines": {
+            "end": 1,
+            "start": 1
+          },
+          "path": "v05-reference-C1.txt"
+        },
+        "C2": {
+          "kind": "gate_condition",
+          "lines": {
+            "end": 1,
+            "start": 1
+          },
+          "path": "v05-reference-C2.txt"
+        }
+      },
+      "terminology": {
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "PM": "Project Manager agent: 管理当前项目事项、组织任务并回收证据的项目管理Agent；不能冒充实际执行者或独立审查者。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "gate": "execution gate: 已有执行准入门，核本次具体动作是否满足既有条件和权限。"
+      }
+    },
+    "prepared_at": "2026-11-08T10:00:00+00:00"
+  },
+  "pair_map": {
+    "approveA": {
+      "basis_id": "approveA-basis",
+      "basis_text": "approve：当前计划满足C1/C2且仍在原权限/预算内时批准该限定动作。",
+      "choice": "approve",
+      "choice_label": "满足本 gate 条件，按 note 中的受限动作继续或收尾",
+      "choice_label_source": "registry:dp-gate-approve/gate_decision/labels/approve",
+      "finding_ids": [],
+      "label": "结论 approve: 满足本 gate 条件，按 note 中的受限动作继续或收尾\n依据 approveA-basis: approve：当前计划满足C1/C2且仍在原权限/预算内时批准该限定动作。",
+      "remaining_ids": []
+    },
+    "need_fixA": {
+      "basis_id": "needFixA-basis",
+      "basis_text": "need_fix：若安排明确但存在技术/材料缺口，交PM形成具体修复。",
+      "choice": "need_fix",
+      "choice_label": "推进方式基本明确但有具体技术/材料缺口，交 PM 发起 dp-auto",
+      "choice_label_source": "registry:dp-gate-approve/gate_decision/labels/need_fix",
+      "finding_ids": [],
+      "label": "结论 need_fix: 推进方式基本明确但有具体技术/材料缺口，交 PM 发起 dp-auto\n依据 needFixA-basis: need_fix：若安排明确但存在技术/材料缺口，交PM形成具体修复。",
+      "remaining_ids": []
+    },
+    "rejectA": {
+      "basis_id": "rejectA-basis",
+      "basis_text": "reject：若计划不应推进则拒绝；仅允许原授权的证据整理。",
+      "choice": "reject",
+      "choice_label": "拒绝本次推进方案；只有 note 另有明确获授权遗留方案才按其收尾",
+      "choice_label_source": "registry:dp-gate-approve/gate_decision/labels/reject",
+      "finding_ids": [],
+      "label": "结论 reject: 拒绝本次推进方案；只有 note 另有明确获授权遗留方案才按其收尾\n依据 rejectA-basis: reject：若计划不应推进则拒绝；仅允许原授权的证据整理。",
+      "remaining_ids": []
+    },
+    "steerA": {
+      "basis_id": "steerA-basis",
+      "basis_text": "steer：若问题在组织/执行安排，交PM重排，不扩大当前动作范围。",
+      "choice": "steer",
+      "choice_label": "任务组织/主线/拆分/执行主体需调整，交 PM 发起 dp-pm-steer",
+      "choice_label_source": "registry:dp-gate-approve/gate_decision/labels/steer",
+      "finding_ids": [],
+      "label": "结论 steer: 任务组织/主线/拆分/执行主体需调整，交 PM 发起 dp-pm-steer\n依据 steerA-basis: steer：若问题在组织/执行安排，交PM重排，不扩大当前动作范围。",
+      "remaining_ids": []
+    }
+  },
+  "policy": null,
+  "questions_version": "q-3ae2a3fb",
+  "state": {
+    "desc": [
+      "Compare the gate conditions for one frozen replay.",
+      "The fixture records read-only mode and complete diff retention.",
+      "Verify actual remaining authorization and budget before any execution."
+    ],
+    "enum_meanings": {
+      "approve": "满足本 gate 条件，按 note 中的受限动作继续或收尾",
+      "known": "对应约束或条件已由本次来源确认。",
+      "need_fix": "推进方式基本明确但有具体技术/材料缺口，交 PM 发起 dp-auto",
+      "pass": "在当前检查/审核上下文满足要求；不能由局部检查扩大为整体验收。",
+      "reject": "拒绝本次推进方案；只有 note 另有明确获授权遗留方案才按其收尾",
+      "steer": "任务组织/主线/拆分/执行主体需调整，交 PM 发起 dp-pm-steer"
+    },
+    "evidence_sources": [
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_original_quality_and_gate1\\replay-plan.txt",
+        "references": [
+          "material.condition_evidence[0]",
+          "material.pm_note.basis.evidence"
+        ],
+        "representation": "full",
+        "sha256": "cf5d5a5bcd7bb53f9cc0b0b6ddbf5f88fe3ba1b601829bc4cd6b54964518a1c4",
+        "source_bytes": 103,
+        "source_id": "src-1ed2b7426307247ad384",
+        "source_lines": 1,
+        "text": "The fixture replay is read-only and configured to preserve the full diff. Scope is one frozen sample.\r\n"
+      },
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_original_quality_and_gate1\\v05-reference-C1.txt",
+        "references": [
+          "preparation.model_context.references.C1.path"
+        ],
+        "representation": "full",
+        "sha256": "a8403f2e8a625968b6756bc14c27176ec36e66421dd0816c18f218a087c51d08",
+        "source_bytes": 17,
+        "source_id": "src-f69d1ac638425075fe7a",
+        "source_lines": 1,
+        "text": "无产品写入\r\n"
+      },
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_original_quality_and_gate1\\v05-reference-C2.txt",
+        "references": [
+          "preparation.model_context.references.C2.path"
+        ],
+        "representation": "full",
+        "sha256": "dc6f8ff3144e0097c055f5922b3b3577aea0640fdadfd49e473557ea9f6c5bd7",
+        "source_bytes": 20,
+        "source_id": "src-8c88dcda438c35a02f2b",
+        "source_lines": 1,
+        "text": "保留完整差异\r\n"
+      }
+    ],
+    "material": {
+      "condition_evidence": [
+        "replay-plan.txt:1"
+      ],
+      "current_state": "C1 read-only and C2 full diff preservation are configured. Estimated 10 minutes, 20 minutes available.",
+      "gate_background": "Approve one frozen read-only replay under the existing gate.",
+      "pm_note": {
+        "basis": {
+          "authority": "existing scoped replay authorization",
+          "budget": "10 minutes estimated with 20 remaining",
+          "evidence": "replay-plan.txt:1",
+          "goal": "Obtain a reviewable diff for one sample"
+        },
+        "planned_action": "Read only and retain the full diff.",
+        "subject": "One frozen read-only replay"
+      }
+    },
+    "references": {
+      "C1": {
+        "kind": "gate_condition",
+        "source_id": "src-f69d1ac638425075fe7a"
+      },
+      "C2": {
+        "kind": "gate_condition",
+        "source_id": "src-8c88dcda438c35a02f2b"
+      }
+    },
+    "terminology": {
+      "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+      "PM": "Project Manager agent: 管理当前项目事项、组织任务并回收证据的项目管理Agent；不能冒充实际执行者或独立审查者。",
+      "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+      "gate": "execution gate: 已有执行准入门，核本次具体动作是否满足既有条件和权限。"
+    }
+  },
+  "state_digest": "3bb68c711a04ba94"
+}

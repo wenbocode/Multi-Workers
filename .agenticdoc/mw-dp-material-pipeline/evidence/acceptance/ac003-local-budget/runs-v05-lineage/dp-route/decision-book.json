@@ -1,0 +1,183 @@
+{
+  "material": {
+    "decision_actor": "PM",
+    "decision_object": "the current deliverable and its accepted quality standards",
+    "question": "Which entry judges whether this deliverable satisfies accepted quality standards?"
+  },
+  "preparation": {
+    "basis_catalog": [
+      {
+        "id": "route1-basis",
+        "text": "dp-w-type：问题是选择派发类型时选择此入口；不代该入口裁决。",
+        "applies_to": [
+          "dp-w-type"
+        ],
+        "material_refs": [
+          "question"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "route2-basis",
+        "text": "dp-pm-steer：问题是PM组织安排时选择此入口；不代该入口裁决。",
+        "applies_to": [
+          "dp-pm-steer"
+        ],
+        "material_refs": [
+          "question"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "route3-basis",
+        "text": "dp-w-check-task：问题归当前Worker自身可达性时，仅交该Worker准备选择此入口；不代该入口裁决。",
+        "applies_to": [
+          "dp-w-check-task"
+        ],
+        "material_refs": [
+          "question"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "route4-basis",
+        "text": "dp-QG：问题是对当前产物按标准做正式质量审查时选择此入口；不代该入口裁决。",
+        "applies_to": [
+          "dp-QG"
+        ],
+        "material_refs": [
+          "question"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "route5-basis",
+        "text": "dp-gate-approve：问题是既有gate对具体动作准入时选择此入口；不代该入口裁决。",
+        "applies_to": [
+          "dp-gate-approve"
+        ],
+        "material_refs": [
+          "question"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "route6-basis",
+        "text": "dp-sign-key：问题是整个key交付收尾时选择此入口；不代该入口裁决。",
+        "applies_to": [
+          "dp-sign-key"
+        ],
+        "material_refs": [
+          "question"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "route7-basis",
+        "text": "dp-auto：问题是其它明确现场方案比较时选择此入口；不代该入口裁决。",
+        "applies_to": [
+          "dp-auto"
+        ],
+        "material_refs": [
+          "question"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      }
+    ],
+    "prepared_at": "2026-11-08T10:00:00+00:00",
+    "model_context": {
+      "desc": [
+        "Identify the DP that handles the current temporary question.",
+        "The PM has not yet chosen an entry."
+      ],
+      "enum_meanings": {
+        "pm": "项目管理Agent的角色标签，真实身份仍由宿主核验。"
+      },
+      "terminology": {
+        "DP": "Decision Point: 一个职责明确的决策入口；路由只选择入口，不批准入口对应动作。",
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "PM": "Project Manager agent: 管理当前项目事项、组织任务并回收证据的项目管理Agent；不能冒充实际执行者或独立审查者。",
+        "QG": "Quality Gate: 质量门禁/正式质量审核：按已确认验收标准、验证结果和独立审查形成pass/fix/reopen业务结论；不等于模型置信度。",
+        "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "gate": "execution gate: 已有执行准入门，核本次具体动作是否满足既有条件和权限。",
+        "key": "project work key: 项目工作项标识；本例讨论整个key交付时才属于签收，不能仅凭标识推测认领者。",
+        "直执": "直接执行: 由当前项目管理者在原权限与剩余预算内直接完成工作，必要独立复核仍保留。",
+        "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+      },
+      "references": {
+        "dp-sign-key": {
+          "kind": "decision_entry",
+          "path": "v05-reference-dp-sign-key.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        },
+        "dp-w-check-task": {
+          "kind": "decision_entry",
+          "path": "v05-reference-dp-w-check-task.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        },
+        "dp-QG": {
+          "kind": "decision_entry",
+          "path": "v05-reference-dp-QG.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        },
+        "dp-pm-steer": {
+          "kind": "decision_entry",
+          "path": "v05-reference-dp-pm-steer.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        },
+        "dp-auto": {
+          "kind": "decision_entry",
+          "path": "v05-reference-dp-auto.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        },
+        "dp-gate-approve": {
+          "kind": "decision_entry",
+          "path": "v05-reference-dp-gate-approve.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        },
+        "dp-w-type": {
+          "kind": "decision_entry",
+          "path": "v05-reference-dp-w-type.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        }
+      }
+    }
+  },
+  "meta": {
+    "record_version": 2,
+    "logical_id": "current-receipt-1",
+    "key": "key-1",
+    "task_key": null,
+    "initiator_role": "pm",
+    "retry_of": null
+  }
+}

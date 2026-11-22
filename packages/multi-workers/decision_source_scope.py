@@ -79,14 +79,16 @@ class WorkerSourceScope:
         )
 
 
-def load_worker_source_scope(project_root: pathlib.Path) -> WorkerSourceScope | None:
+def load_worker_source_scope(
+    project_root: pathlib.Path, *, bound_task: pathlib.Path | None = None,
+) -> WorkerSourceScope | None:
     """Read the host-bound card once and retain its exact hash for freshness.
 
     Path authentication remains the CLI actor-binding responsibility. A
     present but invalid/unreadable binding fails closed even in direct clients.
     No material/preparation field can select a card or widen its scope.
     """
-    raw_path = os.environ.get("PI_WORKER_TASK", "").strip()
+    raw_path = str(bound_task) if bound_task is not None else os.environ.get("PI_WORKER_TASK", "").strip()
     if not raw_path:
         return None
     card = pathlib.Path(os.path.abspath(raw_path))

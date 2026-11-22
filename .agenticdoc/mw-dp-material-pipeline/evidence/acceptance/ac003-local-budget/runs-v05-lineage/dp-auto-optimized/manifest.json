@@ -1,0 +1,33 @@
+{
+  "case_id": "dp-auto-optimized",
+  "dp": "dp-auto",
+  "decision_id": "dp-auto:current-receipt-1",
+  "call_id": "7d8296a8f91947a5bb613a36666999f5",
+  "writer": "mw decide lifecycle",
+  "normalized": {
+    "choice": "retry",
+    "basis_id": "retryA-basis",
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  "desc_measurement": {
+    "local_budget": {
+      "rule": "desc-local-v1",
+      "count": 64,
+      "limit": 1000,
+      "passed": true
+    },
+    "estimated_tokens": 64,
+    "exact_count": null,
+    "exact_limit_passed": null
+  },
+  "choice": "retry",
+  "basis_id": "retryA-basis",
+  "observed": null,
+  "pm_reason": "Accept the bounded retry direction. The 300 seconds are the preparation-time allowance. Check authority, cancellation and the current remaining budget before one 60-second retry. Only on failure and with 120 seconds plus 30 reserved may a health read follow. No retry or health request ran.",
+  "consumer_role": "pm",
+  "receipts": {
+    "consumed": "267bd32e487c4a16bff76b4b93022c38",
+    "settled": "settlement-dp-auto"
+  }
+}

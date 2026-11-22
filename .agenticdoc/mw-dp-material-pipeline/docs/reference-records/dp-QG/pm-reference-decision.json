@@ -1,0 +1,46 @@
+{
+  "record_kind": "current_session_pm_reference_adjudication",
+  "recorded_on": "2026-11-19",
+  "author": "Codex PM 当前设计整理会话",
+  "historical_runtime_pm_record": null,
+  "scope": "针对所列真实API回包的离线PM参考裁定；不是原生产窗口已采纳/执行的记录",
+  "model_wire_id": "fixB",
+  "decoded_choice": "fix",
+  "basis_id": "fixB-basis",
+  "finding_ids": [
+    "F1",
+    "F2"
+  ],
+  "remaining_ids": [],
+  "summary": "fixB反解为F1/F2；质量参考为fix，但payload缺reopen须退回补齐候选。",
+  "disposition": "return-material-for-fixed-choice-coverage",
+  "reasoning": [
+    "AC-001 not-met/VC-001 fail，F1为拒绝后仍写入；AC-002 unverified/VC-002 not-run，F2为并发顺序未验证。",
+    "fixB确实覆盖F1/F2且remaining_ids为空，但这只表示选中原因集合，不表示修复或验收已完成。",
+    "历史实际criteria缺reopen，不能把该请求当当前固定闭集合规发送正例；保留为映射正例和候选缺项负例。"
+  ],
+  "follow_up": [
+    "材料先补reopen条件判据并重验；旧请求/回包不改写，也不套到新请求。",
+    "以F1/F2作为参考修复范围：修复重复键副作用、补并发顺序验证，再对同范围AC/VC独立复核。",
+    "本范本不写正式QG产品、不实际派修复卡；原主体仍须真实review/权限/版本/预算检查。"
+  ],
+  "must_preserve": [
+    "F1与F2全部原因",
+    "AC-002未验证、VC-002未运行",
+    "QG固定候选缺reopen这一已知缺口"
+  ],
+  "must_not_claim": [
+    "当前质量通过",
+    "F1/F2已修复",
+    "旧请求满足全部当前发送规则"
+  ],
+  "pending_real_host_checks": [
+    "原真实owner/matter/run与对象版本",
+    "原权限/取消/停止和当前余额",
+    "该DP必要独审/业务writer前提"
+  ],
+  "runtime_business_acceptance": null,
+  "actual_dispatch_run_ids": [],
+  "actual_business_receipt": null,
+  "production_executed": false
+}

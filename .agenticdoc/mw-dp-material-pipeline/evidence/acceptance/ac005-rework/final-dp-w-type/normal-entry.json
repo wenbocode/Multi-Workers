@@ -1,0 +1,836 @@
+{
+  "case_id": "dp-w-type",
+  "role": "pm",
+  "window_pid": 85148,
+  "key": "mw-dp-material-pipeline",
+  "worker_task": null,
+  "mode": "production extension with isolated faux role and loopback decision transport",
+  "author_inputs": {
+    "dp": "dp-w-type",
+    "key": "mw-dp-material-pipeline",
+    "trigger": "t09-prepared",
+    "material": {
+      "task_goal": "Repair the CSV export so special characters round-trip unchanged.",
+      "task_requirements": "Touch the exporter and its tests only. Preserve the format protocol.",
+      "task_deliverables": "Exporter escape fix and regression assertions for commas and double quotes.",
+      "images_required": false
+    },
+    "preparation": {
+      "basis_catalog": [
+        {
+          "id": "codingA-basis",
+          "text": "coding：有明确算法改动和测试交付时选coding。",
+          "applies_to": [
+            "coding"
+          ],
+          "material_refs": [
+            "task_deliverables"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        },
+        {
+          "id": "researchA-basis",
+          "text": "research：若当前工作仅为取证、无需修改代码时选research。",
+          "applies_to": [
+            "research"
+          ],
+          "material_refs": [
+            "task_deliverables"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        },
+        {
+          "id": "reviewA-basis",
+          "text": "review：若当前工作是审查别人已完成的产物时选review。",
+          "applies_to": [
+            "review"
+          ],
+          "material_refs": [
+            "task_deliverables"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        },
+        {
+          "id": "visionA-basis",
+          "text": "vision：若必须解释图像像素且host能力允许时选vision。",
+          "applies_to": [
+            "vision"
+          ],
+          "material_refs": [
+            "task_deliverables"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        }
+      ],
+      "prepared_at": "2026-11-08T10:00:00+00:00",
+      "model_context": {
+        "desc": [
+          "Repair CSV export round trips for special characters.",
+          "Deliver an escape fix and regression tests without changing the format."
+        ],
+        "enum_meanings": {
+          "coding": "需要修改代码或测试的任务类型。",
+          "known": "对应约束或条件已由本次来源确认。",
+          "research": "以取证/研究为主的任务类型。",
+          "review": "审查已有产物的任务类型。",
+          "vision": "必须解释图像像素的任务类型。"
+        },
+        "terminology": {
+          "CSV": "Comma-Separated Values: 逗号分隔值文本格式；本例需正确转义逗号和双引号并保持往返解析一致。",
+          "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+          "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+          "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+          "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+          "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+        }
+      }
+    }
+  },
+  "explicit_followup_from_fixture": null,
+  "target_wire": "codingA",
+  "expected_choice": "coding",
+  "observations": [
+    {
+      "name": "Current contract citation checks",
+      "tool_results": [
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"input-incomplete\",\"action\":\"pm-select-type\",\"escalated_reason\":\"input-incomplete\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"ffe1aafa-7ecc-4f67-91a2-0466a5ea334a\",\"matter_ref\":\"df0bcbcba4d5e76c38a3a7dc7c1fd615\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"input-gap\",\"raw_reason\":\"input-incomplete\",\"raw_payload\":{\"available\":false,\"transport\":\"none\",\"model\":null,\"confidence_source\":\"unknown\",\"attempts\":0,\"latency_ms\":0,\"answers\":null,\"reason\":\"input-incomplete\",\"decision_id\":\"dp-w-type:df0bcbcb-a4d5-876c-88a3-a7dc7c1fd615\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":\"input-incomplete\",\"state_digest\":null,\"logical_id\":\"df0bcbcb-a4d5-876c-88a3-a7dc7c1fd615\",\"dp\":\"dp-w-type\",\"replayed\":false,\"record_start\":\"written\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"desc_measurement\":null,\"basis_source\":null,\"business_decisions\":0,\"transport_attempts\":0,\"issues\":[{\"field\":\"model_context.references.AC-999\",\"issue\":\"missing current criterion text in the bound spec or design\"}],\"detail\":\"file evidence preparation failed; no request sent\",\"prepared_at\":null,\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\criterion-current.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\criterion-current.txt\",\"sha256\":\"6521389fa13b8218db7392489bdc5e3378ebaf97eaa10f4f52b74f3f5a503329\"}],\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"blocked_event_id\":\"e4daa81b-d7c6-4bf3-98bc-11445b2aef78\",\"unavailable\":\"input-incomplete\",\"raw_reason\":\"input-incomplete\"},\"escalated_reason\":\"input-incomplete\",\"owner\":\"WENBOZHOU-PC5:85148\",\"binding\":{\"role\":\"pm\",\"owner\":\"WENBOZHOU-PC5:85148\",\"claim_id\":\"WENBOZHOU-PC5:85148\",\"key\":\"mw-dp-material-pipeline\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:05:25.414Z\"},\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:3afed82b246043ed7091c7909df43dee672b54190f62429f664ec9e0d0b99a72\",\"local_ref\":\"lref:3afed82b246043ed7091c7909df43dee\",\"dp\":\"dp-w-type\",\"candidates\":[\"coding\",\"research\",\"review\",\"vision\"],\"basis_ids\":[\"codingA-basis\",\"researchA-basis\",\"reviewA-basis\",\"visionA-basis\"]}}\ndp-w-type unavailable: PM must select coding/research/review/vision from the original task card and prepared basis, then call dispatch_worker with the matching type, card_path and decision_preparation. Record source=pm and the reason; do not wait for a human to choose the type or retry the failed classifier. Fix verifiable missing material first; never invent evidence or a DP decision_id. Claim, role, image capability and write-surface checks still apply."
+        },
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"input-incomplete\",\"action\":\"pm-select-type\",\"escalated_reason\":\"input-incomplete\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"6ab3861d-8838-4da1-a97f-7a2cece21d22\",\"matter_ref\":\"c4b06d40ff8299a5cef3547b09552789\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"input-gap\",\"raw_reason\":\"input-incomplete\",\"raw_payload\":{\"available\":false,\"transport\":\"none\",\"model\":null,\"confidence_source\":\"unknown\",\"attempts\":0,\"latency_ms\":16,\"answers\":null,\"reason\":\"input-incomplete\",\"decision_id\":\"dp-w-type:c4b06d40-ff82-89a5-8ef3-547b09552789\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":\"input-incomplete\",\"state_digest\":null,\"logical_id\":\"c4b06d40-ff82-89a5-8ef3-547b09552789\",\"dp\":\"dp-w-type\",\"replayed\":false,\"record_start\":\"written\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"desc_measurement\":null,\"basis_source\":null,\"business_decisions\":0,\"transport_attempts\":0,\"issues\":[{\"field\":\"model_context.references.VC-999\",\"issue\":\"missing current criterion text in the bound spec or design\"}],\"detail\":\"file evidence preparation failed; no request sent\",\"prepared_at\":null,\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\criterion-missing.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\criterion-missing.txt\",\"sha256\":\"011089128327f4bbf05a9fda91898167bb5c34352c08c74ec3323569420d0ca6\"}],\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"blocked_event_id\":\"ca6c11b3-383b-4bf0-a80b-772a18e4d13d\",\"unavailable\":\"input-incomplete\",\"raw_reason\":\"input-incomplete\"},\"escalated_reason\":\"input-incomplete\",\"owner\":\"WENBOZHOU-PC5:85148\",\"binding\":{\"role\":\"pm\",\"owner\":\"WENBOZHOU-PC5:85148\",\"claim_id\":\"WENBOZHOU-PC5:85148\",\"key\":\"mw-dp-material-pipeline\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:05:25.951Z\"},\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:1a5d81117558aaf5283353af7b4ce6ea8d56a1d7278182828ef562692c311936\",\"local_ref\":\"lref:1a5d81117558aaf5283353af7b4ce6ea\",\"dp\":\"dp-w-type\",\"candidates\":[\"coding\",\"research\",\"review\",\"vision\"],\"basis_ids\":[\"codingA-basis\",\"researchA-basis\",\"reviewA-basis\",\"visionA-basis\"]}}\ndp-w-type unavailable: PM must select coding/research/review/vision from the original task card and prepared basis, then call dispatch_worker with the matching type, card_path and decision_preparation. Record source=pm and the reason; do not wait for a human to choose the type or retry the failed classifier. Fix verifiable missing material first; never invent evidence or a DP decision_id. Claim, role, image capability and write-surface checks still apply."
+        },
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"input-incomplete\",\"action\":\"pm-select-type\",\"escalated_reason\":\"input-incomplete\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"afd0aa2e-1c88-4e29-8b44-d6ffac243490\",\"matter_ref\":\"0e2d1e9ac7dc5a1c25af9ab6650f3c47\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"input-gap\",\"raw_reason\":\"input-incomplete\",\"raw_payload\":{\"available\":false,\"transport\":\"none\",\"model\":null,\"confidence_source\":\"unknown\",\"attempts\":0,\"latency_ms\":0,\"answers\":null,\"reason\":\"input-incomplete\",\"decision_id\":\"dp-w-type:0e2d1e9a-c7dc-8a1c-85af-9ab6650f3c47\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":\"input-incomplete\",\"state_digest\":null,\"logical_id\":\"0e2d1e9a-c7dc-8a1c-85af-9ab6650f3c47\",\"dp\":\"dp-w-type\",\"replayed\":false,\"record_start\":\"written\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"desc_measurement\":null,\"basis_source\":null,\"business_decisions\":0,\"transport_attempts\":0,\"issues\":[{\"field\":\"state.<key>\",\"issue\":\"AC-005 is qualified by an object outside the bound key\"}],\"detail\":\"file evidence preparation failed; no request sent\",\"prepared_at\":null,\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\criterion-current.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\criterion-current.txt\",\"sha256\":\"6521389fa13b8218db7392489bdc5e3378ebaf97eaa10f4f52b74f3f5a503329\"}],\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"blocked_event_id\":\"958202af-5ad2-4aa5-af0a-f40b8880ba7e\",\"unavailable\":\"input-incomplete\",\"raw_reason\":\"input-incomplete\"},\"escalated_reason\":\"input-incomplete\",\"owner\":\"WENBOZHOU-PC5:85148\",\"binding\":{\"role\":\"pm\",\"owner\":\"WENBOZHOU-PC5:85148\",\"claim_id\":\"WENBOZHOU-PC5:85148\",\"key\":\"mw-dp-material-pipeline\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:05:26.473Z\"},\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:9eae8107b50251dbf716db31ebe03e416a9a7e391c14663fbd053d5e66904e57\",\"local_ref\":\"lref:9eae8107b50251dbf716db31ebe03e41\",\"dp\":\"dp-w-type\",\"candidates\":[\"coding\",\"research\",\"review\",\"vision\"],\"basis_ids\":[\"codingA-basis\",\"researchA-basis\",\"reviewA-basis\",\"visionA-basis\"]}}\ndp-w-type unavailable: PM must select coding/research/review/vision from the original task card and prepared basis, then call dispatch_worker with the matching type, card_path and decision_preparation. Record source=pm and the reason; do not wait for a human to choose the type or retry the failed classifier. Fix verifiable missing material first; never invent evidence or a DP decision_id. Claim, role, image capability and write-surface checks still apply."
+        },
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"input-incomplete\",\"action\":\"pm-select-type\",\"escalated_reason\":\"input-incomplete\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"228d55b0-1ca0-4074-a834-c555ad275b87\",\"matter_ref\":\"180ad5938c465b806f7ede194830b800\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"input-gap\",\"raw_reason\":\"input-incomplete\",\"raw_payload\":{\"available\":false,\"transport\":\"none\",\"model\":null,\"confidence_source\":\"unknown\",\"attempts\":0,\"latency_ms\":0,\"answers\":null,\"reason\":\"input-incomplete\",\"decision_id\":\"dp-w-type:180ad593-8c46-8b80-8f7e-de194830b800\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":\"input-incomplete\",\"state_digest\":null,\"logical_id\":\"180ad593-8c46-8b80-8f7e-de194830b800\",\"dp\":\"dp-w-type\",\"replayed\":false,\"record_start\":\"written\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"desc_measurement\":null,\"basis_source\":null,\"business_decisions\":0,\"transport_attempts\":0,\"issues\":[{\"field\":\"state.<key>.text\",\"issue\":\"AC-005 is qualified by an object outside the bound key\"}],\"detail\":\"file evidence preparation failed; no request sent\",\"prepared_at\":null,\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\criterion-qualified.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\criterion-qualified.txt\",\"sha256\":\"562d53adb42b659662b21bd7b2ef02d311221a051a68a31678c395c2ec6b2414\"}],\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"blocked_event_id\":\"b273ec48-9eb9-4333-a383-cce0bbf29243\",\"unavailable\":\"input-incomplete\",\"raw_reason\":\"input-incomplete\"},\"escalated_reason\":\"input-incomplete\",\"owner\":\"WENBOZHOU-PC5:85148\",\"binding\":{\"role\":\"pm\",\"owner\":\"WENBOZHOU-PC5:85148\",\"claim_id\":\"WENBOZHOU-PC5:85148\",\"key\":\"mw-dp-material-pipeline\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:05:26.970Z\"},\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:af91566dd73c7d10f012f2fdc460faa86bb1a4e4e4b2ff70ab4e881945c390d1\",\"local_ref\":\"lref:af91566dd73c7d10f012f2fdc460faa8\",\"dp\":\"dp-w-type\",\"candidates\":[\"coding\",\"research\",\"review\",\"vision\"],\"basis_ids\":[\"codingA-basis\",\"researchA-basis\",\"reviewA-basis\",\"visionA-basis\"]}}\ndp-w-type unavailable: PM must select coding/research/review/vision from the original task card and prepared basis, then call dispatch_worker with the matching type, card_path and decision_preparation. Record source=pm and the reason; do not wait for a human to choose the type or retry the failed classifier. Fix verifiable missing material first; never invent evidence or a DP decision_id. Claim, role, image capability and write-surface checks still apply."
+        },
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"input-incomplete\",\"action\":\"pm-select-type\",\"escalated_reason\":\"input-incomplete\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"ebb74b46-63a8-48db-9ba4-f02e4a3b88bd\",\"matter_ref\":\"1fb1a9f53f7832259afa5d29cb990cbc\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"input-gap\",\"raw_reason\":\"input-incomplete\",\"raw_payload\":{\"available\":false,\"transport\":\"none\",\"model\":null,\"confidence_source\":\"unknown\",\"attempts\":0,\"latency_ms\":0,\"answers\":null,\"reason\":\"input-incomplete\",\"decision_id\":\"dp-w-type:1fb1a9f5-3f78-8225-8afa-5d29cb990cbc\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":\"input-incomplete\",\"state_digest\":null,\"logical_id\":\"1fb1a9f5-3f78-8225-8afa-5d29cb990cbc\",\"dp\":\"dp-w-type\",\"replayed\":false,\"record_start\":\"written\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"desc_measurement\":null,\"basis_source\":null,\"business_decisions\":0,\"transport_attempts\":0,\"issues\":[{\"field\":\"state.<key>.text\",\"issue\":\"AC-005 is cited from a source outside the bound key\"}],\"detail\":\"file evidence preparation failed; no request sent\",\"prepared_at\":null,\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\other-criterion-key\\\\criterion-note.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\other-criterion-key\\\\criterion-note.txt\",\"sha256\":\"8f624c1606181466bcd457783763d117e77ca4fce0518a51aa9fa46e4a892f41\"}],\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"blocked_event_id\":\"0b7a0f18-2131-4b98-84db-1a40b059e186\",\"unavailable\":\"input-incomplete\",\"raw_reason\":\"input-incomplete\"},\"escalated_reason\":\"input-incomplete\",\"owner\":\"WENBOZHOU-PC5:85148\",\"binding\":{\"role\":\"pm\",\"owner\":\"WENBOZHOU-PC5:85148\",\"claim_id\":\"WENBOZHOU-PC5:85148\",\"key\":\"mw-dp-material-pipeline\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:05:27.457Z\"},\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:7d8a87a600edd4305cbd4ca84ae4271d70691a7a26a644f133197293f5d31359\",\"local_ref\":\"lref:7d8a87a600edd4305cbd4ca84ae4271d\",\"dp\":\"dp-w-type\",\"candidates\":[\"coding\",\"research\",\"review\",\"vision\"],\"basis_ids\":[\"codingA-basis\",\"researchA-basis\",\"reviewA-basis\",\"visionA-basis\"]}}\ndp-w-type unavailable: PM must select coding/research/review/vision from the original task card and prepared basis, then call dispatch_worker with the matching type, card_path and decision_preparation. Record source=pm and the reason; do not wait for a human to choose the type or retry the failed classifier. Fix verifiable missing material first; never invent evidence or a DP decision_id. Claim, role, image capability and write-surface checks still apply."
+        },
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":true,\"decision_id\":\"dp-w-type:33143dfe-9a7f-8006-8838-9c488bfc5131\",\"mode\":\"auto\",\"acted\":false,\"answers\":{\"triage_type\":{\"value\":\"coding\",\"confidence\":0.91},\"basis_id\":{\"value\":\"codingA-basis\",\"confidence\":0.91}},\"confidence_source\":\"api\",\"latency_ms\":32,\"selection\":{\"question\":\"triage_type\",\"id\":\"coding\"},\"basis\":{\"id\":\"codingA-basis\",\"text\":\"coding：有明确算法改动和测试交付时选coding。\",\"applies_to\":[\"coding\"],\"material_refs\":[\"task_deliverables\"],\"finding_ids\":[],\"remaining_ids\":[]},\"feedback\":{\"stage\":\"consumed\",\"status\":\"written\",\"recorded\":true}}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"85e83fbd-4ad5-42c8-9c9f-f438c66bb0b8\",\"matter_ref\":\"33143dfe9a7f600688389c488bfc5131\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"answer\",\"raw_payload\":{\"available\":true,\"transport\":\"timi-decisions\",\"model\":\"jev-latest\",\"confidence_source\":\"api\",\"attempts\":1,\"latency_ms\":32,\"answers\":{\"triage_type\":{\"value\":\"coding\",\"confidence\":0.91},\"basis_id\":{\"value\":\"codingA-basis\",\"confidence\":0.91}},\"reason\":null,\"decision_id\":\"dp-w-type:33143dfe-9a7f-8006-8838-9c488bfc5131\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":null,\"state_digest\":\"65fdd7afcdaa5886\",\"logical_id\":\"33143dfe-9a7f-8006-8838-9c488bfc5131\",\"dp\":\"dp-w-type\",\"replayed\":false,\"record_start\":\"written\",\"choice\":\"coding\",\"basis_id\":\"codingA-basis\",\"basis_text\":\"coding：有明确算法改动和测试交付时选coding。\",\"finding_ids\":[],\"remaining_ids\":[],\"desc_measurement\":{\"estimated_tokens\":8,\"exact_count\":null,\"exact_limit_passed\":null},\"basis_source\":\"pm-prepared\",\"business_decisions\":1,\"transport_attempts\":1,\"issues\":[],\"detail\":\"\",\"prepared_at\":\"2026-11-08T10:00:00+00:00\",\"snapshot_ref\":\"state-5ee40d33dc543366\",\"call_id\":\"8f4cf858d9184b12b22142d750f48ec5\",\"capture_status\":\"ok\",\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\criterion-current.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\criterion-current.txt\",\"sha256\":\"6521389fa13b8218db7392489bdc5e3378ebaf97eaa10f4f52b74f3f5a503329\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\evidence\\\\contract-freeze.json\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\evidence\\\\contract-freeze.json\",\"sha256\":\"349d666131a3cc8fef6399b0af07db3153529a5797bce5248a63ba8dd0ee6925\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\spec.md\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\spec.md\",\"sha256\":\"8b3e042d27ea553c40b9aea596d71eb3099f8f2bd170adf39c232c0fef58dcbb\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\design.md\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac005-dp-w-type-diagnostics\\\\.agenticdoc\\\\mw-dp-material-pipeline\\\\design.md\",\"sha256\":\"a9dcffdf60ec6dad4f05dd4c93a649e6e5e3686ea95e291c4c0bfb4ae0b46a27\"}],\"feedback_status\":\"recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[{\"stage\":\"request\",\"status\":\"written\",\"event_id\":\"rq-15dff62982af9220278110192f020c18\"}]},\"owner\":\"WENBOZHOU-PC5:85148\",\"binding\":{\"role\":\"pm\",\"owner\":\"WENBOZHOU-PC5:85148\",\"claim_id\":\"WENBOZHOU-PC5:85148\",\"key\":\"mw-dp-material-pipeline\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:05:28.082Z\"},\"gaps\":[\"raw_reason\"],\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:3daf0101f1696d85363884032757f0215b035fd8e1136a71ae907e8c26b6d77b\",\"local_ref\":\"lref:3daf0101f1696d85363884032757f021\",\"dp\":\"dp-w-type\",\"candidates\":[\"coding\",\"research\",\"review\",\"vision\"],\"basis_ids\":[\"codingA-basis\",\"researchA-basis\",\"reviewA-basis\",\"visionA-basis\"]}}"
+        }
+      ],
+      "http_delta": 1
+    }
+  ],
+  "criterion_cases": [
+    {
+      "name": "Dangling criterion in desc",
+      "input": {
+        "dp": "dp-w-type",
+        "key": "mw-dp-material-pipeline",
+        "trigger": "dangling-criterion-in-desc",
+        "material": {
+          "task_goal": "Repair the CSV export so special characters round-trip unchanged.",
+          "task_requirements": "Touch the exporter and its tests only. Preserve the format protocol.",
+          "task_deliverables": "Exporter escape fix and regression assertions for commas and double quotes.",
+          "images_required": false
+        },
+        "preparation": {
+          "basis_catalog": [
+            {
+              "id": "codingA-basis",
+              "text": "coding：有明确算法改动和测试交付时选coding。",
+              "applies_to": [
+                "coding"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "researchA-basis",
+              "text": "research：若当前工作仅为取证、无需修改代码时选research。",
+              "applies_to": [
+                "research"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "reviewA-basis",
+              "text": "review：若当前工作是审查别人已完成的产物时选review。",
+              "applies_to": [
+                "review"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "visionA-basis",
+              "text": "vision：若必须解释图像像素且host能力允许时选vision。",
+              "applies_to": [
+                "vision"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            }
+          ],
+          "prepared_at": "2026-11-08T10:00:00+00:00",
+          "model_context": {
+            "desc": [
+              "Check AC-999 before acting."
+            ],
+            "enum_meanings": {
+              "coding": "需要修改代码或测试的任务类型。",
+              "known": "对应约束或条件已由本次来源确认。",
+              "research": "以取证/研究为主的任务类型。",
+              "review": "审查已有产物的任务类型。",
+              "vision": "必须解释图像像素的任务类型。"
+            },
+            "terminology": {
+              "CSV": "Comma-Separated Values: 逗号分隔值文本格式；本例需正确转义逗号和双引号并保持往返解析一致。",
+              "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+              "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+              "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+              "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+              "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+            },
+            "references": {
+              "proof": {
+                "kind": "evidence",
+                "path": "criterion-current.txt"
+              }
+            }
+          }
+        }
+      },
+      "verdict": {
+        "available": false,
+        "unavailable": "input-incomplete",
+        "action": "pm-select-type",
+        "escalated_reason": "input-incomplete"
+      },
+      "transport_attempts": 0,
+      "blocked_event_id": "e4daa81b-d7c6-4bf3-98bc-11445b2aef78",
+      "input_diagnostics": {
+        "stage": "evidence-preparation",
+        "transport": "not-sent",
+        "issues": [
+          {
+            "field": "model_context.references.AC-999",
+            "code": "criterion-reference-unresolved",
+            "criterion": "AC-999",
+            "source_field": "state.desc[0]"
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "Dangling criterion in hydrated text",
+      "input": {
+        "dp": "dp-w-type",
+        "key": "mw-dp-material-pipeline",
+        "trigger": "dangling-criterion-in-hydrated-text",
+        "material": {
+          "task_goal": "Repair the CSV export so special characters round-trip unchanged.",
+          "task_requirements": "Touch the exporter and its tests only. Preserve the format protocol.",
+          "task_deliverables": "Exporter escape fix and regression assertions for commas and double quotes.",
+          "images_required": false
+        },
+        "preparation": {
+          "basis_catalog": [
+            {
+              "id": "codingA-basis",
+              "text": "coding：有明确算法改动和测试交付时选coding。",
+              "applies_to": [
+                "coding"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "researchA-basis",
+              "text": "research：若当前工作仅为取证、无需修改代码时选research。",
+              "applies_to": [
+                "research"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "reviewA-basis",
+              "text": "review：若当前工作是审查别人已完成的产物时选review。",
+              "applies_to": [
+                "review"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "visionA-basis",
+              "text": "vision：若必须解释图像像素且host能力允许时选vision。",
+              "applies_to": [
+                "vision"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            }
+          ],
+          "prepared_at": "2026-11-08T10:00:00+00:00",
+          "model_context": {
+            "desc": [
+              "Review the referenced note."
+            ],
+            "enum_meanings": {
+              "coding": "需要修改代码或测试的任务类型。",
+              "known": "对应约束或条件已由本次来源确认。",
+              "research": "以取证/研究为主的任务类型。",
+              "review": "审查已有产物的任务类型。",
+              "vision": "必须解释图像像素的任务类型。"
+            },
+            "terminology": {
+              "CSV": "Comma-Separated Values: 逗号分隔值文本格式；本例需正确转义逗号和双引号并保持往返解析一致。",
+              "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+              "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+              "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+              "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+              "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+            },
+            "references": {
+              "proof": {
+                "kind": "evidence",
+                "path": "criterion-missing.txt"
+              }
+            }
+          }
+        }
+      },
+      "verdict": {
+        "available": false,
+        "unavailable": "input-incomplete",
+        "action": "pm-select-type",
+        "escalated_reason": "input-incomplete"
+      },
+      "transport_attempts": 0,
+      "blocked_event_id": "ca6c11b3-383b-4bf0-a80b-772a18e4d13d",
+      "input_diagnostics": {
+        "stage": "evidence-preparation",
+        "transport": "not-sent",
+        "issues": [
+          {
+            "field": "model_context.references.VC-999",
+            "code": "criterion-reference-unresolved",
+            "criterion": "VC-999",
+            "source_field": "state.evidence_sources[0].text"
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "Foreign key anchor in desc",
+      "input": {
+        "dp": "dp-w-type",
+        "key": "mw-dp-material-pipeline",
+        "trigger": "foreign-key-anchor-in-desc",
+        "material": {
+          "task_goal": "Repair the CSV export so special characters round-trip unchanged.",
+          "task_requirements": "Touch the exporter and its tests only. Preserve the format protocol.",
+          "task_deliverables": "Exporter escape fix and regression assertions for commas and double quotes.",
+          "images_required": false
+        },
+        "preparation": {
+          "basis_catalog": [
+            {
+              "id": "codingA-basis",
+              "text": "coding：有明确算法改动和测试交付时选coding。",
+              "applies_to": [
+                "coding"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "researchA-basis",
+              "text": "research：若当前工作仅为取证、无需修改代码时选research。",
+              "applies_to": [
+                "research"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "reviewA-basis",
+              "text": "review：若当前工作是审查别人已完成的产物时选review。",
+              "applies_to": [
+                "review"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "visionA-basis",
+              "text": "vision：若必须解释图像像素且host能力允许时选vision。",
+              "applies_to": [
+                "vision"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            }
+          ],
+          "prepared_at": "2026-11-08T10:00:00+00:00",
+          "model_context": {
+            "desc": [
+              "Review .agenticdoc/other-criterion-key/spec.md#AC-005 before acting."
+            ],
+            "enum_meanings": {
+              "coding": "需要修改代码或测试的任务类型。",
+              "known": "对应约束或条件已由本次来源确认。",
+              "research": "以取证/研究为主的任务类型。",
+              "review": "审查已有产物的任务类型。",
+              "vision": "必须解释图像像素的任务类型。"
+            },
+            "terminology": {
+              "CSV": "Comma-Separated Values: 逗号分隔值文本格式；本例需正确转义逗号和双引号并保持往返解析一致。",
+              "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+              "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+              "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+              "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+              "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+            },
+            "references": {
+              "proof": {
+                "kind": "evidence",
+                "path": "criterion-current.txt"
+              }
+            }
+          }
+        }
+      },
+      "verdict": {
+        "available": false,
+        "unavailable": "input-incomplete",
+        "action": "pm-select-type",
+        "escalated_reason": "input-incomplete"
+      },
+      "transport_attempts": 0,
+      "blocked_event_id": "958202af-5ad2-4aa5-af0a-f40b8880ba7e",
+      "input_diagnostics": {
+        "stage": "evidence-preparation",
+        "transport": "not-sent",
+        "issues": [
+          {
+            "field": "state.desc[0]",
+            "code": "criterion-reference-other-object",
+            "criterion": "AC-005"
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "Foreign key anchor in hydrated text",
+      "input": {
+        "dp": "dp-w-type",
+        "key": "mw-dp-material-pipeline",
+        "trigger": "foreign-key-anchor-in-hydrated-text",
+        "material": {
+          "task_goal": "Repair the CSV export so special characters round-trip unchanged.",
+          "task_requirements": "Touch the exporter and its tests only. Preserve the format protocol.",
+          "task_deliverables": "Exporter escape fix and regression assertions for commas and double quotes.",
+          "images_required": false
+        },
+        "preparation": {
+          "basis_catalog": [
+            {
+              "id": "codingA-basis",
+              "text": "coding：有明确算法改动和测试交付时选coding。",
+              "applies_to": [
+                "coding"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "researchA-basis",
+              "text": "research：若当前工作仅为取证、无需修改代码时选research。",
+              "applies_to": [
+                "research"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "reviewA-basis",
+              "text": "review：若当前工作是审查别人已完成的产物时选review。",
+              "applies_to": [
+                "review"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "visionA-basis",
+              "text": "vision：若必须解释图像像素且host能力允许时选vision。",
+              "applies_to": [
+                "vision"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            }
+          ],
+          "prepared_at": "2026-11-08T10:00:00+00:00",
+          "model_context": {
+            "desc": [
+              "Read the qualified criterion in the note."
+            ],
+            "enum_meanings": {
+              "coding": "需要修改代码或测试的任务类型。",
+              "known": "对应约束或条件已由本次来源确认。",
+              "research": "以取证/研究为主的任务类型。",
+              "review": "审查已有产物的任务类型。",
+              "vision": "必须解释图像像素的任务类型。"
+            },
+            "terminology": {
+              "CSV": "Comma-Separated Values: 逗号分隔值文本格式；本例需正确转义逗号和双引号并保持往返解析一致。",
+              "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+              "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+              "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+              "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+              "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+            },
+            "references": {
+              "proof": {
+                "kind": "evidence",
+                "path": "criterion-qualified.txt"
+              }
+            }
+          }
+        }
+      },
+      "verdict": {
+        "available": false,
+        "unavailable": "input-incomplete",
+        "action": "pm-select-type",
+        "escalated_reason": "input-incomplete"
+      },
+      "transport_attempts": 0,
+      "blocked_event_id": "b273ec48-9eb9-4333-a383-cce0bbf29243",
+      "input_diagnostics": {
+        "stage": "evidence-preparation",
+        "transport": "not-sent",
+        "issues": [
+          {
+            "field": "state.evidence_sources[0].text",
+            "code": "criterion-reference-other-object",
+            "criterion": "AC-005"
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "Same criterion number sourced from another key",
+      "input": {
+        "dp": "dp-w-type",
+        "key": "mw-dp-material-pipeline",
+        "trigger": "same-criterion-number-sourced-from-another-key",
+        "material": {
+          "task_goal": "Repair the CSV export so special characters round-trip unchanged.",
+          "task_requirements": "Touch the exporter and its tests only. Preserve the format protocol.",
+          "task_deliverables": "Exporter escape fix and regression assertions for commas and double quotes.",
+          "images_required": false
+        },
+        "preparation": {
+          "basis_catalog": [
+            {
+              "id": "codingA-basis",
+              "text": "coding：有明确算法改动和测试交付时选coding。",
+              "applies_to": [
+                "coding"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "researchA-basis",
+              "text": "research：若当前工作仅为取证、无需修改代码时选research。",
+              "applies_to": [
+                "research"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "reviewA-basis",
+              "text": "review：若当前工作是审查别人已完成的产物时选review。",
+              "applies_to": [
+                "review"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "visionA-basis",
+              "text": "vision：若必须解释图像像素且host能力允许时选vision。",
+              "applies_to": [
+                "vision"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            }
+          ],
+          "prepared_at": "2026-11-08T10:00:00+00:00",
+          "model_context": {
+            "desc": [
+              "Read the different object before acting."
+            ],
+            "enum_meanings": {
+              "coding": "需要修改代码或测试的任务类型。",
+              "known": "对应约束或条件已由本次来源确认。",
+              "research": "以取证/研究为主的任务类型。",
+              "review": "审查已有产物的任务类型。",
+              "vision": "必须解释图像像素的任务类型。"
+            },
+            "terminology": {
+              "CSV": "Comma-Separated Values: 逗号分隔值文本格式；本例需正确转义逗号和双引号并保持往返解析一致。",
+              "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+              "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+              "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+              "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+              "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+            },
+            "references": {
+              "proof": {
+                "kind": "evidence",
+                "path": ".agenticdoc/other-criterion-key/criterion-note.txt"
+              }
+            }
+          }
+        }
+      },
+      "verdict": {
+        "available": false,
+        "unavailable": "input-incomplete",
+        "action": "pm-select-type",
+        "escalated_reason": "input-incomplete"
+      },
+      "transport_attempts": 0,
+      "blocked_event_id": "0b7a0f18-2131-4b98-84db-1a40b059e186",
+      "input_diagnostics": {
+        "stage": "evidence-preparation",
+        "transport": "not-sent",
+        "issues": [
+          {
+            "field": "state.evidence_sources[0].text",
+            "code": "criterion-reference-other-object",
+            "criterion": "AC-005"
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "Same-key desc and hydrated criterion",
+      "input": {
+        "dp": "dp-w-type",
+        "key": "mw-dp-material-pipeline",
+        "trigger": "same-key-desc-and-hydrated-criterion",
+        "material": {
+          "task_goal": "Repair the CSV export so special characters round-trip unchanged.",
+          "task_requirements": "Touch the exporter and its tests only. Preserve the format protocol.",
+          "task_deliverables": "Exporter escape fix and regression assertions for commas and double quotes.",
+          "images_required": false
+        },
+        "preparation": {
+          "basis_catalog": [
+            {
+              "id": "codingA-basis",
+              "text": "coding：有明确算法改动和测试交付时选coding。",
+              "applies_to": [
+                "coding"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "researchA-basis",
+              "text": "research：若当前工作仅为取证、无需修改代码时选research。",
+              "applies_to": [
+                "research"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "reviewA-basis",
+              "text": "review：若当前工作是审查别人已完成的产物时选review。",
+              "applies_to": [
+                "review"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            },
+            {
+              "id": "visionA-basis",
+              "text": "vision：若必须解释图像像素且host能力允许时选vision。",
+              "applies_to": [
+                "vision"
+              ],
+              "material_refs": [
+                "task_deliverables"
+              ],
+              "finding_ids": [],
+              "remaining_ids": []
+            }
+          ],
+          "prepared_at": "2026-11-08T10:00:00+00:00",
+          "model_context": {
+            "desc": [
+              "核对AC-005的引用。"
+            ],
+            "enum_meanings": {
+              "coding": "需要修改代码或测试的任务类型。",
+              "known": "对应约束或条件已由本次来源确认。",
+              "research": "以取证/研究为主的任务类型。",
+              "review": "审查已有产物的任务类型。",
+              "vision": "必须解释图像像素的任务类型。"
+            },
+            "terminology": {
+              "CSV": "Comma-Separated Values: 逗号分隔值文本格式；本例需正确转义逗号和双引号并保持往返解析一致。",
+              "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+              "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+              "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+              "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+              "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+            },
+            "references": {
+              "proof": {
+                "kind": "evidence",
+                "path": "criterion-current.txt"
+              }
+            }
+          }
+        }
+      },
+      "verdict": {
+        "available": true,
+        "decision_id": "dp-w-type:33143dfe-9a7f-8006-8838-9c488bfc5131",
+        "mode": "auto",
+        "acted": false,
+        "answers": {
+          "triage_type": {
+            "value": "coding",
+            "confidence": 0.91
+          },
+          "basis_id": {
+            "value": "codingA-basis",
+            "confidence": 0.91
+          }
+        },
+        "confidence_source": "api",
+        "latency_ms": 32,
+        "selection": {
+          "question": "triage_type",
+          "id": "coding"
+        },
+        "basis": {
+          "id": "codingA-basis",
+          "text": "coding：有明确算法改动和测试交付时选coding。",
+          "applies_to": [
+            "coding"
+          ],
+          "material_refs": [
+            "task_deliverables"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        },
+        "feedback": {
+          "stage": "consumed",
+          "status": "written",
+          "recorded": true
+        }
+      },
+      "transport_attempts": 1
+    }
+  ]
+}

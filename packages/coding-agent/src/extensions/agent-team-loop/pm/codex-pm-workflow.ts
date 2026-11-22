@@ -10,6 +10,7 @@ export function createCodexDispatchAdapter(
 	indexStore: IndexStore,
 	expectedKey: string,
 	expectedClaimId: string,
+	cardType: "coding" | "review",
 ): WorkerDispatchAdapter {
 	return (ownerKey) => {
 		try {
@@ -22,8 +23,11 @@ export function createCodexDispatchAdapter(
 			const matches = rows.filter((row) => normalizeKey(row.key) === normalizeKey(ownerKey));
 			if (matches.length !== 1) throw new Error("Expected one authoritative Codex key row");
 			const row = matches[0];
-			if (!row || row.status !== "active" || row.claimId !== "codex" || row.phase !== "EXECUTE") {
-				throw new Error("Codex dispatch requires an active codex claim in EXECUTE");
+			if (!row || row.status !== "active" || row.claimId !== "codex") {
+				throw new Error("Codex dispatch requires an active codex claim");
+			}
+			if (row.phase !== "EXECUTE" && !(cardType === "review" && row.phase === "VERIFY")) {
+				throw new Error("Codex dispatch requires EXECUTE; lightweight review also supports VERIFY");
 			}
 			const keyDir = path.join(fs.realpathSync.native(agenticdocRoot), row.key);
 			const file = path.join(keyDir, "codex_doc.md");

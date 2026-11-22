@@ -1,0 +1,479 @@
+{
+  "candidates": {
+    "decision_selection": [
+      {
+        "id": "finalizeA",
+        "label": "结论 finalize: 可以收尾：按交付目标与验收条件直接签收\n依据 finalizeA-basis: finalize：全部必需标准及独审证据齐备时才收尾；未知不能当pass。"
+      },
+      {
+        "id": "continueA",
+        "label": "结论 continue: 继续完成：交 PM 推进未完成的缺口\n依据 continueA-basis: continue：补AC-002中断证据并复核，保留未完成事实。"
+      },
+      {
+        "id": "user-confirmA",
+        "label": "结论 user-confirm: 交用户确认：由 PM 提出具体待确认项\n依据 confirmA-basis: user-confirm：仅对真实需用户决定且不能在原权限内取得的条件提具体问题。"
+      }
+    ]
+  },
+  "decision_id": "dp-sign-key:current-sign-continue",
+  "dp": "dp-sign-key",
+  "field_trace": {
+    "fields": {
+      "/model": {
+        "sources": [
+          "transport:resolved_model"
+        ],
+        "transform": "resolve-config"
+      },
+      "/questions/decision_selection/criteria/continueA": {
+        "sources": [
+          "book:/preparation/basis_catalog/1",
+          "registry:dp-sign-key/q-conclusion/labels/continue"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/finalizeA": {
+        "sources": [
+          "book:/preparation/basis_catalog/0",
+          "registry:dp-sign-key/q-conclusion/labels/finalize"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/user-confirmA": {
+        "sources": [
+          "book:/preparation/basis_catalog/2",
+          "registry:dp-sign-key/q-conclusion/labels/user-confirm"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/instructions": {
+        "sources": [
+          "registry:dp-sign-key/instructions",
+          "registry:prepared_basis_instructions"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/questions/decision_selection/type": {
+        "sources": [
+          "registry:dp-sign-key/protocol"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/state/desc/0": {
+        "sources": [
+          "book:/preparation/model_context/desc/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/1": {
+        "sources": [
+          "book:/preparation/model_context/desc/1"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/2": {
+        "sources": [
+          "book:/preparation/model_context/desc/2"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/continue": {
+        "sources": [
+          "registry:dp-sign-key/q-conclusion/labels/continue"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/finalize": {
+        "sources": [
+          "registry:dp-sign-key/q-conclusion/labels/finalize"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/fix": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/fix"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/met": {
+        "sources": [
+          "registry:review/met"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/pass": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/pass"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/unknown": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/unknown"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/unverified": {
+        "sources": [
+          "registry:review/unverified"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/user-confirm": {
+        "sources": [
+          "registry:dp-sign-key/q-conclusion/labels/user-confirm"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/material/actual_completion": {
+        "sources": [
+          "book:/material/actual_completion"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/delivery_goal": {
+        "sources": [
+          "book:/material/delivery_goal"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/unfinished_impact/0": {
+        "sources": [
+          "book:/material/unfinished_impact/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/verification_evidence/unverified/0": {
+        "sources": [
+          "book:/material/verification_evidence/unverified/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/verification_evidence/verified/0": {
+        "sources": [
+          "book:/material/verification_evidence/verified/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/quality_gate": {
+        "sources": [
+          "host:current-quality-gate"
+        ],
+        "transform": "verified-independent-review"
+      },
+      "/state/references/AC-001": {
+        "sources": [
+          "contract:key-1/spec.md#AC-001"
+        ],
+        "transform": "current-criterion"
+      },
+      "/state/references/AC-001/review": {
+        "sources": [
+          "book:/preparation/model_context/review/AC-001"
+        ],
+        "transform": "copy"
+      },
+      "/state/references/AC-002": {
+        "sources": [
+          "contract:key-1/spec.md#AC-002"
+        ],
+        "transform": "current-criterion"
+      },
+      "/state/references/AC-002/review": {
+        "sources": [
+          "book:/preparation/model_context/review/AC-002"
+        ],
+        "transform": "copy"
+      },
+      "/state/references/VC-001": {
+        "sources": [
+          "contract:key-1/design.md#VC-001"
+        ],
+        "transform": "current-criterion"
+      },
+      "/state/references/VC-001/review": {
+        "sources": [
+          "book:/preparation/model_context/review/VC-001"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/AC": {
+        "sources": [
+          "registry:terminology/AC"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/ID": {
+        "sources": [
+          "book:/preparation/model_context/terminology/ID"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/PM": {
+        "sources": [
+          "registry:terminology/PM"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/QG": {
+        "sources": [
+          "book:/preparation/model_context/terminology/QG"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/VC": {
+        "sources": [
+          "registry:terminology/VC"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/desc": {
+        "sources": [
+          "book:/preparation/model_context/terminology/desc"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/review": {
+        "sources": [
+          "book:/preparation/model_context/terminology/review"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/独审": {
+        "sources": [
+          "book:/preparation/model_context/terminology/独审"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/补证": {
+        "sources": [
+          "book:/preparation/model_context/terminology/补证"
+        ],
+        "transform": "copy"
+      }
+    },
+    "local_only": [
+      "/meta",
+      "/notes",
+      "/preparation/prepared_at",
+      "/preparation/basis_catalog"
+    ]
+  },
+  "file_evidence": [
+    {
+      "canonical_path": null,
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_sign_current_continue_mat0\\project\\.agenticdoc\\key-1\\evidence\\contract-freeze.json",
+      "sha256": null,
+      "status": "missing"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_sign_current_continue_mat0\\project\\.agenticdoc\\key-1\\spec.md",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_sign_current_continue_mat0\\project\\.agenticdoc\\key-1\\spec.md",
+      "sha256": "f418d317ac7b652c9f9a28befed4b00ae719b23fa3c78ddd9b53f195c6d921e6"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_sign_current_continue_mat0\\project\\.agenticdoc\\key-1\\design.md",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_sign_current_continue_mat0\\project\\.agenticdoc\\key-1\\design.md",
+      "sha256": "3383e963fefddbe6ea44e9847b9d631880224910dea55212e60d27dd4415faf6"
+    }
+  ],
+  "kind": "input-state",
+  "local_preparation": {
+    "basis_catalog": [
+      {
+        "applies_to": [
+          "finalize"
+        ],
+        "finding_ids": [],
+        "id": "finalizeA-basis",
+        "material_refs": [
+          "verification_evidence"
+        ],
+        "remaining_ids": [],
+        "text": "finalize：全部必需标准及独审证据齐备时才收尾；未知不能当pass。"
+      },
+      {
+        "applies_to": [
+          "continue"
+        ],
+        "finding_ids": [],
+        "id": "continueA-basis",
+        "material_refs": [
+          "verification_evidence"
+        ],
+        "remaining_ids": [],
+        "text": "continue：补AC-002中断证据并复核，保留未完成事实。"
+      },
+      {
+        "applies_to": [
+          "user-confirm"
+        ],
+        "finding_ids": [],
+        "id": "confirmA-basis",
+        "material_refs": [
+          "verification_evidence"
+        ],
+        "remaining_ids": [],
+        "text": "user-confirm：仅对真实需用户决定且不能在原权限内取得的条件提具体问题。"
+      }
+    ],
+    "model_context": {
+      "desc": [
+        "Deliver stable export of special characters.",
+        "The round trip passed in the fixture.",
+        "QG recorded fix because interruption and partial-output handling remain unverified."
+      ],
+      "enum_meanings": {
+        "continue": "继续原授权范围内的工作或补证。",
+        "finalize": "交付具备收尾条件；仍须原签收写入者和业务检查。",
+        "fix": "有明确产物缺陷或证据缺口，需修复/补证后复核。",
+        "pass": "在当前检查/审核上下文满足要求；不能由局部检查扩大为整体验收。",
+        "unknown": "当前事实或验证结论未知。",
+        "user-confirm": "确有需要用户回答的外部条件或取舍。"
+      },
+      "review": {
+        "AC-001": {
+          "evidence": "The fixture records a successful round trip.",
+          "status": "met"
+        },
+        "AC-002": {
+          "evidence": "The interruption check has not run.",
+          "status": "unverified"
+        },
+        "VC-001": {
+          "evidence": "The fixture records matching round-trip values.",
+          "status": "met"
+        }
+      },
+      "terminology": {
+        "AC": "Acceptance Criterion / Acceptance Criteria: 验收标准：已确认的应达到的业务结果；具体编号的完整正文在references中。",
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "QG": "Quality Gate: 质量门禁/正式质量审核：按已确认验收标准、验证结果和独立审查形成pass/fix/reopen业务结论；不等于模型置信度。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。",
+        "独审": "独立审查: 由与实现/准备角色独立的审查来源核对当前标准、实际证据和未覆盖面，不能以作者自评替代。",
+        "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+      }
+    },
+    "prepared_at": "2026-11-08T10:00:00+00:00"
+  },
+  "pair_map": {
+    "continueA": {
+      "basis_id": "continueA-basis",
+      "basis_text": "continue：补AC-002中断证据并复核，保留未完成事实。",
+      "choice": "continue",
+      "choice_label": "继续完成：交 PM 推进未完成的缺口",
+      "choice_label_source": "registry:dp-sign-key/q-conclusion/labels/continue",
+      "finding_ids": [],
+      "label": "结论 continue: 继续完成：交 PM 推进未完成的缺口\n依据 continueA-basis: continue：补AC-002中断证据并复核，保留未完成事实。",
+      "remaining_ids": []
+    },
+    "finalizeA": {
+      "basis_id": "finalizeA-basis",
+      "basis_text": "finalize：全部必需标准及独审证据齐备时才收尾；未知不能当pass。",
+      "choice": "finalize",
+      "choice_label": "可以收尾：按交付目标与验收条件直接签收",
+      "choice_label_source": "registry:dp-sign-key/q-conclusion/labels/finalize",
+      "finding_ids": [],
+      "label": "结论 finalize: 可以收尾：按交付目标与验收条件直接签收\n依据 finalizeA-basis: finalize：全部必需标准及独审证据齐备时才收尾；未知不能当pass。",
+      "remaining_ids": []
+    },
+    "user-confirmA": {
+      "basis_id": "confirmA-basis",
+      "basis_text": "user-confirm：仅对真实需用户决定且不能在原权限内取得的条件提具体问题。",
+      "choice": "user-confirm",
+      "choice_label": "交用户确认：由 PM 提出具体待确认项",
+      "choice_label_source": "registry:dp-sign-key/q-conclusion/labels/user-confirm",
+      "finding_ids": [],
+      "label": "结论 user-confirm: 交用户确认：由 PM 提出具体待确认项\n依据 confirmA-basis: user-confirm：仅对真实需用户决定且不能在原权限内取得的条件提具体问题。",
+      "remaining_ids": []
+    }
+  },
+  "policy": null,
+  "questions_version": "q-522132b0",
+  "state": {
+    "desc": [
+      "Deliver stable export of special characters.",
+      "The round trip passed in the fixture.",
+      "QG recorded fix because interruption and partial-output handling remain unverified."
+    ],
+    "enum_meanings": {
+      "continue": "继续完成：交 PM 推进未完成的缺口",
+      "finalize": "可以收尾：按交付目标与验收条件直接签收",
+      "fix": "有明确产物缺陷或证据缺口，需修复/补证后复核。",
+      "met": "The current criterion was checked and satisfied.",
+      "pass": "在当前检查/审核上下文满足要求；不能由局部检查扩大为整体验收。",
+      "unknown": "当前事实或验证结论未知。",
+      "unverified": "The current criterion lacks a conclusive verification result.",
+      "user-confirm": "交用户确认：由 PM 提出具体待确认项"
+    },
+    "material": {
+      "actual_completion": "Special-character round trip was checked. The interruption scenario has not run.",
+      "delivery_goal": "稳定导出：特殊字符往返保持一致，中断时不留下半成品。",
+      "unfinished_impact": [
+        "The current QG is fix. Interruption behavior is open and can be checked within the existing scope."
+      ],
+      "verification_evidence": {
+        "unverified": [
+          "AC-002: Interruption and partial-output behavior were not tested."
+        ],
+        "verified": [
+          "AC-001: Special-character round-trip passed."
+        ]
+      }
+    },
+    "quality_gate": {
+      "conclusion": null,
+      "last_recorded_decision": {
+        "conclusion": "fix",
+        "scope_version_verified": false
+      },
+      "meaning": "The host could not verify a current whole-delivery quality gate. Prepared claims alone cannot authorize finalize.",
+      "object": "key-1",
+      "status": "needs-review"
+    },
+    "references": {
+      "AC-001": {
+        "kind": "acceptance-criterion",
+        "review": {
+          "evidence": "The fixture records a successful round trip.",
+          "status": "met"
+        },
+        "text": "特殊字符往返保持一致。"
+      },
+      "AC-002": {
+        "kind": "acceptance-criterion",
+        "review": {
+          "evidence": "The interruption check has not run.",
+          "status": "unverified"
+        },
+        "text": "中断时不留下半成品。"
+      },
+      "VC-001": {
+        "expected_output": "[VERIFY] round-trip",
+        "kind": "verification-criterion",
+        "layer": "L2",
+        "review": {
+          "evidence": "The fixture records matching round-trip values.",
+          "status": "met"
+        },
+        "source_criteria": [
+          "AC-001"
+        ],
+        "text": "Round-trip special characters and compare the result."
+      }
+    },
+    "terminology": {
+      "AC": "Acceptance criterion: a required delivery outcome.",
+      "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+      "PM": "Project manager: the current decision owner and result consumer.",
+      "QG": "Quality Gate: 质量门禁/正式质量审核：按已确认验收标准、验证结果和独立审查形成pass/fix/reopen业务结论；不等于模型置信度。",
+      "VC": "Verification criterion: the check and its evidence for a requirement.",
+      "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+      "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。",
+      "独审": "独立审查: 由与实现/准备角色独立的审查来源核对当前标准、实际证据和未覆盖面，不能以作者自评替代。",
+      "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+    }
+  },
+  "state_digest": "2b5f9eed0ec6baa4"
+}

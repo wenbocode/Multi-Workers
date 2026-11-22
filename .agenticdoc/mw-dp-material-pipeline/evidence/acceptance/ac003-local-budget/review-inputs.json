@@ -1,0 +1,38 @@
+{
+  "spec": ".agenticdoc/mw-dp-material-pipeline/spec.md@44658e3f68adb97d1987e8fc809badc1822a28202c941fd7bf83b5db48a5a662",
+  "design": ".agenticdoc/mw-dp-material-pipeline/design.md@f5595673e39edbfdc40b968bc517fac5434f82c77542fe1275a99820535f269e",
+  "freeze": ".agenticdoc/mw-dp-material-pipeline/evidence/contract-freeze.json@ed46cd06a987b556c3e315809833f7b82491d49799fe091f1f495eda2f9fdc0d",
+  "prior_t09": ".agenticdoc/mw-dp-material-pipeline/evidence/review/ac005-t09-independent.md@5e76ba9c7798e376bce0a14b0c42bb3eb86d540cea7f6107759880968737a4ba",
+  "prior_gate": ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/ac005-official/open-criteria-diff.json@275ba4ca3734755b4d8caa858cdcb2f4c10a6bca3e75aea70e8018571b513004",
+  "pm": ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/ac003-local-budget/pm/normal-entry.json@b809b408c42da7b8713ecd5ef7da8e8e2bec511065558fb7eac633728453db29",
+  "worker": ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/ac003-local-budget/worker/normal-entry.json@9bad839b2373ab49a5b170d01eb85e498269c167b3157336476b3cc531dc882a",
+  "comparison": ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/ac003-local-budget/v05-four-stage-comparison.json@88bf86eaf051a2f0da257556f59ab7230d3c79885a60f9f7ce8f57cb65ab1859",
+  "source_changes": {
+    "packages/multi-workers/decision_model_context.py": {
+      "prior": "0a3492290449588dd46aa6d30d7ae3009023d7748e7b5924fe33f5961f89a33a",
+      "current": "afa3c00fd09c651077a5bb45d1997227edce687663320ece794f8d39fc9fd7a2"
+    },
+    "packages/multi-workers/codex_pm.py": {
+      "prior": "31b406d93ac9c3456d3f125f83e9ac18596d2db5acbac5870d385e5b62cc1195",
+      "current": "c42992cde9b172323827bd0ed0cd9d8c9e7bb0b6102f2ec228c7b430ad91e1b4"
+    },
+    "packages/multi-workers/codex_dispatch.mjs": {
+      "prior": "8fa1165ce50ec2dd020762a1cc32de8cd7288f6bfa92108e237a387606c6b5d1",
+      "current": "8a6f553ad3121f8a8453666ec27fbcc7dc27133dfe48065f58e7c1246e91c61e"
+    }
+  },
+  "local_budget_matrix": {
+    "1000": {
+      "pm": 1,
+      "worker": 1
+    },
+    "1001": {
+      "pm": 0,
+      "worker": 0
+    },
+    "11_sentences": {
+      "pm": 0,
+      "worker": 0
+    }
+  }
+}

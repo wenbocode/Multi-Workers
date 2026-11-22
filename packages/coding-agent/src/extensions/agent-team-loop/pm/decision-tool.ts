@@ -121,6 +121,7 @@ export const ASK_DECISION_PYTHON_REASONS: ReadonlySet<string> = new Set([
 	"timeout",
 	"rate-limited",
 	"upstream-error",
+	"transport-unknown",
 	"bad-response",
 	"unsupported-question-type",
 	"budget-exhausted",
@@ -362,6 +363,7 @@ export interface AskDecisionUnavailable {
 	/** True only on a same-matter replay (no new DP request was sent). */
 	matter_suppressed?: true;
 	input_diagnostics?: DecisionInputDiagnostics;
+	preparation_status?: "needs-evidence" | "equivalent" | "needs-review";
 	original_blocked_event_id?: string;
 }
 
@@ -758,12 +760,12 @@ export function missingMaterialPaths(dp: string, material: unknown): string[] {
 
 /** Build the local envelope metadata for ONE new decision.
  *
- * `logical_id` is minted here, so a caller cannot accidentally reuse a previous
- * decision's id; `retry_of` is explicit (a retry mints a new id and points at
- * the previous one). `task_key` stays `null` when the decision has no task.
+ * A registered PM can supply its host-derived matter identity across sessions.
+ * Other callers mint a fresh ID. An explicit retry points at its previous ID.
  */
 export function buildDecisionToolMeta(input: {
 	key: string;
+	logicalId?: string;
 	taskKey?: string | null;
 	initiatorRole: DecisionInitiatorRole;
 	retryOf?: string | null;
@@ -773,7 +775,7 @@ export function buildDecisionToolMeta(input: {
 	const retryOf = input.retryOf?.trim() ?? "";
 	return {
 		record_version: DECISION_RECORD_VERSION,
-		logical_id: randomUUID(),
+		logical_id: input.logicalId ?? randomUUID(),
 		key: input.key.trim(),
 		task_key: taskKey === "" ? null : taskKey,
 		initiator_role: input.initiatorRole,
@@ -894,6 +896,13 @@ export function previewDecisionInput(
 	preparation?.basis_catalog.forEach((item, index) => {
 		if (typeof item.text === "string") evidence_fields.push(`preparation.basis_catalog[${index}].text`);
 	});
+	collect(preparation?.model_context?.desc, "preparation.model_context.desc");
+	if (isRecord(preparation?.model_context?.review)) {
+		for (const [name, row] of Object.entries(preparation.model_context.review)) {
+			if (/^(?:AC|VC)-[0-9]{3}$/.test(name) && isRecord(row) && typeof row.evidence === "string")
+				evidence_fields.push(`preparation.model_context.review.${name}.evidence`);
+		}
+	}
 	const valid = validateDecisionMaterial(dp, material);
 	const issues: MaterialIssue[] = valid.ok ? [] : [...valid.issues];
 	const references: MaterialReferenceIssue[] = [];
@@ -1331,6 +1340,8 @@ export function terminalDirective(dp: string, blocks: number): string {
 // ── The one decision call ───────────────────────────────────────────────────
 
 export interface AskDecisionInput {
+	/** Durable logical identity supplied by a registered PM, never by tool parameters. */
+	logicalId?: string;
 	projectDir: string;
 	dp: string;
 	/** Audit label for the trace line only; the decision id comes from Python. */
@@ -1417,6 +1428,7 @@ function unavailable(
 		material_ref_issues?: MaterialReferenceIssue[];
 		observation?: DecisionFeedbackObservation;
 		input_diagnostics?: DecisionInputDiagnostics;
+		preparation_status?: AskDecisionUnavailable["preparation_status"];
 		original_blocked_event_id?: string;
 	} = {},
 ): AskDecisionOutcome {
@@ -1431,6 +1443,7 @@ function unavailable(
 	}
 	if (extra.material_issues?.length) payload.material_issues = extra.material_issues;
 	if (extra.input_diagnostics) payload.input_diagnostics = extra.input_diagnostics;
+	if (extra.preparation_status) payload.preparation_status = extra.preparation_status;
 	if (extra.original_blocked_event_id) payload.original_blocked_event_id = extra.original_blocked_event_id;
 	return {
 		payload,
@@ -1594,6 +1607,7 @@ async function runAskDecisionCore(input: AskDecisionInput): Promise<AskDecisionO
 	if (!isMaterialDp(dp)) return runLegacyAskDecision(input, dp, started);
 	const meta = buildDecisionToolMeta({
 		key: input.key ?? "",
+		logicalId: input.logicalId,
 		taskKey: input.taskKey,
 		initiatorRole: role,
 		retryOf: input.retryOf,
@@ -1789,6 +1803,12 @@ async function callDecideChild(
 			outcome: unavailable(reason, dp, true, {
 				escalated_reason: escalated,
 				input_diagnostics: inputDiagnostics,
+				preparation_status:
+					response.preparation_status === "needs-evidence" ||
+					response.preparation_status === "equivalent" ||
+					response.preparation_status === "needs-review"
+						? response.preparation_status
+						: undefined,
 				original_blocked_event_id:
 					typeof response.original_blocked_event_id === "string" &&
 					/^[0-9a-f-]{36}$/.test(response.original_blocked_event_id)
@@ -1808,7 +1828,7 @@ async function callDecideChild(
 /** Submit the prepared envelope and correlate its selected rationale.
  *
  * Order (design §2/§4.1): validate the material against the generated registry,
- * build the local envelope (fresh `logical_id` per real call), refuse an
+ * build the local envelope (the registered PM reuses its same-matter ID), refuse an
  * over-budget material instead of truncating it, send, then resolve the native
  * selection back to the candidate the asker wrote and record `consumed`
  * through the single Python lifecycle writer. Nothing here executes business
@@ -1970,6 +1990,7 @@ async function runSignoffAskDecision(
 		if (refusedIncomplete) {
 			return unavailable(ASK_DECISION_REASON_INPUT_INCOMPLETE, dp, true, {
 				escalated_reason: ASK_DECISION_REASON_INPUT_INCOMPLETE,
+				preparation_status: receipt.preparation_status === "needs-review" ? "needs-review" : undefined,
 				input_diagnostics: inputDiagnostics,
 				observation: receiptObservation,
 			});
@@ -2272,6 +2293,93 @@ const PREPARATION_SCHEMA = Type.Optional(
 	Type.Object(
 		{
 			prepared_at: Type.String(),
+			model_context: Type.Optional(
+				Type.Object(
+					{
+						desc: Type.Array(Type.String(), {
+							minItems: 1,
+							maxItems: 10,
+							description: "Brief sentences covering the goal, deviation, event and evidence or unknowns.",
+						}),
+						terminology: Type.Optional(Type.Record(Type.String(), Type.String())),
+						enum_meanings: Type.Optional(Type.Record(Type.String(), Type.String())),
+						references: Type.Optional(
+							Type.Record(
+								Type.String(),
+								Type.Union([
+									Type.Object({ kind: Type.String(), text: Type.String() }, { additionalProperties: false }),
+									Type.Object(
+										{
+											kind: Type.String(),
+											path: Type.String(),
+											lines: Type.Optional(
+												Type.Object({
+													start: Type.Integer({ minimum: 1 }),
+													end: Type.Integer({ minimum: 1 }),
+												}),
+											),
+										},
+										{ additionalProperties: false },
+									),
+								]),
+							),
+						),
+						review: Type.Optional(
+							Type.Record(
+								Type.String(),
+								Type.Object({
+									status: Type.Union([Type.Literal("met"), Type.Literal("unmet"), Type.Literal("unverified")]),
+									evidence: Type.String(),
+								}),
+							),
+						),
+						reasons: Type.Optional(Type.Record(Type.String(), Type.String())),
+						auto_comparison: Type.Optional(
+							Type.Object({
+								budget: Type.Object({
+									remaining_seconds: Type.Integer({ minimum: 1 }),
+									reserve_seconds: Type.Integer({ minimum: 0 }),
+								}),
+								priority: Type.Optional(
+									Type.Object({
+										rule: Type.String(),
+										source: Type.Union([
+											Type.Literal("background.task_goal"),
+											Type.Literal("background.constraints"),
+										]),
+									}),
+								),
+								paths: Type.Record(
+									Type.String(),
+									Type.Object({
+										max_seconds: Type.Integer({ minimum: 1 }),
+										observation: Type.String(),
+										stop: Type.String(),
+										successor: Type.String(),
+										steps: Type.Array(
+											Type.Object({
+												id: Type.String(),
+												max_seconds: Type.Integer({ minimum: 1 }),
+												on_success: Type.Union([Type.String(), Type.Null()]),
+												on_failure: Type.Union([Type.String(), Type.Null()]),
+											}),
+											{ minItems: 1, maxItems: 16 },
+										),
+									}),
+								),
+								pairs: Type.Array(
+									Type.Object({
+										candidates: Type.Tuple([Type.String(), Type.String()]),
+										criterion: Type.String(),
+										reversal: Type.String(),
+									}),
+								),
+							}),
+						),
+					},
+					{ additionalProperties: false },
+				),
+			),
 			basis_catalog: Type.Array(
 				Type.Object(
 					{
@@ -2284,6 +2392,8 @@ const PREPARATION_SCHEMA = Type.Optional(
 								"Not repository file path:line (e.g. src/example.ts:12); put file locations in evidence field values.",
 						}),
 						applies_to: Type.Array(Type.String()),
+						finding_ids: Type.Optional(Type.Array(Type.String())),
+						remaining_ids: Type.Optional(Type.Array(Type.String())),
 					},
 					{ additionalProperties: false },
 				),
@@ -2733,17 +2843,20 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			...(runState === undefined ? {} : { owner: runState.owner_key, runId: runState.run_id }),
 			...(verifiedPmOwner === undefined ? {} : { owner: verifiedPmOwner }),
 		});
+		// A live PM claim grants access to the key. The matter survives that
+		// claim, while a worker's matter remains bound to its individual run.
+		const pmMatter = verifiedPmOwner !== undefined && key !== undefined;
 		return {
 			binding,
 			host: { ...(options.hostFacts ?? {}), binding },
 			matterRef: decisionMatterRef({
 				version: decisionMatterVersion(),
-				owner: binding.owner ?? null,
+				...(pmMatter ? {} : { owner: binding.owner ?? null, claim_id: binding.claim_id ?? null }),
 				role: binding.role,
 				key: binding.key ?? null,
 				task_key: binding.task_key ?? null,
 				run_id: binding.run_id ?? null,
-				claim_id: binding.claim_id ?? null,
+				...(stage === undefined ? {} : { stage_matter_ref: stage.matterRef }),
 				dp: params.dp,
 				question: params.question ?? null,
 				note: params.note ?? null,
@@ -2810,7 +2923,13 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				"inference from the mode.",
 			"Before submission, use preview=true on ask_decision. Correct local input issues and repeat preview before requesting a ruling. Preview never authorizes action or consumes an attempt.",
 			...Object.values(DECISION_MATERIAL_PROMPTS),
-			"Prepare material and a separately timestamped basis_catalog. Each item's material_refs is a non-empty array of existing field paths in this request's material, " +
+			"For dp-QG include prepared criteria for pass, fix and reopen, supported by the current review material. Criteria describe when a branch applies. Keep concrete and unresolved findings separate. Run independent review of the applicable acceptance and verification criteria before asking.",
+			"Prepare material, a separately timestamped basis_catalog, and model_context. Summarize the goal, deviation, event and evidence in desc. Define acronyms in terminology. " +
+				"Define material codes in enum_meanings. Add named references with their text or an authorized file and inclusive line range. " +
+				"For dp-QG and dp-sign-key, list the current AC/VC results in review. Define cited finding_ids and remaining_ids in reasons. " +
+				"For dp-auto, state the existing allowance in background.constraints (for example, remaining 300 seconds), provide the budget and reserve, " +
+				"a sourced priority, forward-only steps ending with null, and criterion and reversal evidence for every candidate pair. " +
+				"Each item's material_refs is a non-empty array of existing field paths in this request's material, " +
 				"without the material. prefix, not repository file path:line. For dp-auto use e.g. background.current_state; " +
 				"for dp-QG use e.g. review_evidence or review_findings. Put file locations in the evidence field values. " +
 				"Each item names its applicable choices. No preparation means this request is blocked; never invent evidence. An L0 note cannot substitute for pm_note.",
@@ -3096,8 +3215,18 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				});
 				return publicResult(params.dp, attachDecisionFeedback(stopped, hostContext));
 			}
+			const matter = hostContext.matterRef;
+			const logicalId =
+				!isolatedChild &&
+				initiatorRole === "pm" &&
+				params.dp !== "dp-sign-key" &&
+				hostContext.binding.owner !== undefined &&
+				hostContext.binding.owner === hostContext.binding.claim_id
+					? `${matter.slice(0, 8)}-${matter.slice(8, 12)}-8${matter.slice(13, 16)}-8${matter.slice(17, 20)}-${matter.slice(20)}`
+					: undefined;
 			let outcome = await runAskDecision({
 				projectDir,
+				logicalId,
 				dp: params.dp,
 				trigger: params.trigger,
 				question: params.question,

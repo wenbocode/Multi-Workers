@@ -1,0 +1,21 @@
+{
+  "record_scope": "reference-check-vectors-not-production-receipt",
+  "expected_wire": "approveA",
+  "expected_business_choice": "approve",
+  "expected_basis_id": "approveA-basis",
+  "expected_finding_ids": [],
+  "expected_remaining_ids": [],
+  "expected_pm_disposition": "adopt-limited-action-in-reference",
+  "required_pm_facts": [
+    "限定动作/无产品写入/完整差异",
+    "单份样本覆盖局限"
+  ],
+  "forbidden_pm_claims": [
+    "动作已经执行",
+    "approve创造了新权限"
+  ],
+  "original_request_bytes_must_remain_identical": true,
+  "historical_response_must_not_be_applied_to_changed_payload": true,
+  "known_material_failures": [],
+  "must_not_assume_actual_execution": true
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "source_id": "src-b735d65f56ee0b1e2c2c",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-QG/source-files/review.txt",
+    "sha256": "bcd994ca97032b4ca025794ded767f4966a239a0e67ed1134b4e69a4177a296f"
+  },
+  {
+    "source_id": "src-f377200e58e21ad15318",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-QG/source-files/v05-reference-F1.txt",
+    "sha256": "39b46de631122e32cbfaaa10c0b2af2e00f5d05d5885c77c3965da25f46ca59b"
+  },
+  {
+    "source_id": "src-60af0b397c6f4530a028",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-QG/source-files/v05-reference-F2.txt",
+    "sha256": "9aa80879c26dd42e87d87721126946808d60e6e104c0d3b75ef6170d634c5719"
+  },
+  {
+    "contract": "spec.md",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-QG/source-files/.agenticdoc/key-1/spec.md",
+    "sha256": "b2f2ea83336080fb74e29f8731a25df8f8be4c19a08e2926f54217fe38a83f97"
+  },
+  {
+    "contract": "design.md",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-QG/source-files/.agenticdoc/key-1/design.md",
+    "sha256": "1779f83a5b83e3a1af9a0101287f9ee4a7b15441672ee34cd771636c555c2f71"
+  }
+]

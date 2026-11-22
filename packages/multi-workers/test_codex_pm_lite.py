@@ -122,6 +122,28 @@ def test_each_criterion_needs_evidence_and_failed_command_is_visible(lite):
     assert invoke(lite, "done", "--summary", "Both criteria verified")["phase"] == "DONE"
 
 
+def test_completion_uses_bound_reviewed_signoff_and_separate_dispositions(lite, monkeypatch):
+    invoke(lite, "check", "--ac", "AC-001", "--", sys.executable, "check.py")
+    invoke(lite, "advance", "--phase", "VERIFY")
+    key_dir = lite / ".agenticdoc/counter"
+    signed_achieved = b"## Achieved\n\nCounter implemented and independently checked.\n"
+    (key_dir / "achieved.md").write_bytes(signed_achieved)
+    monkeypatch.setattr(codex_pm.contract_guard, "read_freeze", lambda _path: {"decision_signoff": "required"})
+    with pytest.raises(ValueError, match="current sign-off"):
+        codex_pm.complete(lite, key_dir, "Must bind the independent sign-off")
+    validation = codex_pm.decision_signoff_result.SignoffValidation(
+        valid=True, reason="", record_version=4, native_basis_verified=True,
+    )
+    monkeypatch.setattr(codex_pm.decision_signoff_result, "validate_signoff", lambda *_: validation)
+    with pytest.raises(ValueError, match="结案遗留"):
+        codex_pm.complete(lite, key_dir, "Must record dispositions")
+    with (key_dir / "codex_doc.md").open("a", encoding="utf-8") as document:
+        document.write("\n## 结案遗留\nNo remaining work.\n")
+    result = codex_pm.complete(lite, key_dir, "Close on signed review")
+    assert (result["phase"], result["status"], result["claim_id"]) == ("DONE", "idle", "—")
+    assert (key_dir / "achieved.md").read_bytes() == signed_achieved
+
+
 @pytest.mark.parametrize("bad_row", [
     "| counter | active | EXECUTE | foreign:1 | — | foreign | now |\n",
     "| COUNTER | active | EXECUTE | codex | — | duplicate | now |\n",
@@ -265,6 +287,33 @@ def test_incompatible_custom_template_fails_before_registering_key(proj):
     assert "update the project template" in invoke(proj, "init", expected=2)["error"]
     assert not (proj / ".agenticdoc/_index.parallel").exists()
     assert not (proj / ".agenticdoc/counter").exists()
+
+
+@pytest.mark.parametrize("phase", ["EXECUTE", "VERIFY"])
+def test_lite_dispatch_preserves_independent_review_role(lite, phase):
+    if phase == "VERIFY":
+        invoke(lite, "advance", "--phase", phase)
+    (lite / ".agenticdoc/target.yml").write_text("active: single\n")
+    card = lite / ".agenticdoc/counter/tasks/T-review.md"
+    card.parent.mkdir()
+    card.write_text(
+        "type: review\n\n## 上下文\n.agenticdoc/goal.md and counter.py:1 define AC-001.\n"
+        "## 审计目标\nVerify increment independently.\n## 要求\nReview the check and its output.\n"
+        "## 未覆盖面声明\nOther modules are outside this review.\n## 交付格式\nUse report.md.\n"
+        f"## 验收命令\n```json\n{json.dumps([sys.executable, 'check.py'])}\n```\n",
+        encoding="utf-8",
+    )
+    result = invoke(lite, "dispatch", "--card", card.stem)
+    task = Path(result["artifacts"]["task.md"]).read_text(encoding="utf-8")
+    assert mw_common.read_task_type(task).type == "review"
+    assert mw_common.read_task_header_scalar(task, "phase") == phase
+    assert "Independently review" in task
+    assert result["queue"] == "pending" and invoke(lite, "dispatch", "--card", card.stem)["reused"]
+    if phase == "VERIFY":
+        coding = card.with_name("T-coding.md")
+        coding.write_text(card.read_text(encoding="utf-8").replace("type: review", "type: coding", 1), encoding="utf-8")
+        refused = invoke(lite, "dispatch", "--card", coding.stem, expected=2)
+        assert "Dispatch requires EXECUTE" in refused["error"]
 
 
 @pytest.mark.parametrize("key", ["counter", "k" * 64])

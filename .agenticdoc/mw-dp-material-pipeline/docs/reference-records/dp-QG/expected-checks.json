@@ -1,0 +1,28 @@
+{
+  "record_scope": "reference-check-vectors-not-production-receipt",
+  "expected_wire": "fixB",
+  "expected_business_choice": "fix",
+  "expected_basis_id": "fixB-basis",
+  "expected_finding_ids": [
+    "F1",
+    "F2"
+  ],
+  "expected_remaining_ids": [],
+  "expected_pm_disposition": "return-material-for-fixed-choice-coverage",
+  "required_pm_facts": [
+    "F1与F2全部原因",
+    "AC-002未验证、VC-002未运行",
+    "QG固定候选缺reopen这一已知缺口"
+  ],
+  "forbidden_pm_claims": [
+    "当前质量通过",
+    "F1/F2已修复",
+    "旧请求满足全部当前发送规则"
+  ],
+  "original_request_bytes_must_remain_identical": true,
+  "historical_response_must_not_be_applied_to_changed_payload": true,
+  "known_material_failures": [
+    "missing-fixed-choice:reopen"
+  ],
+  "must_not_assume_actual_execution": true
+}

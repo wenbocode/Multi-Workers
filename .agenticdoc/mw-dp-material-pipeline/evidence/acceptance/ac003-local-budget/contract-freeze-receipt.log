@@ -1,0 +1,3 @@
+contract-freeze: mw-dp-material-pipeline freeze=.agenticdoc/mw-dp-material-pipeline/evidence/contract-freeze.json
+contract-freeze: ac written ids=AC-001,AC-002,AC-003,AC-004,AC-005,AC-006,AC-007,AC-008,AC-009,AC-010,AC-011,AC-012,AC-013,AC-014,AC-015,AC-016,AC-017,AC-018 replaced=AC-003 old_sha=606a912d1b2483e7d7dccd7eff82d0f7843bf18495240e720d9d2a27f3be6f97 new_sha=95e09efd54dd96ae3a9990ae70340cbb351979fb2e3c669e03f5169f8bb1cdd9
+contract-freeze: vc written ids=VC-001,VC-002,VC-003,VC-004,VC-005,VC-006,VC-007,VC-008,VC-009,VC-010,VC-011,VC-012,VC-013,VC-014,VC-015,VC-016,VC-017,VC-018 replaced=VC-003 old_sha=89af98ca2a9f917ad83157d3965272ea655771c45b7d461d436ade1892526af5 new_sha=77a2b6c1970b1fd576d5f139c76f5fda6df6c825ed9d2692102cad6bde8f4ecb

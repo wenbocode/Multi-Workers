@@ -276,11 +276,14 @@ export interface PreparedBasis {
 	text: string;
 	material_refs: string[];
 	applies_to: string[];
+	finding_ids?: string[];
+	remaining_ids?: string[];
 }
 
 export interface DecisionPreparation {
 	prepared_at: string;
 	basis_catalog: PreparedBasis[];
+	model_context?: Record<string, unknown>;
 }
 
 export interface MaterialIssue {
@@ -431,6 +434,7 @@ export function validateDecisionMaterial(dp: string, material: unknown): Materia
 		const keys = ["id", "label", "description", "consequence", "risk", "conditions"];
 		const ids = new Set<string>();
 		const labels = new Set<string>();
+		const paths = new Map<string, number>();
 		for (const [i, item] of candidates.entries()) {
 			const field = `handling_options[${i}]`;
 			if (!isRecord(item)) {
@@ -443,6 +447,24 @@ export function validateDecisionMaterial(dp: string, material: unknown): Materia
 			}
 			for (const key of keys)
 				if (!nonblank(item[key])) issues.push({ field: `${field}.${key}`, rule: "must be nonblank" });
+			const content = keys.slice(2).map((key) => item[key]);
+			if (content.every(nonblank)) {
+				const path = JSON.stringify(
+					content.map((value) =>
+						value
+							.trim()
+							.replace(/[ \t\r\n]+/g, " ")
+							.toLowerCase(),
+					),
+				);
+				const previous = paths.get(path);
+				if (previous === undefined) paths.set(path, i);
+				else
+					issues.push({
+						field,
+						rule: `duplicates the action, consequence, risk and conditions of handling_options[${previous}]`,
+					});
+			}
 			if (nonblank(item.id)) {
 				if (ids.has(item.id)) issues.push({ field: `${field}.id`, rule: "duplicate candidate id" });
 				ids.add(item.id);
@@ -499,7 +521,8 @@ export function preparationProblems(
 			}
 	}
 	if (!isRecord(preparation)) return [...problems, "preparation"];
-	if (Object.keys(preparation).some((key) => !entry.preparation.keys.includes(key))) problems.push("preparation");
+	if (Object.keys(preparation).some((key) => key !== "model_context" && !entry.preparation.keys.includes(key)))
+		problems.push("preparation");
 	const time = preparation.prepared_at;
 	if (!nonblank(time) || !/^\d{4}-\d\d-\d\dT.+(?:Z|[+-]\d\d:\d\d)$/.test(time) || !Number.isFinite(Date.parse(time)))
 		problems.push("preparation.prepared_at");
@@ -507,13 +530,30 @@ export function preparationProblems(
 	if (!Array.isArray(catalog) || !catalog.length) return [...problems, "preparation.basis_catalog"];
 	const ids = new Set<string>();
 	const choices = decisionChoices(dp, material);
+	const covered = new Set<string>();
 	for (const [i, item] of catalog.entries()) {
 		const path = `preparation.basis_catalog[${i}]`;
 		if (!isRecord(item)) {
 			problems.push(path);
 			continue;
 		}
-		if (Object.keys(item).some((key) => !entry.preparation.basisItemKeys.includes(key))) problems.push(path);
+		if (
+			Object.keys(item).some(
+				(key) => key !== "finding_ids" && key !== "remaining_ids" && !entry.preparation.basisItemKeys.includes(key),
+			)
+		)
+			problems.push(path);
+		for (const field of ["finding_ids", "remaining_ids"] as const) {
+			const values = item[field];
+			if (
+				values !== undefined &&
+				(!Array.isArray(values) ||
+					values.length > 32 ||
+					values.some((id) => typeof id !== "string" || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(id)) ||
+					new Set(values).size !== values.length)
+			)
+				problems.push(`${path}.${field}`);
+		}
 		if (!nonblank(item.id) || ids.has(item.id)) problems.push(`${path}.id`);
 		else ids.add(item.id);
 		if (!nonblank(item.text)) problems.push(`${path}.text`);
@@ -554,7 +594,10 @@ export function preparationProblems(
 			});
 		} else {
 			for (const [index, target] of targets.entries()) {
-				if (nonblank(target) && choices.includes(target)) continue;
+				if (nonblank(target) && choices.includes(target)) {
+					covered.add(target);
+					continue;
+				}
 				const member = `${field}[${index}]`;
 				problems.push(member);
 				choiceIssues?.push({
@@ -567,6 +610,19 @@ export function preparationProblems(
 						: {}),
 				});
 			}
+		}
+	}
+	if (dp === "dp-QG") {
+		const missing = choices.filter((choice) => !covered.has(choice));
+		if (missing.length) {
+			const field = "preparation.basis_catalog";
+			problems.push(field);
+			choiceIssues?.push({
+				field,
+				code: "missing",
+				rule: `missing prepared criteria for ${missing.join(", ")}`,
+				allowed_choices: choices,
+			});
 		}
 	}
 	return problems;

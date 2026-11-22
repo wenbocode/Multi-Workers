@@ -16,7 +16,8 @@ import time
 import tempfile
 
 import mw_common
-from autopilot import active_projection, config, gates, roadmap
+import decision_signoff_result
+from autopilot import active_projection, config, contract_guard, gates, roadmap
 
 if os.name == "nt":
     import msvcrt
@@ -367,13 +368,19 @@ def dispatch_lock(project: Path, task: str):
 
 def dispatch(project: Path, key: str, stem: str, task: str, claim_id: str) -> dict:
     card = child(project, ".agenticdoc", key, "tasks", stem + ".md")
-    acceptance_argv(card.read_text(encoding="utf-8"))
+    card_text = card.read_text(encoding="utf-8")
+    acceptance_argv(card_text)
     key_dir = card.parent.parent
+    lite = is_lite(key_dir)
+    task_type = mw_common.read_task_type(card_text).type
+    if task_type != "coding" and not (lite and task_type == "review"):
+        raise ValueError("A coding card is required, or a review card for a Codex lightweight key")
     task_file = child(key_dir, "workers", task, "task.md")
     with dispatch_lock(project, task):
         owner = key_state(project, key, claim_id)
-        if owner["phase"].upper() != "EXECUTE":
-            raise ValueError("Dispatch requires EXECUTE")
+        phase = owner["phase"].upper()
+        if phase != "EXECUTE" and not (lite and task_type == "review" and phase == "VERIFY"):
+            raise ValueError("Dispatch requires EXECUTE; Codex lightweight review also supports VERIFY")
         existing = next((r for r in queue(project) if r["task_key"] == task), None)
         if existing:
             result = snapshot(key_dir, task, existing)
@@ -388,10 +395,13 @@ def dispatch(project: Path, key: str, stem: str, task: str, claim_id: str) -> di
             if key in roadmap.stage_of_key(roadmap.load_roadmap(plan)):
                 raise ValueError("Autopilot owns this roadmap key; use status to follow the conductor's workers")
         workspace = mw_common.workspace_root(mw_common.load_target_config(project))
-        payload = {"key": key, "task_key": task, "card_path": str(card), "cli": "pi", "type": "coding",
-                   "description": f"Implement tasks/{card.name}. Record changes, checks and residual issues in output.md.\n"
+        assignment = (f"Independently review tasks/{card.name}. Record findings and limitations in report.md."
+                      if task_type == "review" else
+                      f"Implement tasks/{card.name}. Record changes, checks and residual issues in output.md.")
+        payload = {"key": key, "task_key": task, "card_path": str(card), "cli": "pi", "type": task_type,
+                   "description": f"{assignment}\n"
                                   f"PM verification cwd: {json.dumps(workspace)}"}
-        if is_lite(key_dir):
+        if lite:
             payload.update(workflow=LITE_WORKFLOW, claim_id=claim_id)
         proc = subprocess.run(["node", str(Path(__file__).with_name("codex_dispatch.mjs").resolve())],
                               input=json.dumps(payload), cwd=project, capture_output=True, encoding="utf-8", errors="replace")
@@ -518,9 +528,22 @@ def lite_checks(project: Path, key_dir: Path) -> list[dict]:
 
 
 def completion_checks(project: Path, key_dir: Path) -> list[dict]:
-    _, _, criteria = lite_document(key_dir, ready=True)
+    document, _, criteria = lite_document(key_dir, ready=True)
     achieved = child(key_dir, "achieved.md").read_text(encoding="utf-8")
-    if any(not section(achieved, name) for name in ("系统行为变化", "遗留")):
+    residual = section(achieved, "遗留")
+    freeze = contract_guard.read_freeze(key_dir) or {}
+    signoff = None
+    if freeze.get("decision_signoff") == "required":
+        signoff = decision_signoff_result.validate_signoff(key_dir, key_dir.name)
+        if not signoff.valid or not signoff.native_basis_verified:
+            raise ValueError(f"Completion requires a current sign-off: {signoff.reason}")
+    if signoff is not None and signoff.record_version == 4:
+        # The independent reviewer binds achieved.md byte-for-byte. Keep
+        # Codex's dispositions of historical workers in the PM document.
+        residual = residual or section(document, "结案遗留")
+        if not residual:
+            raise ValueError("Reviewed closure requires a nonempty 结案遗留 section in codex_doc.md")
+    elif not section(achieved, "系统行为变化") or not residual:
         raise ValueError("achieved.md requires nonempty 系统行为变化 and 遗留 sections")
     workers = [row for row in queue(project) if mw_common.worker_owner_key(row) == key_dir.name]
     if any(row["status"] not in {"done", "failed", "needs-clarification", "lost", "cancelled"} for row in workers):
@@ -541,7 +564,7 @@ def completion_checks(project: Path, key_dir: Path) -> list[dict]:
             continue
         # Failed/historical attempts must have an explicit disposition in the
         # closure record; they cannot silently disappear behind an exit code.
-        if row["task_key"] not in section(achieved, "遗留"):
+        if row["task_key"] not in residual:
             raise ValueError(f"Worker needs verification or a recorded disposition: {row['task_key']}")
     return checks
 

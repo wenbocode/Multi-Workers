@@ -1247,8 +1247,10 @@ def _local_closure_evidence(key_dir: pathlib.Path, followup: dict) -> str:
     raise SignoffResultError("the current reviewed quality-gate report is missing")
 
 
-def _require_complete_local_qg(key_dir: pathlib.Path, report: str) -> None:
-    """Require an independently reported pass and evidence ref for each applicable ID."""
+def _require_complete_local_qg(
+    key_dir: pathlib.Path, report: str, scope: frozenset[str] | None = None, *, allow_nonpass: bool = False,
+) -> list[dict]:
+    """Check the outcome and evidence of every applicable frozen criterion."""
     spec = _safe_read_text(key_dir, key_dir / "spec.md")
     design = _safe_read_text(key_dir, key_dir / "design.md")
     goal = _safe_read_text(key_dir.parent, key_dir.parent / GOAL_FILE_NAME)
@@ -1259,22 +1261,35 @@ def _require_complete_local_qg(key_dir: pathlib.Path, report: str) -> None:
     frozen = contract_guard.read_freeze(key_dir)
     if (
         frozen is None
-        or frozen.get("decision_signoff") != "required"
+        or (scope is None and frozen.get("decision_signoff") != "required")
         or frozen.get("spec") != contract.acs
         or frozen.get("design") != contract.vcs
         or frozen.get("function_flows") != flows
     ):
         raise SignoffResultError("the current AC, VC or Function Flow differs from the frozen sign-off contract")
-    expected = set(contract.ids) | set(flows)
-    passed = set()
+    expected = scope if scope is not None else set(contract.ids) | set(flows)
+    if not expected or not expected <= set(contract.ids) | set(flows):
+        raise SignoffResultError("the review scope does not name current contract criteria")
+    results = {}
+    statuses = {"PASS": "met"}
+    if allow_nonpass:
+        statuses.update({"FAIL": "unmet", "NOT-RUN": "not-run", "UNKNOWN": "unknown"})
     observed: dict[pathlib.Path, str] = {}
     project = key_dir.parent.parent
     for name, verdict, evidence in re.findall(
         r"(?m)^\|\s*((?:AC|VC|FLOW)-\d{3})\s*\|([^|\r\n]*)\|([^|\r\n]*)\|", report
     ):
+        if scope is not None and name not in scope:
+            continue
+        status = statuses.get(verdict.strip())
         ref = re.fullmatch(r"([A-Za-z0-9._/-]+)@([a-f0-9]{64})", evidence.strip())
-        if name not in expected or name in passed or verdict.strip() != "PASS" or ref is None:
+        if name not in expected or name in results or status is None or (status in {"met", "unmet"} and ref is None):
             raise SignoffResultError(f"independent closure review has an invalid outcome for {name}")
+        results[name] = {"id": name, "status": status}
+        if ref is None:
+            if evidence.strip() not in {"", "-", "—"}:
+                results[name]["review_note"] = evidence.strip()[:400]
+            continue
         relative, digest = ref.groups()
         if relative.startswith("/") or any(part in ("", ".", "..") for part in relative.split("/")):
             raise SignoffResultError(f"invalid evidence path for {name}")
@@ -1285,17 +1300,19 @@ def _require_complete_local_qg(key_dir: pathlib.Path, report: str) -> None:
             observed[file] = hashlib.sha256(file.read_bytes()).hexdigest()
         if observed[file] != digest:
             raise SignoffResultError(f"evidence bytes changed for {name}")
-        passed.add(name)
-    missing = sorted(expected - passed)
+        results[name]["evidence_sha256"] = digest
+    missing = sorted(expected - results.keys())
     if missing:
         raise SignoffResultError("independent closure review is missing " + ", ".join(missing))
+    return list(results.values())
 
 
-def capture_reviewed_signoff(key_dir: pathlib.Path, key: str, review_task: str, review_source: str) -> dict:
-    """Recheck durable independent review and approval evidence from the control workspace."""
-    import decide_signoff
+def _terminal_review_artifact(
+    key_dir: pathlib.Path, key: str, review_task: str, review_source: str,
+) -> tuple[dict, str, str, str, str]:
+    """Read a source pinned by an independent, successful terminal review."""
     import mw_common
-    from autopilot.conductor import _l3_provenance_record, _md_section
+    from autopilot.conductor import _l3_provenance_record
 
     if not isinstance(review_task, str) or not re.fullmatch(r"[\w-]+[\w.-]*", review_task):
         raise SignoffResultError("invalid independent review task")
@@ -1351,7 +1368,30 @@ def capture_reviewed_signoff(key_dir: pathlib.Path, key: str, review_task: str, 
     if review_source != report_path.relative_to(key_dir).as_posix() and f"`{review_source}`" not in report:
         raise SignoffResultError("terminal reviewer did not reference the selected evidence")
     source = _safe_read_text(key_dir, key_dir / review_source)
+    return run, run_text, envelope_text, report, source
+
+
+def capture_reviewed_signoff(
+    key_dir: pathlib.Path, key: str, review_task: str, review_source: str,
+    *, scope: frozenset[str] | None = None,
+) -> dict:
+    """Recheck durable independent review and approval evidence from the control workspace."""
+    import decide_signoff
+    from autopilot.conductor import _md_section
+
+    run, run_text, envelope_text, report, source = _terminal_review_artifact(key_dir, key, review_task, review_source)
     qg = _md_section(source, "## Quality Gate Report")
+    if scope is not None:
+        if not qg:
+            raise SignoffResultError("independent review did not report the requested criteria")
+        _require_complete_local_qg(key_dir, qg, scope)
+        return {
+            "review_task": review_task, "review_run_id": run["run_id"], "review_source": review_source,
+            "evidence_sha256": canonical_sha256({
+                "source": source, "run": run_text, "envelope": envelope_text,
+                "freeze": contract_guard.read_freeze(key_dir), "scope": sorted(scope),
+            }),
+        }
     achieved = _md_section(source, "## Achieved")
     if not qg or not achieved:
         raise SignoffResultError("independent review is missing whole-key acceptance or achieved")
@@ -1426,6 +1466,183 @@ def local_signoff_matches_disk(key_dir: pathlib.Path, record: Mapping, text: str
     return stored == record and text == local_signoff_text(record)
 
 
+def reviewed_signoff_candidates(key_dir: pathlib.Path, *, unreadable: list[str] | None = None):
+    """Find candidate terminal review artifacts and the evidence they explicitly cite."""
+    workers = key_dir / "workers"
+    for candidate in sorted([*workers.glob("*/report.md"), *workers.glob("*/output.md")]):
+        try:
+            report = _safe_read_text(key_dir, candidate)
+        except (OSError, ValueError) as exc:
+            if unreadable is not None:
+                unreadable.append(str(exc))
+            continue
+        refs = [candidate.relative_to(key_dir).as_posix()]
+        refs.extend(dict.fromkeys(re.findall(r"`(evidence/[\w./-]+\.md)`", report)))
+        for source in refs:
+            yield candidate.parent.name, source
+
+
+def _latest_acted_qg(key_dir: pathlib.Path, key: str) -> dict | None:
+    import decide_archive
+    import decide_signoff
+
+    if not decide_signoff.collect(key_dir, key).chain_ok:
+        return None
+    latest_qg = None
+    for _, row in decide_archive.iter_rows(decide_signoff.archive_path(key_dir)):
+        if row.get("dp") == "dp-QG" and row.get("key") == key and row.get("acted") is True:
+            latest_qg = row
+    return latest_qg
+
+
+def _latest_terminal_quality_review(key_dir: pathlib.Path, key: str) -> tuple[str, list[str]] | None:
+    from autopilot.conductor import _md_section
+
+    candidates: dict[tuple[datetime.datetime, str], dict[str, str]] = {}
+    for task, source in reviewed_signoff_candidates(key_dir):
+        try:
+            run, _, _, _, text = _terminal_review_artifact(key_dir, key, task, source)
+            report = _md_section(text, "## Quality Gate Report")
+            if not report:
+                continue
+            finished = datetime.datetime.fromisoformat(run["ended_at"])
+            if finished.tzinfo is None:
+                continue
+            candidates.setdefault((finished, task), {})[source] = canonical_sha256(report.rstrip())
+        except (OSError, ValueError, RuntimeError, TypeError, KeyError):
+            continue
+    if not candidates:
+        return None
+    newest = max(finished for finished, _ in candidates)
+    current = [(task, sources) for (finished, task), sources in candidates.items() if finished == newest]
+    if len(current) != 1:
+        return None
+    task, sources = current[0]
+    if len(set(sources.values())) != 1:
+        return None
+    return task, list(sources)
+
+
+def current_review_binding(key_dir: pathlib.Path, key: str) -> dict | None:
+    """Read the latest terminal independent quality review for closure."""
+    latest_qg = _latest_acted_qg(key_dir, key)
+    current = _latest_terminal_quality_review(key_dir, key)
+    if current is None:
+        return None
+    task, sources = current
+    for source in sources:
+        try:
+            record = capture_reviewed_signoff(key_dir, key, task, source)
+            if latest_qg is not None:
+                # The archived verdict does not prove that it covers this
+                # whole-key review. Only a complete review started afterwards
+                # can supply a fresh closure basis for that history.
+                review_start = datetime.datetime.fromisoformat(record["review_run_id"].split("@", 1)[1])
+                last_qg_at = datetime.datetime.fromisoformat(latest_qg["ts"])
+                if review_start <= last_qg_at:
+                    continue
+        except (OSError, ValueError, RuntimeError, TypeError, KeyError, IndexError):
+            continue
+        binding = {name: record[name] for name in (
+            "review_task", "review_run_id", "review_source", "basis_sha256", "material_sha256", "evidence_sha256",
+        )}
+        return {**binding, "preceding_qg_id": latest_qg.get("decision_id") if latest_qg is not None else None}
+    return None
+
+
+def _published_quality_gate(
+    key_dir: pathlib.Path, key: str, source: str, report: str,
+) -> dict | None:
+    from autopilot.conductor import _md_section, current_contract_done_problems
+
+    published = []
+    for candidate in sorted((key_dir / "evidence").glob("quality-gate-report-*.md")):
+        document = _safe_read_text(key_dir, candidate)
+        section = _md_section(document, "## Quality Gate Report")
+        if not section or section.rstrip() != report.rstrip():
+            continue
+        ref = candidate.relative_to(key_dir).as_posix()
+        linked = re.findall(r"(?m)^- source: ([^\r\n]+)$", document)
+        expected = f".agenticdoc/{key}/{source}"
+        if linked and linked != [expected]:
+            continue
+        if ref.startswith("evidence/quality-gate-report-contract-") and current_contract_done_problems(key_dir):
+            continue
+        published.append({"artifact": ref, "publication_sha256": canonical_sha256(document)})
+    return published[0] if len(published) == 1 else None
+
+
+def model_quality_gate(key_dir: pathlib.Path, key: str, binding: Mapping | None) -> dict:
+    """Project the current formal QG that the sign-off writer can reverify."""
+    from autopilot.conductor import _md_section, current_contract_done_problems
+
+    unknown = {
+        "status": "needs-review", "conclusion": None, "object": key,
+        "meaning": "The host could not verify a current whole-delivery quality gate. Prepared claims alone cannot authorize finalize.",
+    }
+    latest = _latest_acted_qg(key_dir, key)
+    answer = latest.get("answer") if latest is not None else None
+    verdict = (answer.get("qg_verdict") or answer.get("q-verdict")) if isinstance(answer, Mapping) else None
+    if isinstance(verdict, Mapping) and verdict.get("value") in ("pass", "fix", "reopen"):
+        unknown["last_recorded_decision"] = {"conclusion": verdict["value"], "scope_version_verified": False}
+    current = _latest_terminal_quality_review(key_dir, key)
+    if current is None:
+        return unknown
+    task, sources = current
+    for source in sources:
+        try:
+            run, run_text, envelope, _, text = _terminal_review_artifact(key_dir, key, task, source)
+            report = _md_section(text, "## Quality Gate Report")
+            if not report:
+                continue
+            criteria = _require_complete_local_qg(key_dir, report, allow_nonpass=True)
+            open_items = [item["id"] for item in criteria if item["status"] != "met"]
+            basis = capture_native_basis(key_dir)
+            if basis_usable_now(basis):
+                continue
+            if not open_items and (
+                binding is None or binding["review_source"] != source
+                or current_review_binding(key_dir, key) != binding or current_contract_done_problems(key_dir)
+            ):
+                continue
+            if latest is not None and datetime.datetime.fromisoformat(run["started_at"]) <= datetime.datetime.fromisoformat(latest["ts"]):
+                continue
+            published = _published_quality_gate(key_dir, key, source, report)
+            if published is None:
+                continue
+            spec = _safe_read_text(key_dir, key_dir / "spec.md")
+            design = _safe_read_text(key_dir, key_dir / "design.md")
+            definitions = contract_guard.parse_acs(spec) | {
+                name: details.split("\x1f", 1)[0] for name, details in contract_guard.parse_vcs(design).items()
+            }
+            for item in criteria:
+                if item["id"] in definitions:
+                    item["text"] = definitions[item["id"]]
+            return {
+                "status": "verified", "conclusion": "fix" if open_items else "pass", "object": key,
+                "scope": {"kind": "whole-key", "criteria": criteria}, "open_criteria": open_items,
+                "version": {"contract_sha256": basis.digest(), "quality_gate_sha256": canonical_sha256(report.rstrip()), **published},
+                "independent_review": {"run_id": run["run_id"], "source": source,
+                                       "evidence_sha256": canonical_sha256({"source": text, "run": run_text, "envelope": envelope})},
+                "meaning": "Use these independently verified outcomes for the current delivery if prepared claims differ. AC means acceptance criterion, VC means verification criterion, and FLOW means function flow.",
+            }
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+            continue
+    return unknown
+
+
+def current_scoped_qg_binding(key_dir: pathlib.Path, key: str, scope: frozenset[str]) -> dict | None:
+    """Bind a QG pass to the reviewed AC/VC scope, independently of key closure."""
+    if not scope:
+        return None
+    for task, source in reviewed_signoff_candidates(key_dir):
+        try:
+            return capture_reviewed_signoff(key_dir, key, task, source, scope=scope)
+        except (OSError, ValueError, RuntimeError):
+            continue
+    return None
+
+
 def publish_reviewed_signoff(
     key_dir: pathlib.Path, key: str, review_task: str, review_source: str,
 ) -> tuple[str, dict]:
@@ -1483,24 +1700,14 @@ def prepare_reviewed_done(key_dir: pathlib.Path, key: str) -> dict:
         if not validation.valid or not validation.native_basis_verified:
             raise SignoffResultError(f"existing sign-off is not current: {validation.reason}")
         return {"signoff_status": "existing", "logical_id": validation.logical_id}
-    workers = key_dir / "workers"
-    candidates = sorted([*workers.glob("*/report.md"), *workers.glob("*/output.md")])
     failures = []
-    for candidate in candidates:
+    for task, source in reviewed_signoff_candidates(key_dir, unreadable=failures):
         try:
-            report = _safe_read_text(key_dir, candidate)
-        except (OSError, ValueError) as exc:
-            failures.append(str(exc))
+            status, record = publish_reviewed_signoff(key_dir, key, task, source)
+        except (OSError, ValueError, RuntimeError) as exc:
+            failures.append(f"{task}: {exc}")
             continue
-        refs = [candidate.relative_to(key_dir).as_posix()]
-        refs.extend(dict.fromkeys(re.findall(r"`(evidence/[\w./-]+\.md)`", report)))
-        for source in refs:
-            try:
-                status, record = publish_reviewed_signoff(key_dir, key, candidate.parent.name, source)
-            except (OSError, ValueError, RuntimeError) as exc:
-                failures.append(f"{candidate.parent.name}: {exc}")
-                continue
-            return {"signoff_status": status, "logical_id": record["logical_id"]}
+        return {"signoff_status": status, "logical_id": record["logical_id"]}
     detail = "; ".join(dict.fromkeys(failures[-5:]))
     raise SignoffResultError(f"no current independent closure review{': ' + detail if detail else ''}")
 
@@ -1698,6 +1905,15 @@ def validate_signoff(
     ):
         return _invalid("result record does not match the sign-off file", **fields)
     if record is not None and record.prepared_proof is not None:
+        review_binding = record.prepared_proof.get("review_binding")
+        if review_binding is not None:
+            qg_digest = record.prepared_proof.get("quality_gate_sha256")
+            if qg_digest is not None:
+                gate = model_quality_gate(key_dir, effective_key, review_binding)
+                if gate["status"] != "verified" or gate["conclusion"] != "pass" or canonical_sha256(gate) != qg_digest:
+                    return _invalid("the published quality gate or independent review changed since signing", **fields)
+            elif current_review_binding(key_dir, effective_key) != review_binding:
+                return _invalid("the independent quality review changed since signing", **fields)
         try:
             dependencies = decision_file_evidence.parse_file_evidence(record.prepared_proof)
             if dependencies is not None and decision_file_evidence.check_file_evidence(dependencies).changed:

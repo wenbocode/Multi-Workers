@@ -5266,13 +5266,17 @@ def consume_pm_gate(
         return gate_effects.GateEffectResult("blocked", str(exc))
 
 
-def _pm_decision_client(project: pathlib.Path):
+def _pm_decision_client(project: pathlib.Path, decision_ref: str, meta: lifecycle.DecisionMeta):
     """The one production decision client for this project (never a mock face)."""
     cfg, error = decision.DecisionConfig.from_project(project)
     if error or not cfg.enabled or cfg.transport != "timi-decisions":
         raise gate_effects.GateBlocked("decision transport is unavailable")
     return decision.DecisionClient(
         cfg, project_root=project,
+        wire_scope=decision_wire.production_scope(
+            project, origin="pm-prepared-gate", decision_id=decision_ref,
+            dp="dp-gate-approve", key=meta.key, task_key=meta.task_key,
+        ),
         credential_snapshot=decision.credential_snapshot(cfg))
 
 
@@ -5438,7 +5442,7 @@ def request_prepared_gate(
             raise blocked(f"PM note was refused: {exc}") from exc
         if not noted.recorded:
             raise blocked("PM note could not be recorded")
-        client = client or _pm_decision_client(project)
+        client = client or _pm_decision_client(project, decision_ref, meta)
         try:
             result = client.request_prepared(
                 "dp-gate-approve", dict(material), dict(preparation),
@@ -5450,6 +5454,16 @@ def request_prepared_gate(
                 f"prepared request failed ({type(exc).__name__}); no decision result") from exc
         if not isinstance(result, Mapping):
             raise blocked("the transport returned no prepared result")
+        scope = getattr(client, "_wire_scope", None)
+        if scope is not None:
+            point = decision_points.require_active_dp("dp-gate-approve")
+            capture = decision_points._DecisionCapture(intent="answer")
+            capture.attach(scope, "production-scope", dp_id=point.id, decision_id=decision_ref,
+                           questions_version=point.questions_version)
+            trigger = decision_points.Trigger.from_mapping(
+                material, trigger_id=meta.logical_id, key=meta.key, task_key=meta.task_key,
+            )
+            decision_points.capture_prepared_result(capture, client, point, trigger, result, "auto")
         if result.get("business_decisions") == 1 and result.get("prepared_at"):
             try:
                 recorded = lifecycle.record_request(

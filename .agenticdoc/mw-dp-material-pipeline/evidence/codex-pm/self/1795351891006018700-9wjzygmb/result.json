@@ -1,0 +1,22 @@
+{
+  "key": "mw-dp-material-pipeline",
+  "task": null,
+  "criteria": [
+    "AC-017"
+  ],
+  "argv": [
+    "python",
+    "-B",
+    ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/reconcile_auto_pm_handoff.py"
+  ],
+  "cwd": "E:\\gitlite\\Multi-Workers",
+  "basis": {
+    "contract_sha256": "706c2902e544a72178bd6a5b68e3c5aa412235360ef2cb623329172510c30a96",
+    "source_sha256": "224eed8ca67409e0f9b68630cafce44c3093ae208e9ab4fce3629409ea5fe07b"
+  },
+  "started": "2026-11-22T12:51:31.007603+00:00",
+  "verdict": "passed",
+  "exit_code": 0,
+  "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\self\\1795351891006018700-9wjzygmb\\command.log",
+  "finished": "2026-11-22T12:51:40.186960+00:00"
+}

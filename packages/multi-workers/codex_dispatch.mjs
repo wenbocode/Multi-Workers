@@ -15,14 +15,17 @@ import { IndexStore } from "../coding-agent/src/extensions/agent-team-loop/share
 import { WorkerStore } from "../coding-agent/src/extensions/agent-team-loop/shared/worker-store.ts";
 
 const params = JSON.parse(readFileSync(0, "utf8"));
-if (readEnvelope(params.card_path).type !== "coding") throw new Error("A coding task card is required");
+const cardType = readEnvelope(params.card_path).type;
+if (cardType !== params.type || (cardType !== "coding" && !(params.workflow === "codex-lite" && cardType === "review"))) {
+	throw new Error("The requested worker type must match a coding card or a Codex lightweight review card");
+}
 const cwd = process.cwd();
 const root = path.join(cwd, ".agenticdoc");
 const indexStore = new IndexStore(root);
 if (params.workflow !== undefined && params.workflow !== "codex-lite") throw new Error("Unknown Codex PM workflow");
 const dispatchAdapter =
 	params.workflow === "codex-lite"
-		? createCodexDispatchAdapter(root, indexStore, params.key, params.claim_id)
+		? createCodexDispatchAdapter(root, indexStore, params.key, params.claim_id, cardType)
 		: undefined;
 const resourceLoader = new DefaultResourceLoader({
 	cwd,

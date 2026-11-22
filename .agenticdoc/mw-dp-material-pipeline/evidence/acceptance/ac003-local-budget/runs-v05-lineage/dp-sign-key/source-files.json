@@ -1,0 +1,12 @@
+[
+  {
+    "contract": "spec.md",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-sign-key/source-files/.agenticdoc/key-1/spec.md",
+    "sha256": "f418d317ac7b652c9f9a28befed4b00ae719b23fa3c78ddd9b53f195c6d921e6"
+  },
+  {
+    "contract": "design.md",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-sign-key/source-files/.agenticdoc/key-1/design.md",
+    "sha256": "3383e963fefddbe6ea44e9847b9d631880224910dea55212e60d27dd4415faf6"
+  }
+]

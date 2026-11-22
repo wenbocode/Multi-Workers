@@ -1,0 +1,344 @@
+{
+  "candidates": {
+    "decision_selection": [
+      {
+        "id": "codingA",
+        "label": "结论 coding: 需要写代码或改代码或跑命令\n依据 codingA-basis: coding：有明确算法改动和测试交付时选coding。"
+      },
+      {
+        "id": "researchA",
+        "label": "结论 research: 只做检索取证不改代码\n依据 researchA-basis: research：若当前工作仅为取证、无需修改代码时选research。"
+      },
+      {
+        "id": "reviewA",
+        "label": "结论 review: 审计别人已完成的产出\n依据 reviewA-basis: review：若当前工作是审查别人已完成的产物时选review。"
+      },
+      {
+        "id": "visionA",
+        "label": "结论 vision: 需要读取图片，且有效模型必须已证明图像能力\n依据 visionA-basis: vision：若必须解释图像像素且host能力允许时选vision。"
+      }
+    ]
+  },
+  "decision_id": "dp-w-type:current-receipt-1",
+  "dp": "dp-w-type",
+  "field_trace": {
+    "fields": {
+      "/model": {
+        "sources": [
+          "transport:resolved_model"
+        ],
+        "transform": "resolve-config"
+      },
+      "/questions/decision_selection/criteria/codingA": {
+        "sources": [
+          "book:/preparation/basis_catalog/0",
+          "registry:dp-w-type/triage_type/labels/coding"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/researchA": {
+        "sources": [
+          "book:/preparation/basis_catalog/1",
+          "registry:dp-w-type/triage_type/labels/research"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/reviewA": {
+        "sources": [
+          "book:/preparation/basis_catalog/2",
+          "registry:dp-w-type/triage_type/labels/review"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/visionA": {
+        "sources": [
+          "book:/preparation/basis_catalog/3",
+          "registry:dp-w-type/triage_type/labels/vision"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/instructions": {
+        "sources": [
+          "registry:dp-w-type/instructions",
+          "registry:prepared_basis_instructions"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/questions/decision_selection/type": {
+        "sources": [
+          "registry:dp-w-type/protocol"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/state/desc/0": {
+        "sources": [
+          "book:/preparation/model_context/desc/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/1": {
+        "sources": [
+          "book:/preparation/model_context/desc/1"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/coding": {
+        "sources": [
+          "registry:dp-w-type/triage_type/labels/coding"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/known": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/known"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/research": {
+        "sources": [
+          "registry:dp-w-type/triage_type/labels/research"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/review": {
+        "sources": [
+          "registry:dp-w-type/triage_type/labels/review"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/vision": {
+        "sources": [
+          "registry:dp-w-type/triage_type/labels/vision"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/material/images_required": {
+        "sources": [
+          "book:/material/images_required"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/task_deliverables": {
+        "sources": [
+          "book:/material/task_deliverables"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/task_goal": {
+        "sources": [
+          "book:/material/task_goal"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/task_requirements": {
+        "sources": [
+          "book:/material/task_requirements"
+        ],
+        "transform": "copy"
+      },
+      "/state/references": {
+        "sources": [
+          "book:/preparation/model_context/references"
+        ],
+        "transform": "no-cited-references"
+      },
+      "/state/terminology/CSV": {
+        "sources": [
+          "book:/preparation/model_context/terminology/CSV"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/ID": {
+        "sources": [
+          "book:/preparation/model_context/terminology/ID"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/PM": {
+        "sources": [
+          "registry:terminology/PM"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/Worker": {
+        "sources": [
+          "book:/preparation/model_context/terminology/Worker"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/desc": {
+        "sources": [
+          "book:/preparation/model_context/terminology/desc"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/host": {
+        "sources": [
+          "book:/preparation/model_context/terminology/host"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/review": {
+        "sources": [
+          "book:/preparation/model_context/terminology/review"
+        ],
+        "transform": "copy"
+      }
+    },
+    "local_only": [
+      "/meta",
+      "/notes",
+      "/preparation/prepared_at",
+      "/preparation/basis_catalog"
+    ]
+  },
+  "kind": "input-state",
+  "local_preparation": {
+    "basis_catalog": [
+      {
+        "applies_to": [
+          "coding"
+        ],
+        "finding_ids": [],
+        "id": "codingA-basis",
+        "material_refs": [
+          "task_deliverables"
+        ],
+        "remaining_ids": [],
+        "text": "coding：有明确算法改动和测试交付时选coding。"
+      },
+      {
+        "applies_to": [
+          "research"
+        ],
+        "finding_ids": [],
+        "id": "researchA-basis",
+        "material_refs": [
+          "task_deliverables"
+        ],
+        "remaining_ids": [],
+        "text": "research：若当前工作仅为取证、无需修改代码时选research。"
+      },
+      {
+        "applies_to": [
+          "review"
+        ],
+        "finding_ids": [],
+        "id": "reviewA-basis",
+        "material_refs": [
+          "task_deliverables"
+        ],
+        "remaining_ids": [],
+        "text": "review：若当前工作是审查别人已完成的产物时选review。"
+      },
+      {
+        "applies_to": [
+          "vision"
+        ],
+        "finding_ids": [],
+        "id": "visionA-basis",
+        "material_refs": [
+          "task_deliverables"
+        ],
+        "remaining_ids": [],
+        "text": "vision：若必须解释图像像素且host能力允许时选vision。"
+      }
+    ],
+    "model_context": {
+      "desc": [
+        "Repair CSV export round trips for special characters.",
+        "Deliver an escape fix and regression tests without changing the format."
+      ],
+      "enum_meanings": {
+        "coding": "需要修改代码或测试的任务类型。",
+        "known": "对应约束或条件已由本次来源确认。",
+        "research": "以取证/研究为主的任务类型。",
+        "review": "审查已有产物的任务类型。",
+        "vision": "必须解释图像像素的任务类型。"
+      },
+      "terminology": {
+        "CSV": "Comma-Separated Values: 逗号分隔值文本格式；本例需正确转义逗号和双引号并保持往返解析一致。",
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+        "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+      }
+    },
+    "prepared_at": "2026-11-08T10:00:00+00:00"
+  },
+  "pair_map": {
+    "codingA": {
+      "basis_id": "codingA-basis",
+      "basis_text": "coding：有明确算法改动和测试交付时选coding。",
+      "choice": "coding",
+      "choice_label": "需要写代码或改代码或跑命令",
+      "choice_label_source": "registry:dp-w-type/triage_type/labels/coding",
+      "finding_ids": [],
+      "label": "结论 coding: 需要写代码或改代码或跑命令\n依据 codingA-basis: coding：有明确算法改动和测试交付时选coding。",
+      "remaining_ids": []
+    },
+    "researchA": {
+      "basis_id": "researchA-basis",
+      "basis_text": "research：若当前工作仅为取证、无需修改代码时选research。",
+      "choice": "research",
+      "choice_label": "只做检索取证不改代码",
+      "choice_label_source": "registry:dp-w-type/triage_type/labels/research",
+      "finding_ids": [],
+      "label": "结论 research: 只做检索取证不改代码\n依据 researchA-basis: research：若当前工作仅为取证、无需修改代码时选research。",
+      "remaining_ids": []
+    },
+    "reviewA": {
+      "basis_id": "reviewA-basis",
+      "basis_text": "review：若当前工作是审查别人已完成的产物时选review。",
+      "choice": "review",
+      "choice_label": "审计别人已完成的产出",
+      "choice_label_source": "registry:dp-w-type/triage_type/labels/review",
+      "finding_ids": [],
+      "label": "结论 review: 审计别人已完成的产出\n依据 reviewA-basis: review：若当前工作是审查别人已完成的产物时选review。",
+      "remaining_ids": []
+    },
+    "visionA": {
+      "basis_id": "visionA-basis",
+      "basis_text": "vision：若必须解释图像像素且host能力允许时选vision。",
+      "choice": "vision",
+      "choice_label": "需要读取图片，且有效模型必须已证明图像能力",
+      "choice_label_source": "registry:dp-w-type/triage_type/labels/vision",
+      "finding_ids": [],
+      "label": "结论 vision: 需要读取图片，且有效模型必须已证明图像能力\n依据 visionA-basis: vision：若必须解释图像像素且host能力允许时选vision。",
+      "remaining_ids": []
+    }
+  },
+  "policy": null,
+  "questions_version": "q-d130b00c",
+  "state": {
+    "desc": [
+      "Repair CSV export round trips for special characters.",
+      "Deliver an escape fix and regression tests without changing the format."
+    ],
+    "enum_meanings": {
+      "coding": "需要写代码或改代码或跑命令",
+      "known": "对应约束或条件已由本次来源确认。",
+      "research": "只做检索取证不改代码",
+      "review": "审计别人已完成的产出",
+      "vision": "需要读取图片，且有效模型必须已证明图像能力"
+    },
+    "material": {
+      "images_required": false,
+      "task_deliverables": "Exporter escape fix and regression assertions for commas and double quotes.",
+      "task_goal": "Repair the CSV export so special characters round-trip unchanged.",
+      "task_requirements": "Touch the exporter and its tests only. Preserve the format protocol."
+    },
+    "references": {},
+    "terminology": {
+      "CSV": "Comma-Separated Values: 逗号分隔值文本格式；本例需正确转义逗号和双引号并保持往返解析一致。",
+      "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+      "PM": "Project manager: the current decision owner and result consumer.",
+      "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+      "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+      "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+      "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+    }
+  },
+  "state_digest": "94ceca86f65cd324"
+}

@@ -1,0 +1,29 @@
+{
+  "dp": "dp-gate-approve",
+  "decision_id": "dp-gate-approve:run-h01",
+  "call_id": "1541273d5f98413db8584813e442cd98",
+  "writer": "mw autopilot gate run",
+  "effect": {
+    "decision_ref": "dp-gate-approve:run-h01",
+    "duplicate": false,
+    "gate_id": "gate-0002",
+    "reason": "bounded action verified",
+    "receipt": ".agenticdoc/_autopilot/_roadmap.md#289222617cf6369ef0e511da4dc6cd8e07705fe6d03ad4ca66e8368f9463cb43",
+    "request": {
+      "basis_id": "gate-approve",
+      "choice": "approve",
+      "decision_ref": "dp-gate-approve:run-h01",
+      "source": "transport",
+      "stage": "request",
+      "status": "answered"
+    },
+    "status": "applied"
+  },
+  "choice": "approve",
+  "effect_sha256": "289222617cf6369ef0e511da4dc6cd8e07705fe6d03ad4ca66e8368f9463cb43",
+  "receipts": {
+    "consumed": "gate-37938992198268d05cf2b6855a1eb34e4c2d166f84e698b35879b19205a09849-consumed",
+    "executed": "gate-37938992198268d05cf2b6855a1eb34e4c2d166f84e698b35879b19205a09849-executed",
+    "settled": "gate-37938992198268d05cf2b6855a1eb34e4c2d166f84e698b35879b19205a09849-settled"
+  }
+}

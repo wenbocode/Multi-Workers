@@ -1,0 +1,1 @@
+{"model": "jev-latest", "answers": {"decision_selection": {"type": "choice", "choice": "continueA", "confidence": 1.0, "probabilities": {"confirmA": 0.0, "continueA": 1.0, "finalizeA": 0.0}}}, "usage": {"input_tokens": 2003, "output_tokens": 48, "cached_tokens": 0, "cache_write_tokens": 0}, "id": "gen-xS4Uhmo9PSieWTIIeNVc1CNQv2uLufYDxOGl"}

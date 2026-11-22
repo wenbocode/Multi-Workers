@@ -1,0 +1,106 @@
+{
+  "case_id": "dp-auto-original",
+  "role": "pm",
+  "window_pid": 74132,
+  "key": "key-1",
+  "worker_task": null,
+  "mode": "production extension with isolated faux role and loopback decision transport",
+  "author_inputs": {
+    "dp": "dp-auto",
+    "key": "key-1",
+    "trigger": "t09-prepared",
+    "material": {
+      "question": "After the first read-only timeout, retry once or read the health snapshot first?",
+      "background": {
+        "task_goal": "Get a trustworthy read-only status or a definite failure within five minutes.",
+        "current_state": "First request timed out; service availability is unknown.",
+        "tried": "One read-only request.",
+        "unknowns": "No preference between latency and diagnosis has been provided.",
+        "constraints": "Read-only, one retry, existing five minutes; no renewed budget."
+      },
+      "handling_options": [
+        {
+          "id": "retry",
+          "label": "Retry once",
+          "description": "Repeat the read-only request once",
+          "consequence": "Possibly receive current data",
+          "risk": "Another timeout",
+          "conditions": "Read-only"
+        },
+        {
+          "id": "diagnose",
+          "label": "Read the health snapshot",
+          "description": "Use the authorized health snapshot first",
+          "consequence": "Obtain diagnostic facts",
+          "risk": "Data may be stale",
+          "conditions": "Read-only"
+        }
+      ]
+    },
+    "preparation": {
+      "basis_catalog": [
+        {
+          "id": "retryA-basis",
+          "text": "retry：对当前瞬态超时做一次有界只读重试；预期：取得当前响应或保留失败；估计1分钟；风险：可能再次超时；条件：原只读请求、原剩余5分钟内，不重复写动作。",
+          "applies_to": [
+            "retry"
+          ],
+          "material_refs": [
+            "background.constraints"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        },
+        {
+          "id": "diagnoseA-basis",
+          "text": "diagnose：先读已授权服务健康快照；预期：区分服务离线与单次超时；估计2分钟；风险：快照可能不能说明单个请求；条件：只读来源仍在原范围。",
+          "applies_to": [
+            "diagnose"
+          ],
+          "material_refs": [
+            "background.constraints"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        }
+      ],
+      "prepared_at": "2026-11-08T10:00:00+00:00",
+      "model_context": {
+        "desc": [
+          "Get a trustworthy result or a definite failure in five minutes.",
+          "The first request timed out.",
+          "No preference between response time and diagnosis is available."
+        ],
+        "enum_meanings": {
+          "diagnose": "本请求准备的先读取健康事实的诊断方案。",
+          "known": "对应约束或条件已由本次来源确认。",
+          "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+          "retry": "本请求准备的一次有界重试方案。"
+        },
+        "terminology": {
+          "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+          "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+        }
+      }
+    }
+  },
+  "explicit_followup_from_fixture": null,
+  "expected_choice": null,
+  "observations": [
+    {
+      "name": "Old dp-auto preflight refusal and current PM handoff",
+      "tool_results": [
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"input-incomplete\",\"action\":\"blocked-ask-human\",\"escalated_reason\":\"input-incomplete\",\"preparation_status\":\"needs-evidence\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"1d6b89e5-48cf-4c98-af73-a5b3038514ea\",\"matter_ref\":\"4f1b06bc07b48e90800e6a2565bbcf0d\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"input-gap\",\"raw_reason\":\"input-incomplete\",\"raw_payload\":{\"available\":false,\"transport\":\"none\",\"model\":null,\"confidence_source\":\"unknown\",\"attempts\":0,\"latency_ms\":0,\"answers\":null,\"reason\":\"input-incomplete\",\"decision_id\":null,\"mode\":null,\"acted\":false,\"escalated_reason\":\"input-incomplete\",\"state_digest\":null,\"logical_id\":\"4f1b06bc-07b4-8e90-800e-6a2565bbcf0d\",\"dp\":\"dp-auto\",\"replayed\":false,\"record_start\":\"not-recorded\",\"business_decisions\":0,\"transport_attempts\":0,\"issues\":[{\"field\":\"preparation.model_context.auto_comparison\",\"issue\":\"requires a sourced goal priority, remaining budget, bounded paths, and a decision test for each pair\"}],\"detail\":\"1 blocking material/preparation issue(s); no request sent\",\"preparation_status\":\"needs-evidence\",\"blocked_event_id\":\"6da0e329-3922-4a84-b4e7-b84d0e8208d9\",\"unavailable\":\"input-incomplete\",\"raw_reason\":\"input-incomplete\"},\"escalated_reason\":\"input-incomplete\",\"owner\":\"WENBOZHOU-PC5:74132\",\"binding\":{\"role\":\"pm\",\"owner\":\"WENBOZHOU-PC5:74132\",\"claim_id\":\"WENBOZHOU-PC5:74132\",\"key\":\"key-1\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:47:16.597Z\"},\"effect_state\":\"none\",\"stop_scope\":\"none\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:81f5634847ce08d5fa909d679b2d1969f7c9270c9434455c3d35ba8a71cdec86\",\"local_ref\":\"lref:81f5634847ce08d5fa909d679b2d1969\",\"dp\":\"dp-auto\",\"candidates\":[\"retry\",\"diagnose\"],\"basis_ids\":[\"retryA-basis\",\"diagnoseA-basis\"]}}\nUNAVAILABLE(input-incomplete) — 不要自行猜测，不要执行被门控的动作，不要用别的工具绕过。上报 \"blocked on decision dp-auto\" 与本条 decision_feedback 的具体缺口；同一事项同一事实不要重发（返回已有反馈），在现有权限/角色/写面内可继续其他独立合法工具；只有真实用户停止、父取消、权限/预算或角色事实才停止更大范围工作。"
+        }
+      ],
+      "http_delta": 0
+    }
+  ],
+  "pm_session_reply": {
+    "role": "assistant",
+    "text": "blocked on decision dp-auto\n{\"record_kind\":\"current_pm_preflight_handoff\",\"disposition\":\"return-material-for-goal-and-path-clarity\",\"accepted_by\":{\"actor\":\"当前复跑的 PM\",\"role\":\"pm\",\"owner\":\"WENBOZHOU-PC5:74132\",\"claim_id\":\"WENBOZHOU-PC5:74132\",\"key\":\"key-1\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T16:47:16.597Z\"},\"refusal\":{\"code\":\"input-incomplete\",\"issues\":[{\"field\":\"preparation.model_context.auto_comparison\",\"issue\":\"requires a sourced goal priority, remaining budget, bounded paths, and a decision test for each pair\"}],\"blocked_event_id\":\"6da0e329-3922-4a84-b4e7-b84d0e8208d9\",\"feedback_ref\":\"1d6b89e5-48cf-4c98-af73-a5b3038514ea\",\"matter_ref\":\"4f1b06bc07b48e90800e6a2565bbcf0d\",\"logical_id\":\"4f1b06bc-07b4-8e90-800e-6a2565bbcf0d\",\"transport_attempts\":0,\"decision_id\":null},\"reason\":\"原材料未给响应速度与诊断的优先级，缺剩余额度、带条件后继和停止条件的完整路径，以及两候选的区分判据。一次超时不足以证明服务离线。\",\"next_steps\":[\"由当前 PM 退回准备，先核对超时发生阶段、原权限、取消或停止状态、实际剩余时间及健康快照来源和新鲜度。\",\"由原事项负责人明确速度与诊断的取舍，补齐两个候选的区分判据、各步硬上限、条件后继和停止条件，再在原余量内重走准备。\",\"保持只读、原五分钟总额和最多一次重试的约束。余量或前提不足就维持阻塞并记录缺口。\"],\"follow_up_state\":\"pending-source-confirmation\",\"business_action_executed\":false,\"historical_runtime_pm_record\":null}"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "record_kind": "current_session_pm_reference_adjudication",
+  "recorded_on": "2026-11-19",
+  "author": "Codex PM 当前设计整理会话",
+  "historical_runtime_pm_record": null,
+  "scope": "针对所列真实API回包的离线PM参考裁定；不是原生产窗口已采纳/执行的记录",
+  "model_wire_id": "splitA",
+  "decoded_choice": "split",
+  "basis_id": "splitA-basis",
+  "finding_ids": [],
+  "remaining_ids": [],
+  "summary": "参考采纳split方向：拆W1/W2并回收；复核工时未计，派发前补预算核算。",
+  "disposition": "adopt-direction-with-budget-recheck",
+  "reasoning": [
+    "来源称W1/W2写不同测试文件且已核无先后依赖，共享接口约定。",
+    "两项各估18工时分钟，合计36；原50余额中复核另计，不能据此断言全部成本已覆盖。"
+  ],
+  "follow_up": [
+    "准备W1权限拒绝无副作用和W2过期版本冲突无副作用两张任务卡，协调写面与同一接口约定。",
+    "先核36工时分钟加独立复核成本不超原预算，再安排真实执行者；回收两项证据，保留整体目标。"
+  ],
+  "must_preserve": [
+    "W1、W2均未完成的真实状态",
+    "独立复核要求与原预算"
+  ],
+  "must_not_claim": [
+    "两个Worker已派发或并行执行",
+    "50工时分钟已足够含复核全部工作"
+  ],
+  "pending_real_host_checks": [
+    "原真实owner/matter/run与对象版本",
+    "原权限/取消/停止和当前余额",
+    "该DP必要独审/业务writer前提"
+  ],
+  "runtime_business_acceptance": null,
+  "actual_dispatch_run_ids": [],
+  "actual_business_receipt": null,
+  "production_executed": false
+}

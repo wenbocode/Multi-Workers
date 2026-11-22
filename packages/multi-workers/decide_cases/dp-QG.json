@@ -37,6 +37,29 @@
             "uncovered_scope"
           ],
           "text": "要求本身清楚，但 facets 与正文投影有具体整改缺口，应判整改。"
+        },
+        {
+          "applies_to": [
+            "pass"
+          ],
+          "id": "qg-pass-criterion",
+          "material_refs": [
+            "review_requirements",
+            "review_evidence",
+            "uncovered_scope"
+          ],
+          "text": "仅当全部适用质量要求满足、必要证据齐备且没有阻断时才通过。"
+        },
+        {
+          "applies_to": [
+            "reopen"
+          ],
+          "id": "qg-reopen-criterion",
+          "material_refs": [
+            "review_requirements",
+            "review_findings"
+          ],
+          "text": "仅当当前复核查到要求、设计或验收依据有实质矛盾时才重新打开标准。"
         }
       ],
       "prepared_at": "2026-10-27T13:45:28+00:00"
@@ -45,7 +68,7 @@
   },
   "case_version": 1,
   "dp": "dp-QG",
-  "note": "合成 case：按审核要求、已审证据、发现与未覆盖面整理，当前缺口仅支持 fix；完整业务菜单不变；reopen 需要 basis_issue，本材料不预置该字段。",
+  "note": "合成 case：按审核要求、已审证据、发现与未覆盖面整理，当前缺口仅支持 fix；三项条件一并比较；实际采纳 reopen 须有实质质量依据问题。",
   "questions": {
     "qg_verdict": {
       "choices": [

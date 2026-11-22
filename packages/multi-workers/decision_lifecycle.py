@@ -417,6 +417,36 @@ def _check_before(
     return given
 
 
+def require_receipt_binding(
+    store: "LifecycleStore", meta: "DecisionMeta", *, decision_id: str,
+    stage: str, answer: object = None, event_id: object = None, required_choice: str | None = None,
+) -> None:
+    """Bind an external receipt to the accepted request and its recorded role."""
+    start, events = _ledger_facts(store, meta)
+    if start.get("decision_id") != decision_id or start.get("initiator_role") != meta.initiator_role:
+        _refuse("decision_id", "does not match this actor's recorded decision")
+    requests = [
+        row for row in events if row.get("kind") == "request"
+        and row.get("logical_id") == meta.logical_id
+        and row.get("decision_id") == decision_id
+        and row.get("key") == meta.key and row.get("task_key") == meta.task_key
+        and row.get("available") is True and row.get("business_decisions") == 1
+    ]
+    if len(requests) != 1:
+        _refuse("decision_id", "requires exactly one accepted request for this task")
+    if required_choice is not None and requests[0].get("choice") != required_choice:
+        _refuse("decision_id", "does not match the terminal reachability selection")
+    if stage == "consumed" and answer != requests[0].get("choice"):
+        _refuse("answer", "does not match the recorded selection")
+    if event_id is not None and any(
+        row.get("event_id") == event_id
+        and (row.get("decision_id") != decision_id or row.get("lifecycle") != stage
+             or row.get("key") != meta.key or row.get("task_key") != meta.task_key)
+        for row in events
+    ):
+        _refuse("event_id", "belongs to another decision or receipt stage")
+
+
 def _event_is_recorded(
     events: Sequence[Mapping[str, object]], event_id: object
 ) -> bool:
@@ -584,6 +614,7 @@ def _request_fields(result: object) -> dict[str, object]:
         "choice": choice,
         "basis_id": basis_id,
         "basis_text": basis_text,
+        **{name: result[name] for name in decision_points.BASIS_ITEM_OPTIONAL_KEYS if name in result},
         "basis_source": basis_source,
         "prepared_at": prepared_at,
         "reason": reason,
@@ -643,6 +674,9 @@ def _preparation_provenance(
     )
     if selected is None or selected.get("text") != fields["basis_text"]:
         _refuse("basis_text", "must be the selected prepared item's text, not caller-provided prose")
+    for name in decision_points.BASIS_ITEM_OPTIONAL_KEYS:
+        if fields.get(name, []) != selected.get(name, []):
+            _refuse(name, "must match the selected prepared item's reason ids")
     try:
         body = json.dumps(
             preparation, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -1526,6 +1560,8 @@ def record_request(
         "choice": fields["choice"] if isinstance(fields["choice"], str) else None,
         "basis_id": fields["basis_id"] if isinstance(fields["basis_id"], str) else None,
         "basis_text": basis_text,
+        **{name: fields[name] for name in decision_points.BASIS_ITEM_OPTIONAL_KEYS
+           if fields.get("business_decisions") == 1 and name in fields},
         "basis_source": fields["basis_source"] if isinstance(fields["basis_source"], str) else None,
         "prepared_at": str(fields["prepared_at"]),
         "basis_catalog_sha256": basis_catalog_sha256,

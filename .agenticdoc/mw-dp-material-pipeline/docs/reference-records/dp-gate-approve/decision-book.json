@@ -1,0 +1,120 @@
+{
+  "schema": "dp-reference-v0.5-draft",
+  "sample_kind": "synthetic-reference",
+  "dp": "dp-gate-approve",
+  "role_scope": "pm",
+  "binding": {
+    "owner_ref": null,
+    "matter_ref": null,
+    "budget_ref": null,
+    "status": "合成参考，无生产身份"
+  },
+  "sources": [
+    {
+      "id": "S1",
+      "label": "现有gate条件与授权",
+      "path": "sources/S1.txt",
+      "sha256": "536e0164a8102002444f4581f7a003471a3faef8f31694f6620eaf0c212d180f",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    },
+    {
+      "id": "S2",
+      "label": "当前计划和条件检查",
+      "path": "sources/S2.txt",
+      "sha256": "ae6101069d18e89f5c26f643b1cfaeadc3e86dd94829c260fe75c59caba0a4be",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    }
+  ],
+  "field_trace": {
+    "file": "field-trace.json",
+    "note": "真实原件与字段变换留本地；本例源正文见sources/。"
+  },
+  "preparation": {
+    "prepared_at": "由实际准备者/host落盘",
+    "basis_catalog": "见pair-map.json",
+    "material_refs": "每个选项关联本次材料",
+    "applies_to": "本地校验，不能据此裁剪固定候选",
+    "producer": "原PM/实际Worker，或受托prepare Worker起草后由原主体工具吸收"
+  },
+  "pair_map": {
+    "file": "pair-map.json"
+  },
+  "host_exclusions": [],
+  "execution_plan": {
+    "status": "未制定；选择方向后由原主体按授权准备",
+    "send": false
+  },
+  "expected": {
+    "choices": [
+      "approve"
+    ],
+    "status": "作者参考预期，禁止发给模型"
+  },
+  "actual_capture": {
+    "request": "not-sent-v0.5",
+    "response": "not-observed-v0.5"
+  },
+  "post_checks": "核已有授权、当前条件、预算/停止和动作范围；approve不增加权限，其它分支按既有接续处理，不自动释放gate。",
+  "freeze": {
+    "file": "payload.json",
+    "sha256": "9c6a7b8e72dfe75aad4e126c334abc6afccb2861a861b9d5480fcadba4080aad",
+    "bytes": 3257
+  },
+  "desc_preparation": {
+    "sentences": [
+      "当前拟在隔离输入上做一次只读回放并保存完整差异。",
+      "这道既有gate要求无产品写入且差异保存开启，两项当前检查均满足。",
+      "预计耗时10分钟，原余额20分钟，原授权已包含本次动作。",
+      "没有观察到准入条件偏差，覆盖仅限这份固定样本；依据是当前配置和条件检查，不是历史审批。"
+    ],
+    "sentence_count": 4,
+    "max_sentences": 10,
+    "max_tokens": 1000,
+    "estimated_tokens": 122,
+    "token_count": null,
+    "meter": "existing-estimator-precheck; target-model exact count not available",
+    "source_note": "从v0.3合成来源归纳；QG/sign增加显式同范围fixture，非当前业务事实",
+    "source_pointers": [
+      "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-gate-approve\\reference.json"
+    ],
+    "sentence_sources": [
+      {
+        "sentence": 1,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-gate-approve\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 2,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-gate-approve\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 3,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-gate-approve\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 4,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-gate-approve\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      }
+    ],
+    "claims": "目标/偏差/事件/证据与未知，不写推荐答案"
+  },
+  "definition_sources": {
+    "AC": "已确认验收正文；本例来自v0.4合成scope",
+    "VC": "项目设计Verification Contract；本例来自v0.4合成review矩阵",
+    "other_refs": "本次来源中的发现/剩余工作/入口职责",
+    "registry": "仅使用当前请求出现的术语，未知项拒绝准备"
+  }
+}

@@ -18,9 +18,8 @@ Generated shape (T04):
   field contract, the model allowlist, the context
   slots it may emit, and a reference to the one preparation contract;
 * ``DECIDE_REGISTRY_PREPARATION`` -- the PM-prepared basis layer (D-012A): keys,
-  basis item keys, source, independence from material, the one extra model field
-  (``preparation.basis_catalog``) and the fact that it is never trimmable
-  context;
+  basis item keys, source, independence from material, the local catalog path
+  (``preparation.basis_catalog``) and the fact that it is never trimmable context;
 * ``DECIDE_REGISTRY_RETIRED`` -- the 25 retired ids as a read-only projection
   (disposition / migration target / explanation), never entry-shaped keys, so it
   cannot be read as an alias or a second menu.
@@ -76,8 +75,7 @@ GENERATED_HEADER = (
     "// Drift lock: test_decide_registry_ts_lock.py fails when this file is stale.\n"
 )
 
-#: The single basis field the model allowlist permits in addition to the
-#: business material (D-012A). It is a *preparation* field, never material.
+#: The local path of the catalog behind the paired question captions.
 BASIS_STATE_FIELD = "preparation." + decision_points.PREPARATION_KEYS[0]
 
 #: Fallbacks when the repo formatter config cannot be read (``biome.json``).
@@ -410,7 +408,7 @@ def render(snapshot: dict | None = None) -> str:
         "\tbasisSource: string;",
         "\t/** This layer is never derived from or merged into the business material. */",
         "\tindependentOf: string;",
-        "\t/** The one basis field the model allowlist allows besides the material. */",
+        "\t/** Local catalog path used to render paired choices. */",
         "\tbasisStateField: string;",
         "\t/** Core evidence: never carried by the trimmable `context` block. */",
         "\tcontextTrimmable: false;",

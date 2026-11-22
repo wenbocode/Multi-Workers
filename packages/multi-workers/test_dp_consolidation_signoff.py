@@ -1272,7 +1272,7 @@ def test_goal_adoption_during_the_model_request_is_not_signed(
     def adopt_during(state, questions, cfg):
         business_id = cli_fixtures._business_question_id("dp-sign-key")
         assert set(questions) == {"decision_selection"}
-        assert state["preparation"] == envelope["preparation"]
+        assert "preparation" not in state
         nested.append(
             mw_cli._ap_family_run(
                 _ge._family_args("goal-adoption", owner, book_path),

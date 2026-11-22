@@ -1,0 +1,224 @@
+{
+  "case_id": "dp-auto-optimized",
+  "role": "pm",
+  "window_pid": 54416,
+  "key": "key-1",
+  "worker_task": null,
+  "mode": "production extension with isolated faux role and loopback decision transport",
+  "author_inputs": {
+    "dp": "dp-auto",
+    "key": "key-1",
+    "trigger": "t09-prepared",
+    "material": {
+      "question": "Retry the status request first or read the service health snapshot first?",
+      "background": {
+        "task_goal": "Prefer the first verified current status within the original read-only allowance. Diagnosis is secondary.",
+        "current_state": "No current status or proof of unavailability.",
+        "tried": "One read-only request, as recorded in timeout.txt:1.",
+        "unknowns": "Actual health snapshot sampling time, scope applicability, and outcome of a retry.",
+        "constraints": "300 seconds remaining at preparation time, reserve 30 for the report, one retry and one health read."
+      },
+      "handling_options": [
+        {
+          "id": "retry",
+          "label": "Retry the status request once",
+          "description": "Read current status within 60 seconds.",
+          "consequence": "A valid status completes the goal.",
+          "risk": "The request can time out again.",
+          "conditions": "Read-only scope, original allowance, and reserve for the report."
+        },
+        {
+          "id": "diagnose",
+          "label": "Read the health snapshot first",
+          "description": "Read the service health snapshot within 120 seconds.",
+          "consequence": "A fresh applicable offline result supports a blocker.",
+          "risk": "Service evidence may be stale or not apply.",
+          "conditions": "Check time and applicability before relying on the result."
+        }
+      ]
+    },
+    "preparation": {
+      "basis_catalog": [
+        {
+          "id": "retryA-basis",
+          "text": "先重试路径：先用唯一一次60秒上限读取当前状态。信息价值：直接得到当前有效响应，或增加一次失败证据，不能证明根因。若成功立即结束；若失败且当时余量足够120秒加30秒报告，再读一次健康快照，随后报告有证据的阻塞或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：可能再次超时；快照仍可能无法解释本请求。适合优先当前响应且没有已确认离线证据的目标；根因诊断更重要或已有适用离线证据时价值下降。始终遵守公共停止条件，不再第二次重试。",
+          "applies_to": [
+            "retry"
+          ],
+          "material_refs": [
+            "background.constraints"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        },
+        {
+          "id": "diagnoseA-basis",
+          "text": "先诊断路径：先读一次120秒上限的同服务健康快照。信息价值：得到服务级状态、实际采样时间与适用性；健康不能证明本状态接口可用。若适用且明确当前服务离线，报告阻塞并结束；若健康、不明或读失败且当时余量足够60秒加30秒报告，再用唯一一次60秒重试，随后报告响应或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：取得当前状态前增加一次读取；可能节省对离线服务的无效重试。适合原因诊断优先或快照可先确认阻塞的情形。始终遵守公共停止条件，不再第二次读取。",
+          "applies_to": [
+            "diagnose"
+          ],
+          "material_refs": [
+            "background.constraints"
+          ],
+          "finding_ids": [],
+          "remaining_ids": []
+        }
+      ],
+      "prepared_at": "2026-11-08T10:00:00+00:00",
+      "model_context": {
+        "desc": [
+          "Get current read-only status before diagnosing the cause.",
+          "The first request connected but timed out awaiting its body.",
+          "There is no evidence of service outage or of snapshot freshness.",
+          "Keep the original 300-second allowance and reserve 30 seconds to report."
+        ],
+        "enum_meanings": {
+          "explicit": "来自本例明确的合成目标约定，不是准备者推断。",
+          "synthetic-observation": "合成场景所设观察，不代表生产实测。",
+          "synthetic-source-contract": "合成来源的范围和能力说明。",
+          "synthetic-accepted-premise": "本例新设的已确认目标前提；不是对旧例缺失偏好的补事实。",
+          "synthetic-budget-premise": "本例原额度约定，无真实业务授权。"
+        },
+        "terminology": {
+          "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+          "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+          "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。"
+        },
+        "references": {
+          "current_goal": {
+            "kind": "synthetic-accepted-premise",
+            "path": "v05-reference-current_goal.txt",
+            "lines": {
+              "start": 1,
+              "end": 1
+            }
+          },
+          "timeout_record": {
+            "kind": "synthetic-observation",
+            "path": "v05-reference-timeout_record.txt",
+            "lines": {
+              "start": 1,
+              "end": 1
+            }
+          },
+          "health_contract": {
+            "kind": "synthetic-source-contract",
+            "path": "v05-reference-health_contract.txt",
+            "lines": {
+              "start": 1,
+              "end": 1
+            }
+          },
+          "limits": {
+            "kind": "synthetic-budget-premise",
+            "path": "v05-reference-limits.txt",
+            "lines": {
+              "start": 1,
+              "end": 1
+            }
+          }
+        },
+        "auto_comparison": {
+          "priority": {
+            "source": "background.task_goal",
+            "rule": "Obtain current status first within the original read-only allowance."
+          },
+          "budget": {
+            "remaining_seconds": 300,
+            "reserve_seconds": 30
+          },
+          "paths": {
+            "retry": {
+              "max_seconds": 180,
+              "observation": "One 60-second retry for the current status.",
+              "stop": "Stop on a valid status, lost scope, cancellation, or exhausted allowance.",
+              "successor": "On failure, read health once only if 120 seconds plus the 30-second reserve remain.",
+              "steps": [
+                {
+                  "id": "status",
+                  "max_seconds": 60,
+                  "on_success": null,
+                  "on_failure": "health"
+                },
+                {
+                  "id": "health",
+                  "max_seconds": 120,
+                  "on_success": null,
+                  "on_failure": null
+                }
+              ]
+            },
+            "diagnose": {
+              "max_seconds": 180,
+              "observation": "One 120-second read of the service snapshot.",
+              "stop": "Stop on current applicable proof of outage, lost scope, cancellation, or exhausted allowance.",
+              "successor": "If inconclusive, retry status once only if 60 seconds plus the 30-second reserve remain.",
+              "steps": [
+                {
+                  "id": "health",
+                  "max_seconds": 120,
+                  "on_success": null,
+                  "on_failure": "status"
+                },
+                {
+                  "id": "status",
+                  "max_seconds": 60,
+                  "on_success": null,
+                  "on_failure": null
+                }
+              ]
+            }
+          },
+          "pairs": [
+            {
+              "candidates": [
+                "retry",
+                "diagnose"
+              ],
+              "criterion": "The retry can give current interface status directly.",
+              "reversal": "An applicable, fresh outage observation makes an immediate retry unnecessary."
+            }
+          ]
+        }
+      }
+    }
+  },
+  "explicit_followup_from_fixture": null,
+  "target_wire": "optionA",
+  "expected_choice": "retry",
+  "observations": [
+    {
+      "name": "PM decision via normal entry",
+      "tool_results": [
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"transport-unknown\",\"action\":\"blocked-ask-human\",\"escalated_reason\":\"transport-unknown\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"9791a4d0-0ade-49ac-ab14-7041426bf109\",\"matter_ref\":\"0eee1b5bf97e30e89b94fa3a20535349\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"service-unavailable\",\"raw_reason\":\"transport-unknown\",\"raw_payload\":{\"available\":false,\"transport\":\"timi-decisions\",\"model\":\"jev-latest\",\"confidence_source\":\"api\",\"attempts\":1,\"latency_ms\":78,\"answers\":null,\"reason\":\"transport-unknown\",\"decision_id\":\"dp-auto:0eee1b5b-f97e-80e8-8b94-fa3a20535349\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":\"transport-unknown\",\"state_digest\":\"19f4c956ca3d83ae\",\"logical_id\":\"0eee1b5b-f97e-80e8-8b94-fa3a20535349\",\"dp\":\"dp-auto\",\"replayed\":false,\"record_start\":\"written\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"desc_measurement\":{\"estimated_tokens\":64,\"exact_count\":null,\"exact_limit_passed\":null},\"basis_source\":null,\"business_decisions\":0,\"transport_attempts\":1,\"issues\":[],\"detail\":\"incomplete decision response: IncompleteRead: IncompleteRead(16 bytes read, 232 more expected)\",\"prepared_at\":null,\"snapshot_ref\":\"state-5ef1bfc51ca2bbc1\",\"call_id\":\"7c8a11016c5b42fbb4457d8470869595\",\"capture_status\":\"ok\",\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\timeout.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\timeout.txt\",\"sha256\":\"80ddd69e7e78c49c66281dd24e1e83b7cffdc7cb88c930b1ec3580eda3da9e9d\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-current_goal.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-current_goal.txt\",\"sha256\":\"2eb22746272d8700b16d5c6a0267020374713a53903c70f1748ab886c2b2e313\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-timeout_record.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-timeout_record.txt\",\"sha256\":\"e66c65047b88c421195afa2f350b036bb52ca40961ecf9d15334100eabadf293\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-health_contract.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-health_contract.txt\",\"sha256\":\"533a076e4f00d45485c4b2d595bb9ea019895027349f1952908a95a10c9944c9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-limits.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-limits.txt\",\"sha256\":\"8e0e399a4af08799d80de3bcd3cc967b34f0b646e01b88cccb350a36d8fb7d3e\"}],\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"blocked_event_id\":\"25906dd2-2433-4d49-b89a-b54acc0a2e7e\",\"unavailable\":\"transport-unknown\",\"raw_reason\":\"transport-unknown\"},\"escalated_reason\":\"transport-unknown\",\"owner\":\"WENBOZHOU-PC5:54416\",\"binding\":{\"role\":\"pm\",\"owner\":\"WENBOZHOU-PC5:54416\",\"claim_id\":\"WENBOZHOU-PC5:54416\",\"key\":\"key-1\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T15:47:05.391Z\"},\"effect_state\":\"none\",\"stop_scope\":\"service-request\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:52e111e019d1396fe3ec54dd3e105c9d0c0c8622a827355c29ec9b131ab782a9\",\"local_ref\":\"lref:52e111e019d1396fe3ec54dd3e105c9d\",\"dp\":\"dp-auto\",\"candidates\":[\"retry\",\"diagnose\"],\"basis_ids\":[\"retryA-basis\",\"diagnoseA-basis\"]}}\nUNAVAILABLE(transport-unknown) — 不要自行猜测，不要执行被门控的动作，不要用别的工具绕过。上报 \"blocked on decision dp-auto\" 与本条 decision_feedback 的具体缺口；同一事项同一事实不要重发（返回已有反馈），在现有权限/角色/写面内可继续其他独立合法工具；只有真实用户停止、父取消、权限/预算或角色事实才停止更大范围工作。"
+        }
+      ],
+      "http_delta": 1
+    },
+    {
+      "name": "Repeat same matter after changing only trigger and prepared_at",
+      "tool_results": [
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"transport-unknown\",\"action\":\"blocked-ask-human\",\"escalated_reason\":\"transport-unknown\",\"matter_suppressed\":true,\"original_blocked_event_id\":\"25906dd2-2433-4d49-b89a-b54acc0a2e7e\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"9791a4d0-0ade-49ac-ab14-7041426bf109\",\"matter_ref\":\"0eee1b5bf97e30e89b94fa3a20535349\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"service-unavailable\",\"raw_reason\":\"transport-unknown\",\"raw_payload\":{\"available\":false,\"transport\":\"timi-decisions\",\"model\":\"jev-latest\",\"confidence_source\":\"api\",\"attempts\":1,\"latency_ms\":78,\"answers\":null,\"reason\":\"transport-unknown\",\"decision_id\":\"dp-auto:0eee1b5b-f97e-80e8-8b94-fa3a20535349\",\"mode\":\"auto\",\"acted\":false,\"escalated_reason\":\"transport-unknown\",\"state_digest\":\"19f4c956ca3d83ae\",\"logical_id\":\"0eee1b5b-f97e-80e8-8b94-fa3a20535349\",\"dp\":\"dp-auto\",\"replayed\":false,\"record_start\":\"written\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"desc_measurement\":{\"estimated_tokens\":64,\"exact_count\":null,\"exact_limit_passed\":null},\"basis_source\":null,\"business_decisions\":0,\"transport_attempts\":1,\"issues\":[],\"detail\":\"incomplete decision response: IncompleteRead: IncompleteRead(16 bytes read, 232 more expected)\",\"prepared_at\":null,\"snapshot_ref\":\"state-5ef1bfc51ca2bbc1\",\"call_id\":\"7c8a11016c5b42fbb4457d8470869595\",\"capture_status\":\"ok\",\"file_evidence\":[{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\.agenticdoc\\\\target.yml\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\.agenticdoc\\\\target.yml\",\"sha256\":\"4f7ad17bd59431e2c7987d9f53a15dd97b418a811560f5d725d42e2a5849eab9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\.mw\\\\decision-evidence.yml\",\"canonical_path\":null,\"sha256\":null,\"status\":\"missing\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\timeout.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\timeout.txt\",\"sha256\":\"80ddd69e7e78c49c66281dd24e1e83b7cffdc7cb88c930b1ec3580eda3da9e9d\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-current_goal.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-current_goal.txt\",\"sha256\":\"2eb22746272d8700b16d5c6a0267020374713a53903c70f1748ab886c2b2e313\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-timeout_record.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-timeout_record.txt\",\"sha256\":\"e66c65047b88c421195afa2f350b036bb52ca40961ecf9d15334100eabadf293\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-health_contract.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-health_contract.txt\",\"sha256\":\"533a076e4f00d45485c4b2d595bb9ea019895027349f1952908a95a10c9944c9\"},{\"path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-limits.txt\",\"canonical_path\":\"E:\\\\gitlite\\\\Multi-Workers\\\\.tmp\\\\ac014-final-pm-transport-unknown-project\\\\v05-reference-limits.txt\",\"sha256\":\"8e0e399a4af08799d80de3bcd3cc967b34f0b646e01b88cccb350a36d8fb7d3e\"}],\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"blocked_event_id\":\"25906dd2-2433-4d49-b89a-b54acc0a2e7e\",\"unavailable\":\"transport-unknown\",\"raw_reason\":\"transport-unknown\"},\"escalated_reason\":\"transport-unknown\",\"owner\":\"WENBOZHOU-PC5:54416\",\"binding\":{\"role\":\"pm\",\"owner\":\"WENBOZHOU-PC5:54416\",\"claim_id\":\"WENBOZHOU-PC5:54416\",\"key\":\"key-1\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T15:47:05.391Z\"},\"effect_state\":\"none\",\"stop_scope\":\"service-request\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:52e111e019d1396fe3ec54dd3e105c9d0c0c8622a827355c29ec9b131ab782a9\",\"local_ref\":\"lref:52e111e019d1396fe3ec54dd3e105c9d\",\"dp\":\"dp-auto\",\"candidates\":[\"retry\",\"diagnose\"],\"basis_ids\":[\"retryA-basis\",\"diagnoseA-basis\"]}}\nUNAVAILABLE(transport-unknown) — 不要自行猜测，不要执行被门控的动作，不要用别的工具绕过。上报 \"blocked on decision dp-auto\" 与本条 decision_feedback 的具体缺口；同一事项同一事实不要重发（返回已有反馈），在现有权限/角色/写面内可继续其他独立合法工具；只有真实用户停止、父取消、权限/预算或角色事实才停止更大范围工作。"
+        }
+      ],
+      "http_delta": 0
+    },
+    {
+      "name": "Same matter in a recreated PM session with unchanged claim",
+      "tool_results": [
+        {
+          "tool": "ask_decision",
+          "error": false,
+          "text": "{\"available\":false,\"unavailable\":\"transport-unknown\",\"action\":\"blocked-ask-human\",\"escalated_reason\":\"transport-unknown\",\"original_blocked_event_id\":\"25906dd2-2433-4d49-b89a-b54acc0a2e7e\"}\n{\"decision_feedback\":{\"schema_version\":1,\"feedback_ref\":\"ee89d145-c1e8-425a-a4f5-279bd23e2407\",\"matter_ref\":\"0eee1b5bf97e30e89b94fa3a20535349\",\"origin\":\"mw-decide-run\",\"stage\":\"service-reply\",\"category\":\"service-unavailable\",\"raw_reason\":\"transport-unknown\",\"raw_payload\":{\"available\":false,\"transport\":\"none\",\"model\":null,\"confidence_source\":\"unknown\",\"attempts\":0,\"latency_ms\":0,\"answers\":null,\"reason\":\"transport-unknown\",\"decision_id\":null,\"mode\":null,\"acted\":false,\"escalated_reason\":\"transport-unknown\",\"state_digest\":null,\"logical_id\":\"0eee1b5b-f97e-80e8-8b94-fa3a20535349\",\"dp\":\"dp-auto\",\"replayed\":true,\"record_start\":\"duplicate\",\"choice\":null,\"basis_id\":null,\"basis_text\":null,\"finding_ids\":null,\"remaining_ids\":null,\"basis_source\":null,\"business_decisions\":0,\"feedback_status\":\"not-recorded\",\"feedback_error_class\":null,\"feedback_error_recorded\":null,\"feedback_stages\":[],\"detail\":\"incomplete decision response: IncompleteRead: IncompleteRead(16 bytes read, 232 more expected)\",\"original_blocked_event_id\":\"25906dd2-2433-4d49-b89a-b54acc0a2e7e\",\"blocked_event_id\":\"e27ac1f1-3ae4-4b0a-ac94-4345feae1455\",\"unavailable\":\"transport-unknown\",\"raw_reason\":\"transport-unknown\"},\"escalated_reason\":\"transport-unknown\",\"owner\":\"WENBOZHOU-PC5:54416\",\"binding\":{\"role\":\"pm\",\"owner\":\"WENBOZHOU-PC5:54416\",\"claim_id\":\"WENBOZHOU-PC5:54416\",\"key\":\"key-1\",\"binding_version\":\"decision-handoff/v1\",\"observed_at\":\"2026-11-22T15:47:06.206Z\"},\"effect_state\":\"none\",\"stop_scope\":\"service-request\"}}\n{\"submit_offer\":{\"submittable\":true,\"submit_tool\":\"submit_decision_handoff\",\"offer_id\":\"offer:2c3da4b047becf3ccbaa77d318bc226f2565a4d5a6a8a27007ddb0f9f8d15cb9\",\"local_ref\":\"lref:2c3da4b047becf3ccbaa77d318bc226f\",\"dp\":\"dp-auto\",\"candidates\":[\"retry\",\"diagnose\"],\"basis_ids\":[\"retryA-basis\",\"diagnoseA-basis\"]}}\nUNAVAILABLE(transport-unknown) — 不要自行猜测，不要执行被门控的动作，不要用别的工具绕过。上报 \"blocked on decision dp-auto\" 与本条 decision_feedback 的具体缺口；同一事项同一事实不要重发（返回已有反馈），在现有权限/角色/写面内可继续其他独立合法工具；只有真实用户停止、父取消、权限/预算或角色事实才停止更大范围工作。"
+        }
+      ],
+      "http_delta": 0
+    }
+  ]
+}

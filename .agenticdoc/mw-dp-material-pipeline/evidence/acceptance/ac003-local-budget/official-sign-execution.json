@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "C:\\Program Files\\Python312\\python.exe",
+    "-B",
+    "-X",
+    "utf8",
+    "packages/multi-workers/mw.py",
+    "decide",
+    "sign",
+    "mw-dp-material-pipeline",
+    "--project",
+    ".",
+    "--stdin",
+    "--json"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "phase": "VERIFY",
+  "signoff_valid": true,
+  "signoff": ".agenticdoc/mw-dp-material-pipeline/evidence/review/sign-final.md@3bf81ca4bec9d9a05c32e4e17b1aac874cd51f514bc7081b5f2bbdfe7a031026",
+  "t09_exit_code": 0
+}

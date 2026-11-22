@@ -1,0 +1,38 @@
+{
+  "record_kind": "current_session_pm_reference_adjudication",
+  "recorded_on": "2026-11-19",
+  "author": "Codex PM 当前设计整理会话",
+  "historical_runtime_pm_record": null,
+  "scope": "针对所列真实API回包的离线PM参考裁定；不是原生产窗口已采纳/执行的记录",
+  "model_wire_id": "codingA",
+  "decoded_choice": "coding",
+  "basis_id": "codingA-basis",
+  "finding_ids": [],
+  "remaining_ids": [],
+  "summary": "参考采纳coding：准备代码与回归测试任务，不把类型选择当已派发。",
+  "disposition": "adopt-direction-in-reference",
+  "reasoning": [
+    "work_items要求修改转义算法并增加回归断言，交付是代码和测试。",
+    "没有必须解释像素的要求，不能因文本提及格式就改派vision。"
+  ],
+  "follow_up": [
+    "由原PM编制coding任务卡，交付导出器修复及逗号/双引号样本的往返断言。",
+    "写面限定导出器和相应测试，保留格式协议不变；实际派发前核真实模型/权限/预算。"
+  ],
+  "must_preserve": [
+    "四类候选及原约束",
+    "代码与回归断言均需交付"
+  ],
+  "must_not_claim": [
+    "Worker已经启动或测试已通过"
+  ],
+  "pending_real_host_checks": [
+    "原真实owner/matter/run与对象版本",
+    "原权限/取消/停止和当前余额",
+    "该DP必要独审/业务writer前提"
+  ],
+  "runtime_business_acceptance": null,
+  "actual_dispatch_run_ids": [],
+  "actual_business_receipt": null,
+  "production_executed": false
+}

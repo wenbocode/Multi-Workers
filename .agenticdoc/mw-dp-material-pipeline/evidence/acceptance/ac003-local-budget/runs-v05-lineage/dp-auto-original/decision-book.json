@@ -1,0 +1,84 @@
+{
+  "material": {
+    "question": "After the first read-only timeout, retry once or read the health snapshot first?",
+    "background": {
+      "task_goal": "Get a trustworthy read-only status or a definite failure within five minutes.",
+      "current_state": "First request timed out; service availability is unknown.",
+      "tried": "One read-only request.",
+      "unknowns": "No preference between latency and diagnosis has been provided.",
+      "constraints": "Read-only, one retry, existing five minutes; no renewed budget."
+    },
+    "handling_options": [
+      {
+        "id": "retry",
+        "label": "Retry once",
+        "description": "Repeat the read-only request once",
+        "consequence": "Possibly receive current data",
+        "risk": "Another timeout",
+        "conditions": "Read-only"
+      },
+      {
+        "id": "diagnose",
+        "label": "Read the health snapshot",
+        "description": "Use the authorized health snapshot first",
+        "consequence": "Obtain diagnostic facts",
+        "risk": "Data may be stale",
+        "conditions": "Read-only"
+      }
+    ]
+  },
+  "preparation": {
+    "basis_catalog": [
+      {
+        "id": "retryA-basis",
+        "text": "retry：对当前瞬态超时做一次有界只读重试；预期：取得当前响应或保留失败；估计1分钟；风险：可能再次超时；条件：原只读请求、原剩余5分钟内，不重复写动作。",
+        "applies_to": [
+          "retry"
+        ],
+        "material_refs": [
+          "background.constraints"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "diagnoseA-basis",
+        "text": "diagnose：先读已授权服务健康快照；预期：区分服务离线与单次超时；估计2分钟；风险：快照可能不能说明单个请求；条件：只读来源仍在原范围。",
+        "applies_to": [
+          "diagnose"
+        ],
+        "material_refs": [
+          "background.constraints"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      }
+    ],
+    "prepared_at": "2026-11-08T10:00:00+00:00",
+    "model_context": {
+      "desc": [
+        "Get a trustworthy result or a definite failure in five minutes.",
+        "The first request timed out.",
+        "No preference between response time and diagnosis is available."
+      ],
+      "enum_meanings": {
+        "diagnose": "本请求准备的先读取健康事实的诊断方案。",
+        "known": "对应约束或条件已由本次来源确认。",
+        "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+        "retry": "本请求准备的一次有界重试方案。"
+      },
+      "terminology": {
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+      }
+    }
+  },
+  "meta": {
+    "record_version": 2,
+    "logical_id": "current-receipt-1",
+    "key": "key-1",
+    "task_key": null,
+    "initiator_role": "pm",
+    "retry_of": null
+  }
+}

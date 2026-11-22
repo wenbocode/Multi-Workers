@@ -74,3 +74,4 @@
 | mw-dp-consolidation | active | EXECUTE | WENBOZHOU-PC4:15444 | mw-decision-context | Eight-DP-consolidation-and-joint-gate-redesign | 2026-10-28T07:05:02.240Z |
 | t22-redactor-fix | idle | SPEC | WENBOZHOU-PC4:55580 |  |  | 2026-10-25T07:30:43.579Z |
 | mw-codex-pm-workflow | idle | DONE | — | — | Codex PM dispatch, recover and verify MW task cards | 2026-11-08 15:21 |
+| mw-dp-material-pipeline | idle | DONE | — | — | Codex lightweight task | 2026-11-22T16:59:21.192552+00:00 |

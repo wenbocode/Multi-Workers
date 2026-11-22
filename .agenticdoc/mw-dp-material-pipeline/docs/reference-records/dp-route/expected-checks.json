@@ -1,0 +1,20 @@
+{
+  "record_scope": "reference-check-vectors-not-production-receipt",
+  "expected_wire": "route4",
+  "expected_business_choice": "dp-QG",
+  "expected_basis_id": "route4-basis",
+  "expected_finding_ids": [],
+  "expected_remaining_ids": [],
+  "expected_pm_disposition": "route-to-qg-preparation-in-reference",
+  "required_pm_facts": [
+    "七入口职责",
+    "目标入口自己的准备/角色/预算前提"
+  ],
+  "forbidden_pm_claims": [
+    "QG已经通过或已经实际请求过目标入口"
+  ],
+  "original_request_bytes_must_remain_identical": true,
+  "historical_response_must_not_be_applied_to_changed_payload": true,
+  "known_material_failures": [],
+  "must_not_assume_actual_execution": true
+}

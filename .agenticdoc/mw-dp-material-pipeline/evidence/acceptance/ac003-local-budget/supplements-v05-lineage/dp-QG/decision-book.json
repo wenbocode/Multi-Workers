@@ -1,0 +1,105 @@
+{
+  "material": {
+    "review_requirements": "AC-001: Detect row reordering. AC-002: Cite the ordering assertion at its actual line.",
+    "review_evidence": [
+      "review-before.txt",
+      "checks.py",
+      "anchors.json"
+    ],
+    "review_findings": "F1: Missing ordering assertion. F2: Stale assertion anchor.",
+    "uncovered_scope": "Application runtime outside the isolated import remains unverified."
+  },
+  "preparation": {
+    "prepared_at": "2026-11-08T10:00:00+00:00",
+    "model_context": {
+      "desc": [
+        "Verify that imports preserve row order and that the evidence anchor reaches that assertion.",
+        "The independent check found missing ordering coverage and a stale anchor.",
+        "The check output and current files provide the review evidence."
+      ],
+      "review": {
+        "AC-001": {
+          "status": "unmet",
+          "evidence": "review-before.txt:1"
+        },
+        "AC-002": {
+          "status": "unmet",
+          "evidence": "review-before.txt:1"
+        },
+        "VC-001": {
+          "status": "unmet",
+          "evidence": "review-before.txt:1"
+        },
+        "VC-002": {
+          "status": "unmet",
+          "evidence": "review-before.txt:1"
+        }
+      },
+      "reasons": {
+        "F1": "The existing assertion checks length only.",
+        "F2": "The evidence anchor points at the wrong line."
+      }
+    },
+    "basis_catalog": [
+      {
+        "id": "pass-review",
+        "applies_to": [
+          "pass"
+        ],
+        "material_refs": [
+          "review_requirements"
+        ],
+        "text": "All current ACs and the independent evidence checks pass."
+      },
+      {
+        "id": "order-only",
+        "applies_to": [
+          "fix"
+        ],
+        "material_refs": [
+          "review_findings"
+        ],
+        "finding_ids": [
+          "F1"
+        ],
+        "remaining_ids": [
+          "F2"
+        ],
+        "text": "F1: Add the missing ordering assertion, with F2 outstanding."
+      },
+      {
+        "id": "order-and-anchor",
+        "applies_to": [
+          "fix"
+        ],
+        "material_refs": [
+          "review_findings"
+        ],
+        "finding_ids": [
+          "F1",
+          "F2"
+        ],
+        "remaining_ids": [],
+        "text": "F1: Add the ordering assertion. F2: Update the stale evidence anchor."
+      },
+      {
+        "id": "reopen-contract",
+        "applies_to": [
+          "reopen"
+        ],
+        "material_refs": [
+          "review_requirements"
+        ],
+        "text": "A substantive conflict in the accepted quality requirements needs adjudication."
+      }
+    ]
+  },
+  "meta": {
+    "record_version": 2,
+    "logical_id": "qg-repair-and-review-1",
+    "key": "key-1",
+    "task_key": null,
+    "initiator_role": "pm",
+    "retry_of": null
+  }
+}

@@ -91,6 +91,95 @@
           "text": "先后顺序需要人判断，本轮不新增实现更稳妥。"
         }
       ],
+      "model_context": {
+        "auto_comparison": {
+          "budget": {
+            "remaining_seconds": 1500,
+            "reserve_seconds": 60
+          },
+          "pairs": [
+            {
+              "candidates": [
+                "wire-facets-now",
+                "split-projection-task"
+              ],
+              "criterion": "列表已有完整字段时，先验证筛选可用性。",
+              "reversal": "关键字段需跨投影补齐时，先确认可独立验收的写面。"
+            },
+            {
+              "candidates": [
+                "wire-facets-now",
+                "escalate-to-human"
+              ],
+              "criterion": "已授权且列表已有字段时，先核对实际值。",
+              "reversal": "若当前目标无法确定优先级，先查已有决定。"
+            },
+            {
+              "candidates": [
+                "split-projection-task",
+                "escalate-to-human"
+              ],
+              "criterion": "可以由证据界定依赖时，先核查拆分前提。",
+              "reversal": "若依赖取决于未定目标，先确认已有取舍。"
+            }
+          ],
+          "paths": {
+            "escalate-to-human": {
+              "max_seconds": 60,
+              "observation": "是否已有明确的筛选与正文优先级。",
+              "steps": [
+                {
+                  "id": "check-goal",
+                  "max_seconds": 60,
+                  "on_failure": null,
+                  "on_success": null
+                }
+              ],
+              "stop": "核对当前目标与现有决定后结束。",
+              "successor": "若仍缺取舍，交 PM 请求确认，维持原只读范围。"
+            },
+            "split-projection-task": {
+              "max_seconds": 300,
+              "observation": "缺失的正文投影能否独立验收。",
+              "steps": [
+                {
+                  "id": "check-detail",
+                  "max_seconds": 300,
+                  "on_failure": null,
+                  "on_success": null
+                }
+              ],
+              "stop": "确认必要字段和依赖后结束。",
+              "successor": "若边界明确，提交拆分建议，否则保留原任务并列出依赖。"
+            },
+            "wire-facets-now": {
+              "max_seconds": 240,
+              "observation": "当前列表是否已有可用的筛选字段。",
+              "steps": [
+                {
+                  "id": "check-facets",
+                  "max_seconds": 240,
+                  "on_failure": null,
+                  "on_success": null
+                }
+              ],
+              "stop": "核对一个当前列表投影后结束。",
+              "successor": "若字段可用，记录接线前提并交 PM 核准，否则保留未记录状态。"
+            }
+          },
+          "priority": {
+            "rule": "先取得能核对的只读证据，保持现有授权和范围。",
+            "source": "background.constraints"
+          }
+        },
+        "desc": [
+          "目标是让工作台旧记录的状态可核对。",
+          "已有四状态和 DAG 用例，列表与正文的投影还缺字段。"
+        ],
+        "terminology": {
+          "DAG": "有向无环图，用来显示工作台流程中各节点的依赖。"
+        }
+      },
       "prepared_at": "2026-10-27T13:45:28+00:00"
     },
     "schema_version": 3

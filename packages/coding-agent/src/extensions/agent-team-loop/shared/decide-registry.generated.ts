@@ -43,7 +43,7 @@ export interface DecideRegistryPreparation {
 	basisSource: string;
 	/** This layer is never derived from or merged into the business material. */
 	independentOf: string;
-	/** The one basis field the model allowlist allows besides the material. */
+	/** Local catalog path used to render paired choices. */
 	basisStateField: string;
 	/** Core evidence: never carried by the trimmable `context` block. */
 	contextTrimmable: false;
@@ -455,8 +455,8 @@ export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {
 				name: "handling_options",
 				type: "array",
 				description:
-					"PM-prepared, problem-specific action candidates [{id,label,description,consequence,risk,conditions}]; ids only need to be unique in this request (no legacy cN/2..5 bound).",
-				maxItems: 32,
+					"2 to 5 distinct PM-prepared action candidates [{id,label,description,consequence,risk,conditions}]; ids only need to be unique in this request.",
+				maxItems: 5,
 				itemType: "object",
 			},
 		],

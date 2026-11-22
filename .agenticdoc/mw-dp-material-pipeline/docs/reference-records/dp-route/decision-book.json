@@ -1,0 +1,112 @@
+{
+  "schema": "dp-reference-v0.5-draft",
+  "sample_kind": "synthetic-reference",
+  "dp": "dp-route",
+  "role_scope": "pm",
+  "binding": {
+    "owner_ref": null,
+    "matter_ref": null,
+    "budget_ref": null,
+    "status": "合成参考，无生产身份"
+  },
+  "sources": [
+    {
+      "id": "S1",
+      "label": "真实主体和当前问题",
+      "path": "sources/S1.txt",
+      "sha256": "ea72dab667698da5c0a73e27c94110287df47766126821b815c5029c7f994feb",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    }
+  ],
+  "field_trace": {
+    "file": "field-trace.json",
+    "note": "真实原件与字段变换留本地；本例源正文见sources/。"
+  },
+  "preparation": {
+    "prepared_at": "由实际准备者/host落盘",
+    "basis_catalog": "见pair-map.json",
+    "material_refs": "每个选项关联本次材料",
+    "applies_to": "本地校验，不能据此裁剪固定候选",
+    "producer": "原PM/实际Worker，或受托prepare Worker起草后由原主体工具吸收"
+  },
+  "pair_map": {
+    "file": "pair-map.json"
+  },
+  "host_exclusions": [],
+  "execution_plan": {
+    "status": "未制定；选择方向后由原主体按授权准备",
+    "send": false
+  },
+  "expected": {
+    "choices": [
+      "dp-QG"
+    ],
+    "status": "作者参考预期，禁止发给模型"
+  },
+  "actual_capture": {
+    "request": "not-sent-v0.5",
+    "response": "not-observed-v0.5"
+  },
+  "post_checks": "核真实PM绑定及目标是本次7个入口之一；只转交责任，Worker目标仍由真实Worker执行，不代目标业务判断。",
+  "freeze": {
+    "file": "payload.json",
+    "sha256": "3b40984c3beb76a30204c0bf05af1a544429aa9f13dc897fcbb973421a30c3a8",
+    "bytes": 4332
+  },
+  "desc_preparation": {
+    "sentences": [
+      "原PM当前需要判断一份产物是否满足已确认的质量标准。",
+      "尚未提出整个key交付收尾，也不是申请执行gate动作。",
+      "当前偏差是入口尚未归类，依据是这次明确的业务问题和审核范围。",
+      "这里只选择责任入口，不代后续入口作质量判断；若已处于固定QG节点就无需再路由。"
+    ],
+    "sentence_count": 4,
+    "max_sentences": 10,
+    "max_tokens": 1000,
+    "estimated_tokens": 115,
+    "token_count": null,
+    "meter": "existing-estimator-precheck; target-model exact count not available",
+    "source_note": "从v0.3合成来源归纳；QG/sign增加显式同范围fixture，非当前业务事实",
+    "source_pointers": [
+      "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-route\\reference.json"
+    ],
+    "sentence_sources": [
+      {
+        "sentence": 1,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-route\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 2,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-route\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 3,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-route\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 4,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-route\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      }
+    ],
+    "claims": "目标/偏差/事件/证据与未知，不写推荐答案"
+  },
+  "definition_sources": {
+    "AC": "已确认验收正文；本例来自v0.4合成scope",
+    "VC": "项目设计Verification Contract；本例来自v0.4合成review矩阵",
+    "other_refs": "本次来源中的发现/剩余工作/入口职责",
+    "registry": "仅使用当前请求出现的术语，未知项拒绝准备"
+  }
+}

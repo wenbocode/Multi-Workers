@@ -1,0 +1,189 @@
+{
+  "schema": "v0.6-draft",
+  "sample_kind": "synthetic-reference",
+  "binding": {
+    "owner_ref": null,
+    "matter_ref": null,
+    "budget_ref": null,
+    "status": "无生产身份和真实业务时钟"
+  },
+  "sources": [
+    {
+      "path": "sources/scenario.json",
+      "sha256": "0abb9e91866d403545f8e504db88d71a3e2b8e98c6739c0ccba2d5d46b313c0c",
+      "version": "synthetic-v06",
+      "content_sent": true
+    }
+  ],
+  "preparation": {
+    "producer": "Codex本轮样例编制，未启动prepare Worker",
+    "helper_tools": "proposed-not-implemented"
+  },
+  "desc_preparation": {
+    "sentences": [
+      "这是新设合成场景，目标是在原期限内优先尽快取得当前只读状态，原因诊断次之。",
+      "第一次请求已建立连接但等待响应体超时，没有可用状态，也未确认服务离线。",
+      "允许的重试只有一次，健康快照是服务级汇总，其最新内容与实际采样时间尚未读取。",
+      "本次比较先重试与先诊断两条有条件后继的有界路径，不把首步当完整恢复。",
+      "原余量300秒持续扣减，每步重核并预留30秒报告，不能刷新额度。"
+    ],
+    "max_sentences": 10,
+    "max_tokens": 1000,
+    "estimated_tokens": 173,
+    "token_count": null,
+    "meter": "estimate-only; target-model exact meter unavailable",
+    "sentence_sources": [
+      [
+        "current_goal"
+      ],
+      [
+        "timeout_record"
+      ],
+      [
+        "health_contract",
+        "limits"
+      ],
+      [
+        "current_goal",
+        "limits"
+      ],
+      [
+        "limits"
+      ]
+    ]
+  },
+  "expected": {
+    "choices": [
+      "retry",
+      "diagnose"
+    ],
+    "note": "两个均合法；不以作者排序、confidence或选中某一项作为传输通过条件。"
+  },
+  "dynamic_candidates": [
+    "retry",
+    "diagnose"
+  ],
+  "pair_map": [
+    {
+      "wire_id": "retryA",
+      "choice": "retry",
+      "basis_id": "retryA-basis",
+      "criterion": "先重试路径：先用唯一一次60秒上限读取当前状态。信息价值：直接得到当前有效响应，或增加一次失败证据，不能证明根因。若成功立即结束；若失败且当时余量足够120秒加30秒报告，再读一次健康快照，随后报告有证据的阻塞或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：可能再次超时；快照仍可能无法解释本请求。适合优先当前响应且没有已确认离线证据的目标；根因诊断更重要或已有适用离线证据时价值下降。始终遵守公共停止条件，不再第二次重试。",
+      "material_refs": [
+        "state.material.objective",
+        "state.material.evidence",
+        "state.material.constraints"
+      ],
+      "finding_ids": [],
+      "remaining_ids": []
+    },
+    {
+      "wire_id": "diagnoseA",
+      "choice": "diagnose",
+      "basis_id": "diagnoseA-basis",
+      "criterion": "先诊断路径：先读一次120秒上限的同服务健康快照。信息价值：得到服务级状态、实际采样时间与适用性；健康不能证明本状态接口可用。若适用且明确当前服务离线，报告阻塞并结束；若健康、不明或读失败且当时余量足够60秒加30秒报告，再用唯一一次60秒重试，随后报告响应或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：取得当前状态前增加一次读取；可能节省对离线服务的无效重试。适合原因诊断优先或快照可先确认阻塞的情形。始终遵守公共停止条件，不再第二次读取。",
+      "material_refs": [
+        "state.material.objective",
+        "state.material.evidence",
+        "state.material.constraints"
+      ],
+      "finding_ids": [],
+      "remaining_ids": []
+    }
+  ],
+  "path_ledger": {
+    "retryA": {
+      "start": "retry",
+      "steps": {
+        "retry": {
+          "seconds": 60,
+          "resource": "retry",
+          "next": [
+            "health",
+            "end"
+          ]
+        },
+        "health": {
+          "seconds": 120,
+          "resource": "health",
+          "next": [
+            "end"
+          ]
+        }
+      }
+    },
+    "diagnoseA": {
+      "start": "health",
+      "steps": {
+        "health": {
+          "seconds": 120,
+          "resource": "health",
+          "next": [
+            "retry",
+            "end"
+          ]
+        },
+        "retry": {
+          "seconds": 60,
+          "resource": "retry",
+          "next": [
+            "end"
+          ]
+        }
+      }
+    }
+  },
+  "discriminability": {
+    "status": "ready",
+    "scope": "synthetic-reference-only",
+    "semantic_review": "Codex作者核对，不是独立审核或通用语义证明",
+    "candidate_coverage": [
+      "retryA",
+      "diagnoseA"
+    ],
+    "decision_unit": "选择下一条有界路径及其条件后继；不是批准所有恢复动作",
+    "priority_source": "current_goal",
+    "pairwise": [
+      {
+        "left": "retryA",
+        "right": "diagnoseA",
+        "sources": [
+          "current_goal",
+          "timeout_record",
+          "health_contract"
+        ],
+        "left_better_when": "当前响应优先且未确认离线时，先重试直接接触目标输出，成功后避免额外健康读取。",
+        "right_better_when": "若已确认目标改为原因诊断优先，或新增适用当前离线信号，先快照可避免无效重试。",
+        "current_support": "本例响应优先，单次响应体超时未证明离线；快照为服务级汇总。",
+        "reversal_conditions": [
+          "来自原主体已确认的目标优先级变化",
+          "同范围新证据明确当前服务离线或约束改变"
+        ],
+        "not_proven": "未知成功概率与实际耗时；不声称先重试在所有分支更好。"
+      }
+    ],
+    "gaps": [],
+    "path_bounds": {
+      "retryA": 180,
+      "diagnoseA": 180
+    },
+    "original_budget_continues": true,
+    "source_support": {
+      "current_goal": "0abb9e91866d403545f8e504db88d71a3e2b8e98c6739c0ccba2d5d46b313c0c"
+    },
+    "input_sha256": "ffa98bc1193a7bd1e08aa2c424e1ab85d11ba7d58bd5b690e64d759b165c4225"
+  },
+  "execution_plan": {
+    "send": false,
+    "status": "本例不制定/执行真实业务命令"
+  },
+  "freeze": {
+    "sha256": "ffa98bc1193a7bd1e08aa2c424e1ab85d11ba7d58bd5b690e64d759b165c4225",
+    "bytes": 7081,
+    "file": "payload.json"
+  },
+  "host_checks": {
+    "status": "not-executed",
+    "reason": "合成样例无原生产主体；真实授权/取消/当前账本/执行不得由本例代过"
+  }
+}

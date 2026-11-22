@@ -1,0 +1,46 @@
+{
+  "record_kind": "current_pm_preflight_handoff",
+  "disposition": "return-material-for-goal-and-path-clarity",
+  "accepted_by": {
+    "actor": "当前复跑的 PM",
+    "role": "pm",
+    "owner": "WENBOZHOU-PC5:74132",
+    "claim_id": "WENBOZHOU-PC5:74132",
+    "key": "key-1",
+    "binding_version": "decision-handoff/v1",
+    "observed_at": "2026-11-22T16:47:16.597Z"
+  },
+  "refusal": {
+    "code": "input-incomplete",
+    "issues": [
+      {
+        "field": "preparation.model_context.auto_comparison",
+        "issue": "requires a sourced goal priority, remaining budget, bounded paths, and a decision test for each pair"
+      }
+    ],
+    "blocked_event_id": "6da0e329-3922-4a84-b4e7-b84d0e8208d9",
+    "feedback_ref": "1d6b89e5-48cf-4c98-af73-a5b3038514ea",
+    "matter_ref": "4f1b06bc07b48e90800e6a2565bbcf0d",
+    "logical_id": "4f1b06bc-07b4-8e90-800e-6a2565bbcf0d",
+    "transport_attempts": 0,
+    "decision_id": null
+  },
+  "reason": "原材料未给响应速度与诊断的优先级，缺剩余额度、带条件后继和停止条件的完整路径，以及两候选的区分判据。一次超时不足以证明服务离线。",
+  "next_steps": [
+    "由当前 PM 退回准备，先核对超时发生阶段、原权限、取消或停止状态、实际剩余时间及健康快照来源和新鲜度。",
+    "由原事项负责人明确速度与诊断的取舍，补齐两个候选的区分判据、各步硬上限、条件后继和停止条件，再在原余量内重走准备。",
+    "保持只读、原五分钟总额和最多一次重试的约束。余量或前提不足就维持阻塞并记录缺口。"
+  ],
+  "follow_up_state": "pending-source-confirmation",
+  "business_action_executed": false,
+  "historical_runtime_pm_record": null,
+  "case_id": "dp-auto-original",
+  "observation_source": "isolated PM session using production ask_decision and mw.py with a scripted PM response",
+  "submitted_constraints": "Read-only, one retry, existing five minutes; no renewed budget.",
+  "submitted_book": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-auto-original/decision-book.json",
+  "submitted_book_sha256": "a5b9950e45a56c64c9afeac5dc6451c39f4779895eadc58a1a5aae99fa44064e",
+  "session_transcript": "evidence/acceptance/ac003-local-budget/auto-pm/normal-entry.json",
+  "session_transcript_sha256": "9a3f488e7c45a8449fd376655de4c5faf554bf22535d44504a10df4e635cc13a",
+  "blocked_event": "evidence/acceptance/ac003-local-budget/auto-pm/dp-blocked/6da0e329-3922-4a84-b4e7-b84d0e8208d9.json",
+  "blocked_event_sha256": "4b4c32423f1d07ed70ed9c327bb8a505ea29681e891b7a53d9a794d248f16194"
+}

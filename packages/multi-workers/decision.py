@@ -128,6 +128,7 @@ REASON_ENTRY_UNAVAILABLE = "entry-unavailable"
 REASON_TIMEOUT = "timeout"
 REASON_RATE_LIMITED = "rate-limited"
 REASON_UPSTREAM_ERROR = "upstream-error"
+REASON_TRANSPORT_UNKNOWN = "transport-unknown"
 REASON_BAD_RESPONSE = "bad-response"
 REASON_UNSUPPORTED_QUESTION_TYPE = "unsupported-question-type"
 # FIX-H: `box` is TypeSafe's image-locating question type (answer = normalised
@@ -160,6 +161,7 @@ REASON_CODES = frozenset(
         REASON_TIMEOUT,
         REASON_RATE_LIMITED,
         REASON_UPSTREAM_ERROR,
+        REASON_TRANSPORT_UNKNOWN,
         REASON_BAD_RESPONSE,
         REASON_UNSUPPORTED_QUESTION_TYPE,
         REASON_BOX_REQUIRES_IMAGE,
@@ -184,6 +186,9 @@ _PREPARED_RESULT_FIELDS = (
     "choice",
     "basis_id",
     "basis_text",
+    "finding_ids",
+    "remaining_ids",
+    "desc_measurement",
     "basis_source",
     "prepared_at",
     "reason",
@@ -1752,6 +1757,7 @@ class DecisionClient:
         #: file sources after the decision against a potentially newer file.
         self.last_prepared_state: dict | None = None
         self.last_prepared_questions: dict | None = None
+        self.last_prepared_preparation: dict | None = None
         #: Authorized source/config dependencies used by this preparation;
         #: nullable hashes let the host invalidate a failed read after repair.
         self.last_file_evidence: list[dict[str, str | None]] = []
@@ -1805,6 +1811,8 @@ class DecisionClient:
         replay_check: Callable[[str, str], bool] | None = None,
         source_references: Mapping | None = None,
         evidence_refs: list[dict] | None = None,
+        contract_root: pathlib.Path | None = None,
+        sign_quality_gate: Mapping | None = None,
     ) -> dict:
         """One choice over legal business-conclusion/prepared-basis pairs.
 
@@ -1834,8 +1842,8 @@ class DecisionClient:
            decision count stays 0 and no default/first candidate is applied.
 
         Referenced file content is hydrated before sending, and any evidence
-        excerpt is explicit about omitted lines. Core material and the complete
-        basis catalog are never silently truncated. Existing token/byte gates
+        excerpt is explicit about omitted lines. The full basis catalog stays
+        local; each rendered option contains its prepared basis once. Existing token/byte gates
         remain authoritative; this method never raises the configured ceiling.
         Both normalized answer fields carry the one joint-selection confidence,
         not independent model answers or invented marginal probabilities.
@@ -1851,6 +1859,7 @@ class DecisionClient:
         start = self._clock()
         self.last_prepared_state = None
         self.last_prepared_questions = None
+        self.last_prepared_preparation = None
         self.last_file_evidence = []
         protocol = _protocol_module()
         if protocol is None:
@@ -1930,8 +1939,10 @@ class DecisionClient:
         try:
             import decision_backends  # type: ignore[import-not-found]  # sibling
 
+            frozen_preparation = copy.deepcopy(dict(preparation))
+            options = decision_backends.prepared_selection_options(dp, material, frozen_preparation)
             questions = decision_backends.build_prepared_questions(
-                dp, material, preparation
+                dp, material, frozen_preparation, options=options,
             )
         except ValueError as exc:
             return self._prepared(
@@ -1982,14 +1993,7 @@ class DecisionClient:
                     "set is not truncated"
                 ),
             )
-        catalog = _prepared_catalog(preparation)
-        state = {
-            "material": protocol.model_state_for(dp, material),
-            "preparation": {
-                "basis_catalog": copy.deepcopy(catalog),
-                "prepared_at": preparation["prepared_at"],  # type: ignore[index]
-            },
-        }
+        projected_material = protocol.model_state_for(dp, material)
         try:
             if evidence_refs and secret_hit(
                 _encode_state({"evidence_refs": evidence_refs}).decode("utf-8"),
@@ -1999,15 +2003,19 @@ class DecisionClient:
                     (("evidence_refs", "evidence reference contains credential-looking text"),),
                     diagnostics=[{"field": "evidence_refs", "code": "invalid-evidence-reference"}],
                 )
-            state = protocol.decision_material_sources.prepare_source_state(
-                state,
+            scope = self._wire_scope or self._active_scope
+            state = protocol.prepared_model_request(
+                dp, projected_material, frozen_preparation, questions,
                 self.cfg.project_root,
+                key=getattr(scope, "key", None),
+                options=options,
+                contract_root=contract_root,
                 max_state_bytes=self.cfg.max_state_bytes,
                 max_total_tokens=self.cfg.max_total_tokens,
                 max_state_plus_question_tokens=self.cfg.max_state_plus_question_tokens,
-                questions=questions,
                 source_references=source_references,
                 evidence_refs=evidence_refs,
+                **({"sign_quality_gate": sign_quality_gate} if sign_quality_gate is not None else {}),
             )
         except protocol.decision_material_sources.SourceMaterialError as exc:
             self.last_file_evidence = copy.deepcopy(exc.file_evidence)
@@ -2054,7 +2062,9 @@ class DecisionClient:
             )
         snapshot.known_superset()
         redactor = known_secret_redactor(self.cfg, snapshot=snapshot)
-        if secret_hit(_encode_state(state).decode("utf-8"), redactor):
+        if secret_hit(_encode_state({
+            "state": state, "questions": questions, "preparation": frozen_preparation,
+        }).decode("utf-8"), redactor):
             return self._prepared(
                 start,
                 dp=dp,
@@ -2064,11 +2074,11 @@ class DecisionClient:
             )
         self.last_prepared_state = copy.deepcopy(state)
         self.last_prepared_questions = copy.deepcopy(questions)
+        self.last_prepared_preparation = copy.deepcopy(frozen_preparation)
         # Retain a separate decode contract: the caller and injected backend
         # may mutate their own mappings while the network call is in flight.
         # A wire option always means the pair rendered before that call.
         frozen_material = copy.deepcopy(state["material"])
-        frozen_preparation = copy.deepcopy(state["preparation"])
         frozen_catalog = _prepared_catalog(frozen_preparation)
         # 5. Exactly one transport call (the client owns retries/budget only).
         # The generic face raises only on invalid arguments; a prepared request
@@ -2099,6 +2109,7 @@ class DecisionClient:
             "confidence_source": response.get("confidence_source")
             or CONFIDENCE_SOURCE_UNKNOWN,
             "latency_ms": response.get("latency_ms"),
+            "desc_measurement": protocol.decision_model_context.describe_measurement(state["desc"]),
         }
         if not response.get("available"):
             return self._prepared(
@@ -2112,7 +2123,7 @@ class DecisionClient:
         raw_answers = response.get("answers") or {}
         try:
             answers = decision_backends.decode_prepared_selection(
-                dp, frozen_material, frozen_preparation, raw_answers
+                dp, frozen_material, frozen_preparation, raw_answers, options=options,
             )
         except ValueError as exc:
             return self._prepared(
@@ -2142,21 +2153,16 @@ class DecisionClient:
                 answers=answers,
                 **shared,
             )
-        selected = next(
-            (
-                item
-                for item in frozen_catalog
-                if isinstance(item, Mapping) and item.get("id") == basis_id
-            ),
-            None,
-        )
+        selected = options[raw_answers[decision_backends.PREPARED_SELECTION_QUESTION_ID]["value"]]
         return self._prepared(
             start,
             dp=dp,
             available=True,
             choice=str(choice),
             basis_id=str(basis_id),
-            basis_text=str(selected.get("text")) if isinstance(selected, Mapping) else None,
+            basis_text=str(selected["basis_text"]),
+            finding_ids=list(selected.get("finding_ids", [])),
+            remaining_ids=list(selected.get("remaining_ids", [])),
             basis_source=str(getattr(protocol, "BASIS_SOURCE", "pm-prepared")),
             prepared_at=str(frozen_preparation["prepared_at"]),
             answers=answers,
@@ -2188,6 +2194,9 @@ class DecisionClient:
         choice: str | None = None,
         basis_id: str | None = None,
         basis_text: str | None = None,
+        finding_ids: list[str] | None = None,
+        remaining_ids: list[str] | None = None,
+        desc_measurement: Mapping | None = None,
         basis_source: str | None = None,
         prepared_at: str | None = None,
         reason: str | None = None,
@@ -2219,6 +2228,9 @@ class DecisionClient:
                 "choice": choice,
                 "basis_id": basis_id,
                 "basis_text": basis_text,
+                "finding_ids": finding_ids,
+                "remaining_ids": remaining_ids,
+                "desc_measurement": dict(desc_measurement) if desc_measurement is not None else None,
                 "basis_source": basis_source,
                 "prepared_at": prepared_at,
                 "reason": reason,

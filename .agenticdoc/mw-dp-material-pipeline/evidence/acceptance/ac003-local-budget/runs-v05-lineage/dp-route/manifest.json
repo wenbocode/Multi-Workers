@@ -1,0 +1,33 @@
+{
+  "case_id": "dp-route",
+  "dp": "dp-route",
+  "decision_id": "dp-route:current-receipt-1",
+  "call_id": "8396bbf368a141c0bbfc46942243e5fe",
+  "writer": "mw decide lifecycle",
+  "normalized": {
+    "choice": "dp-QG",
+    "basis_id": "route4-basis",
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  "desc_measurement": {
+    "local_budget": {
+      "rule": "desc-local-v1",
+      "count": 24,
+      "limit": 1000,
+      "passed": true
+    },
+    "estimated_tokens": 24,
+    "exact_count": null,
+    "exact_limit_passed": null
+  },
+  "choice": "dp-QG",
+  "basis_id": "route4-basis",
+  "observed": "Selected registry target dp-QG; target invocation has its own authority check.",
+  "pm_reason": "Prepare QG for this deliverable with its current criteria and independent review source. The chosen target still requires its own role, material and original budget checks. No QG request or verdict.",
+  "consumer_role": "pm",
+  "receipts": {
+    "consumed": "8cf693da15c24d5abb0fff7bae15f02c",
+    "settled": "settlement-dp-route"
+  }
+}

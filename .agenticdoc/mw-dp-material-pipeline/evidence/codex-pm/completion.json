@@ -1,0 +1,306 @@
+{
+  "key": "mw-dp-material-pipeline",
+  "summary": "DP \u6750\u6599\u94fe\u8def\u4e0e\u672c\u5730\u9884\u7b97\u9a8c\u6536\u901a\u8fc7\uff0cQG 39 \u9879\u3001v0.5 36 \u9879\u53ca\u6b63\u5f0f\u7b7e\u6536\u5df2\u6838\u5bf9",
+  "checks": [
+    {
+      "key": "mw-dp-material-pipeline",
+      "task": "cx-22fe10fe7b7ba132c4f0",
+      "argv": [
+        "python",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/check_review.py",
+        "--report",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/review/t09-focused-mw-review.md",
+        "--spec",
+        ".agenticdoc/mw-dp-material-pipeline/spec.md",
+        "--evidence-index",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/evidence-index.json",
+        "--reference-index",
+        ".agenticdoc/mw-dp-material-pipeline/docs/reference-records/index.json"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "binding": {
+        "task_sha256": "03cd290568a93f0979e0d7160af055deba5fd92f2c8fb167207958ed31a4cb15",
+        "output_sha256": "297ce9b336888310b1f4674ec515c28dfaf2dd0c612d4ae30c2f0692c5702fe8"
+      },
+      "started": "2026-11-22T10:57:56.198180+00:00",
+      "verdict": "failed",
+      "exit_code": 2,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\cx-22fe10fe7b7ba132c4f0\\1795345076196623500-i4on69u2\\command.log",
+      "criteria": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-005",
+        "AC-006",
+        "AC-007",
+        "AC-008",
+        "AC-009",
+        "AC-010",
+        "AC-011",
+        "AC-012",
+        "AC-013",
+        "AC-014",
+        "AC-015",
+        "AC-016",
+        "AC-017",
+        "AC-018"
+      ],
+      "basis": {
+        "contract_sha256": "706c2902e544a72178bd6a5b68e3c5aa412235360ef2cb623329172510c30a96",
+        "source_sha256": "f3b0894303e59b598b064588d7e924045c7345ac75a56e1188cb03002c88e17c"
+      },
+      "finished": "2026-11-22T10:58:17.763795+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\cx-22fe10fe7b7ba132c4f0\\1795345076196623500-i4on69u2\\result.json"
+    },
+    {
+      "key": "mw-dp-material-pipeline",
+      "task": null,
+      "criteria": [
+        "AC-017"
+      ],
+      "argv": [
+        "python",
+        "-B",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/reconcile_auto_pm_handoff.py"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "basis": {
+        "contract_sha256": "706c2902e544a72178bd6a5b68e3c5aa412235360ef2cb623329172510c30a96",
+        "source_sha256": "224eed8ca67409e0f9b68630cafce44c3093ae208e9ab4fce3629409ea5fe07b"
+      },
+      "started": "2026-11-22T12:51:31.007603+00:00",
+      "verdict": "stale",
+      "exit_code": 0,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\self\\1795351891006018700-9wjzygmb\\command.log",
+      "finished": "2026-11-22T12:51:40.186960+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\self\\1795351891006018700-9wjzygmb\\result.json"
+    },
+    {
+      "key": "mw-dp-material-pipeline",
+      "task": null,
+      "criteria": [
+        "AC-001",
+        "AC-002",
+        "AC-004"
+      ],
+      "argv": [
+        "python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp=.tmp/ac014-t08-formal",
+        "packages/multi-workers/test/test_dp_material_pipeline_l2.py"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "basis": {
+        "contract_sha256": "706c2902e544a72178bd6a5b68e3c5aa412235360ef2cb623329172510c30a96",
+        "source_sha256": "a6071d87273a4e4ae91a761e2963d8d36a1a8f6f354b5a3afd909d85dd59ab57"
+      },
+      "started": "2026-11-22T15:53:00.694926+00:00",
+      "verdict": "stale",
+      "exit_code": 0,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\self\\1795362780693879800-1azuwjem\\command.log",
+      "finished": "2026-11-22T15:53:08.490519+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\self\\1795362780693879800-1azuwjem\\result.json"
+    },
+    {
+      "key": "mw-dp-material-pipeline",
+      "task": "cx-36563aec5d5bb935138d",
+      "argv": [
+        "python",
+        "-B",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/check_review.py",
+        "--report",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/review/ac014-final-independent.md",
+        "--spec",
+        ".agenticdoc/mw-dp-material-pipeline/spec.md",
+        "--evidence-index",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/final-batch/evidence-index.json",
+        "--reference-index",
+        ".agenticdoc/mw-dp-material-pipeline/docs/reference-records/index.json"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "binding": {
+        "task_sha256": "bc1559a07ddb917bdab83e60d090f806c23bc66ba23ef4ec423ac46af27b8567",
+        "output_sha256": "ff60d789a88d069f03e0a09ece560d7086d3a3372152b54903900fb167acd8c7"
+      },
+      "started": "2026-11-22T15:53:35.013679+00:00",
+      "verdict": "failed",
+      "exit_code": 2,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\cx-36563aec5d5bb935138d\\1795362815012631900-wk442err\\command.log",
+      "criteria": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-005",
+        "AC-006",
+        "AC-007",
+        "AC-008",
+        "AC-009",
+        "AC-010",
+        "AC-011",
+        "AC-012",
+        "AC-013",
+        "AC-014",
+        "AC-015",
+        "AC-016",
+        "AC-017",
+        "AC-018"
+      ],
+      "basis": {
+        "contract_sha256": "706c2902e544a72178bd6a5b68e3c5aa412235360ef2cb623329172510c30a96",
+        "source_sha256": "a6071d87273a4e4ae91a761e2963d8d36a1a8f6f354b5a3afd909d85dd59ab57"
+      },
+      "finished": "2026-11-22T15:53:54.617162+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\cx-36563aec5d5bb935138d\\1795362815012631900-wk442err\\result.json"
+    },
+    {
+      "key": "mw-dp-material-pipeline",
+      "task": null,
+      "criteria": [
+        "AC-005",
+        "AC-017"
+      ],
+      "argv": [
+        "python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp=.tmp/ac005-t08-formal",
+        "packages/multi-workers/test/test_dp_material_pipeline_l2.py",
+        "packages/multi-workers/test/test_dp_prepare_profile_v1.py",
+        "packages/multi-workers/test_decision_material_sources.py",
+        "packages/multi-workers/test_prepared_pair_selection.py"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "basis": {
+        "contract_sha256": "706c2902e544a72178bd6a5b68e3c5aa412235360ef2cb623329172510c30a96",
+        "source_sha256": "1a8fcc1d163d3b1e04b92cee35a115a8115039799a3035112d2786faf49f1051"
+      },
+      "started": "2026-11-22T16:05:24.450819+00:00",
+      "verdict": "stale",
+      "exit_code": 0,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\self\\1795363524449814600-cv1zwnx7\\command.log",
+      "finished": "2026-11-22T16:05:32.617550+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\self\\1795363524449814600-cv1zwnx7\\result.json"
+    },
+    {
+      "key": "mw-dp-material-pipeline",
+      "task": null,
+      "criteria": [
+        "AC-014"
+      ],
+      "argv": [
+        "python",
+        "-B",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/check_review.py",
+        "--report",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/review/ac005-t09-independent.md",
+        "--spec",
+        ".agenticdoc/mw-dp-material-pipeline/spec.md",
+        "--evidence-index",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/ac005-rework/evidence-index.json",
+        "--reference-index",
+        ".agenticdoc/mw-dp-material-pipeline/docs/reference-records/index.json"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "basis": {
+        "contract_sha256": "706c2902e544a72178bd6a5b68e3c5aa412235360ef2cb623329172510c30a96",
+        "source_sha256": "1a8fcc1d163d3b1e04b92cee35a115a8115039799a3035112d2786faf49f1051"
+      },
+      "started": "2026-11-22T16:06:39.453082+00:00",
+      "verdict": "failed",
+      "exit_code": 2,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\self\\1795363599452045800-vfbnlfmm\\command.log",
+      "finished": "2026-11-22T16:06:49.923754+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\self\\1795363599452045800-vfbnlfmm\\result.json"
+    },
+    {
+      "key": "mw-dp-material-pipeline",
+      "task": "cx-ee474fbc353feb7aba95",
+      "argv": [
+        "python",
+        "-B",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/check_review.py",
+        "--report",
+        ".agenticdoc/mw-dp-material-pipeline/workers/cx-ee474fbc353feb7aba95/report.md",
+        "--spec",
+        ".agenticdoc/mw-dp-material-pipeline/spec.md",
+        "--evidence-index",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/ac003-local-budget/evidence-index.json",
+        "--reference-index",
+        ".agenticdoc/mw-dp-material-pipeline/docs/reference-records/index.json"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "binding": {
+        "task_sha256": "615f6801cfb967778c002f1a2a7acacc157e573588fa8754c1a9a248a1670795",
+        "output_sha256": "17e0daaf462e9954f394e9d23376eb202c812f31b892867a5dc4b971a51674ad"
+      },
+      "started": "2026-11-22T16:52:04.871697+00:00",
+      "verdict": "stale",
+      "exit_code": 0,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\cx-ee474fbc353feb7aba95\\1795366324870649700-0_uomx72\\command.log",
+      "criteria": [
+        "AC-003",
+        "AC-014"
+      ],
+      "basis": {
+        "contract_sha256": "9b9cf7d76125f805999931f44778f5b0856837621e46bd6455c5186cb8498eef",
+        "source_sha256": "dcd9485639f848747b9ab0ad0374fd5567c903fe551ea4b9b70c27bd6c448505"
+      },
+      "finished": "2026-11-22T16:52:13.439864+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\cx-ee474fbc353feb7aba95\\1795366324870649700-0_uomx72\\result.json"
+    },
+    {
+      "key": "mw-dp-material-pipeline",
+      "task": null,
+      "criteria": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-005",
+        "AC-006",
+        "AC-007",
+        "AC-008",
+        "AC-009",
+        "AC-010",
+        "AC-011",
+        "AC-012",
+        "AC-013",
+        "AC-014",
+        "AC-015",
+        "AC-016",
+        "AC-017",
+        "AC-018"
+      ],
+      "argv": [
+        "python",
+        "-B",
+        "-X",
+        "utf8",
+        ".tmp/dp-verify-closure.py"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "basis": {
+        "contract_sha256": "9b9cf7d76125f805999931f44778f5b0856837621e46bd6455c5186cb8498eef",
+        "source_sha256": "2d1d42c33560af8c3777bcdece157d20165ff9fe8f445f1d9f87015d1c1bcb4a"
+      },
+      "started": "2026-11-22T16:58:56.118969+00:00",
+      "verdict": "passed",
+      "exit_code": 0,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\self\\1795366736115455300-i4ca4a8p\\command.log",
+      "finished": "2026-11-22T16:59:01.599803+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\self\\1795366736115455300-i4ca4a8p\\result.json"
+    }
+  ],
+  "verified_at": "2026-11-22T16:59:21.189552+00:00"
+}

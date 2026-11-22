@@ -1,0 +1,477 @@
+........................................................................ [ 36%]
+....................F.FF.F.FFF.......FFF.F.......s...................... [ 73%]
+.......F............................................                     [100%]
+================================== FAILURES ===================================
+_ test_all_prepared_entries_send_one_pair_and_normalize_business_result[dp-QG] _
+
+dp = 'dp-QG'
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002B2DA0AE210>
+tmp_path = WindowsPath('E:/gitlite/Multi-Workers/.tmp/dp-closeout-runtime/dpm-release-tests/test_all_prepared_entries_send3')
+
+    @pytest.mark.parametrize("dp", points.ACTIVE_DP_IDS)
+    def test_all_prepared_entries_send_one_pair_and_normalize_business_result(dp, monkeypatch, tmp_path):
+        book = case(dp)
+        material, preparation = book["material"], book["preparation"]
+        calls = []
+>       options = backends.prepared_selection_options(dp, material, preparation)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+packages\multi-workers\test_prepared_pair_selection.py:41: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+dp_id = 'dp-QG'
+material = {'review_evidence': ['packages/multi-workers/scripts/build_decide_cases.py:1', 'packages/multi-workers/test_decision_c...ements': '�ɼ�¼ֻ��ɸѡ������Ҫ��ֻ��չʾ��д����·��������״̬��ʮ�ڵ� DAG ����ͨ��������ʧ�ܲ���������', 'uncovered_scope': '��ʵ������ɼ��ԡ���ʵģ��ѡ��������ͶӰ�ֶβ����Ķ˵���δ���ǡ�'}
+preparation = {'basis_catalog': [{'applies_to': ['fix'], 'id': 'qg-fix', 'material_refs': ['review_findings', 'uncovered_scope'], 'text': 'Ҫ����������� facets ������ͶӰ�о�������ȱ�ڣ�Ӧ�����ġ�'}], 'prepared_at': '2026-10-27T13:45:28+00:00'}
+business_questions = None
+
+    def prepared_selection_options(
+        dp_id: str,
+        material: object,
+        preparation: object,
+        *,
+        business_questions: Mapping | None = None,
+    ) -> dict[str, dict[str, object]]:
+        """Render only legal conclusion/basis pairs from this prepared request.
+    
+        Wire ids are local to this exact material/catalog snapshot, never parsed as
+        a business conclusion. Static entries use readable ids such as fixA/fixB;
+        dynamic candidates use optionA/optionB so arbitrary caller-owned ids cannot
+        collide or become an illegal transport identifier. A basis may name more
+        than one conclusion, and each legal pairing receives its own option.
+        """
+        questions = _dpts.questions_map(dp_id)
+        if len(questions) != 1:
+            raise ValueError(f"{dp_id}: a prepared selection needs one business question")
+        spec = next(iter(questions.values()))
+        business_qid = next(iter(questions))
+        presentation = (
+            business_questions.get(business_qid)
+            if isinstance(business_questions, Mapping)
+            else None
+        )
+        catalog = preparation.get("basis_catalog") if isinstance(preparation, Mapping) else None
+        if _dpts.basis_catalog_issues(dp_id, catalog, material, require_complete=True):
+>           raise ValueError(f"{dp_id}: preparation.basis_catalog is not complete and legal")
+E           ValueError: dp-QG: preparation.basis_catalog is not complete and legal
+
+packages\multi-workers\decision_backends.py:820: ValueError
+_ test_all_prepared_entries_send_one_pair_and_normalize_business_result[dp-sign-key] _
+
+dp = 'dp-sign-key'
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002B2DA0AF890>
+tmp_path = WindowsPath('E:/gitlite/Multi-Workers/.tmp/dp-closeout-runtime/dpm-release-tests/test_all_prepared_entries_send5')
+
+    @pytest.mark.parametrize("dp", points.ACTIVE_DP_IDS)
+    def test_all_prepared_entries_send_one_pair_and_normalize_business_result(dp, monkeypatch, tmp_path):
+        book = case(dp)
+        material, preparation = book["material"], book["preparation"]
+        calls = []
+>       options = backends.prepared_selection_options(dp, material, preparation)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+packages\multi-workers\test_prepared_pair_selection.py:41: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+dp_id = 'dp-sign-key'
+material = {'actual_completion': '��������б�����״̬��Ⱦ��DAG ����־���������� case ѡ���뱾��У�飻facets ����������ͶӰδ��ɡ�', 'delivery_goal': '�ɼ�¼ֻ��ɸѡ�ڹ���̨���ã���״̬...�������ڿɼ���', '��ʵģ�͵�ѡ������', 'facets ͶӰ���ߺ�Ķ˵�����·'], 'verified': ['workbench �����е���״̬��ʮ�ڵ� DAG DOM ����', '���� case �����������ֽ�Ư������']}}
+preparation = {'basis_catalog': [{'applies_to': ['continue'], 'id': 'sign-continue', 'material_refs': ['unfinished_impact', 'actual_...idence', 'unfinished_impact'], 'text': '��ʵ���������ʵģ�͵�����δ������Ҫ�û�ȷ���Ƿ���ܵ�ǰ֤�ݡ�'}], 'prepared_at': '2026-10-27T13:45:28+00:00'}
+business_questions = None
+
+    def prepared_selection_options(
+        dp_id: str,
+        material: object,
+        preparation: object,
+        *,
+        business_questions: Mapping | None = None,
+    ) -> dict[str, dict[str, object]]:
+        """Render only legal conclusion/basis pairs from this prepared request.
+    
+        Wire ids are local to this exact material/catalog snapshot, never parsed as
+        a business conclusion. Static entries use readable ids such as fixA/fixB;
+        dynamic candidates use optionA/optionB so arbitrary caller-owned ids cannot
+        collide or become an illegal transport identifier. A basis may name more
+        than one conclusion, and each legal pairing receives its own option.
+        """
+        questions = _dpts.questions_map(dp_id)
+        if len(questions) != 1:
+            raise ValueError(f"{dp_id}: a prepared selection needs one business question")
+        spec = next(iter(questions.values()))
+        business_qid = next(iter(questions))
+        presentation = (
+            business_questions.get(business_qid)
+            if isinstance(business_questions, Mapping)
+            else None
+        )
+        catalog = preparation.get("basis_catalog") if isinstance(preparation, Mapping) else None
+        if _dpts.basis_catalog_issues(dp_id, catalog, material, require_complete=True):
+>           raise ValueError(f"{dp_id}: preparation.basis_catalog is not complete and legal")
+E           ValueError: dp-sign-key: preparation.basis_catalog is not complete and legal
+
+packages\multi-workers\decision_backends.py:820: ValueError
+_ test_all_prepared_entries_send_one_pair_and_normalize_business_result[dp-auto] _
+
+dp = 'dp-auto'
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002B2DA0AE0C0>
+tmp_path = WindowsPath('E:/gitlite/Multi-Workers/.tmp/dp-closeout-runtime/dpm-release-tests/test_all_prepared_entries_send6')
+
+    @pytest.mark.parametrize("dp", points.ACTIVE_DP_IDS)
+    def test_all_prepared_entries_send_one_pair_and_normalize_business_result(dp, monkeypatch, tmp_path):
+        book = case(dp)
+        material, preparation = book["material"], book["preparation"]
+        calls = []
+        options = backends.prepared_selection_options(dp, material, preparation)
+        selected_id = "fixA" if dp == "dp-QG" else next(iter(options))
+        selected = options[selected_id]
+    
+        response_bytes = json.dumps({
+            "model": "jev-latest",
+            "answers": {
+                "decision_selection": {
+                    "type": "choice", "choice": selected_id, "confidence": 0.87,
+                    "probabilities": {selected_id: 0.87},
+                }
+            },
+        }).encode("utf-8")
+    
+        def open_fixture(request, *, timeout):
+            assert request.method == "POST" and timeout > 0
+            calls.append(request.data)
+            payload = json.loads(request.data)
+            assert set(payload["questions"]) == {"decision_selection"}
+            assert payload["questions"]["decision_selection"]["criteria"] == {
+                option_id: option["label"] for option_id, option in options.items()
+            }
+            response = BytesIO(response_bytes)
+            response.status = 200
+            response.headers = {"Content-Type": "application/json"}
+            return response
+    
+        monkeypatch.setattr(backends.urllib.request, "urlopen", open_fixture)
+        api_key = "pair-fixture-key-0123456789"
+        cfg = decision.DecisionConfig(
+            enabled=True, project_root=ROOT, max_questions=1,
+            evidence_path=str(tmp_path / "evidence.jsonl"),
+            extras={"api_key": api_key},
+        )
+        scope = decision_wire.test_scope(
+            tmp_path, project_id=decision_wire.project_id_for(tmp_path), submission_id=f"pair-{dp}",
+            redact=decision_wire.SubstringRedactor([api_key]), evidence_path=tmp_path / "evidence.jsonl",
+        )
+        client = decision.DecisionClient(cfg, wire_scope=scope)
+        result = client.request_prepared(
+            dp, material, preparation, actor_role=book["meta"]["actor_role"]
+        )
+>       assert result["available"], result
+E       AssertionError: {'dp': 'dp-auto', 'available': False, 'replayed': False, 'choice': None, ...}
+E       assert False
+
+packages\multi-workers\test_prepared_pair_selection.py:83: AssertionError
+___________ test_distinct_repair_reasons_have_distinct_fix_options ____________
+
+    def test_distinct_repair_reasons_have_distinct_fix_options():
+        book = case("dp-QG")
+        book["preparation"]["basis_catalog"].append({
+            "id": "print-and-matrix",
+            "text": "F1: print ordering assertion missing; F2: matrix anchors are stale",
+            "material_refs": ["review_findings"],
+            "applies_to": ["fix"],
+        })
+>       options = backends.prepared_selection_options("dp-QG", book["material"], book["preparation"])
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+packages\multi-workers\test_prepared_pair_selection.py:118: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+dp_id = 'dp-QG'
+material = {'review_evidence': ['packages/multi-workers/scripts/build_decide_cases.py:1', 'packages/multi-workers/test_decision_c...ements': '�ɼ�¼ֻ��ɸѡ������Ҫ��ֻ��չʾ��д����·��������״̬��ʮ�ڵ� DAG ����ͨ��������ʧ�ܲ���������', 'uncovered_scope': '��ʵ������ɼ��ԡ���ʵģ��ѡ��������ͶӰ�ֶβ����Ķ˵���δ���ǡ�'}
+preparation = {'basis_catalog': [{'applies_to': ['fix'], 'id': 'qg-fix', 'material_refs': ['review_findings', 'uncovered_scope'], 't... are stale', 'material_refs': ['review_findings'], 'applies_to': ['fix']}], 'prepared_at': '2026-10-27T13:45:28+00:00'}
+business_questions = None
+
+    def prepared_selection_options(
+        dp_id: str,
+        material: object,
+        preparation: object,
+        *,
+        business_questions: Mapping | None = None,
+    ) -> dict[str, dict[str, object]]:
+        """Render only legal conclusion/basis pairs from this prepared request.
+    
+        Wire ids are local to this exact material/catalog snapshot, never parsed as
+        a business conclusion. Static entries use readable ids such as fixA/fixB;
+        dynamic candidates use optionA/optionB so arbitrary caller-owned ids cannot
+        collide or become an illegal transport identifier. A basis may name more
+        than one conclusion, and each legal pairing receives its own option.
+        """
+        questions = _dpts.questions_map(dp_id)
+        if len(questions) != 1:
+            raise ValueError(f"{dp_id}: a prepared selection needs one business question")
+        spec = next(iter(questions.values()))
+        business_qid = next(iter(questions))
+        presentation = (
+            business_questions.get(business_qid)
+            if isinstance(business_questions, Mapping)
+            else None
+        )
+        catalog = preparation.get("basis_catalog") if isinstance(preparation, Mapping) else None
+        if _dpts.basis_catalog_issues(dp_id, catalog, material, require_complete=True):
+>           raise ValueError(f"{dp_id}: preparation.basis_catalog is not complete and legal")
+E           ValueError: dp-QG: preparation.basis_catalog is not complete and legal
+
+packages\multi-workers\decision_backends.py:820: ValueError
+__________ test_qg_without_reopen_criterion_refuses_before_transport __________
+
+    def test_qg_without_reopen_criterion_refuses_before_transport():
+        book = case("dp-QG")
+        book["preparation"]["basis_catalog"].pop()
+        backend = decision.FakeBackend([])
+        client = decision.DecisionClient(decision.DecisionConfig(enabled=True), backend)
+        result = client.request_prepared("dp-QG", book["material"], book["preparation"], actor_role="pm")
+        assert not result["available"] and result["reason"] == "input-incomplete"
+>       assert "missing prepared criteria for reopen" in result["issues"][0]["issue"]
+E       assert 'missing prepared criteria for reopen' in "must be a non-empty list of prepared basis items ['id', 'text', 'material_refs', 'applies_to']; without it the entry is blocked"
+
+packages\multi-workers\test_prepared_pair_selection.py:147: AssertionError
+___ test_qg_selection_does_not_bypass_substantive_basis_check[reopenA-None] ___
+
+wire = 'reopenA', basis_issue = None
+tmp_path = WindowsPath('E:/gitlite/Multi-Workers/.tmp/dp-closeout-runtime/dpm-release-tests/test_qg_selection_does_not_byp0')
+
+    @pytest.mark.parametrize("wire, basis_issue", [("reopenA", None), ("passA", "The accepted requirement contradicts the goal")])
+    def test_qg_selection_does_not_bypass_substantive_basis_check(wire, basis_issue, tmp_path):
+        book = case("dp-QG")
+        if basis_issue:
+            book["material"]["basis_issue"] = basis_issue
+        backend = decision.FakeBackend([decision.BackendOutcome(
+            True, None, False, {"decision_selection": {"value": wire, "confidence": 0.91}}, 1,
+        )])
+        client = decision.DecisionClient(
+            decision.DecisionConfig(enabled=True, project_root=ROOT, evidence_path=str(tmp_path / "transport.jsonl")),
+            backend,
+        )
+        result = client.request_prepared("dp-QG", book["material"], book["preparation"], actor_role="pm")
+>       assert result["reason"] == "bad-response" and result["business_decisions"] == 0
+E       AssertionError: assert ('input-incomplete' == 'bad-response'
+E         
+E         - bad-response
+E         + input-incomplete)
+
+packages\multi-workers\test_prepared_pair_selection.py:164: AssertionError
+_ test_qg_selection_does_not_bypass_substantive_basis_check[passA-The accepted requirement contradicts the goal] _
+
+wire = 'passA', basis_issue = 'The accepted requirement contradicts the goal'
+tmp_path = WindowsPath('E:/gitlite/Multi-Workers/.tmp/dp-closeout-runtime/dpm-release-tests/test_qg_selection_does_not_byp1')
+
+    @pytest.mark.parametrize("wire, basis_issue", [("reopenA", None), ("passA", "The accepted requirement contradicts the goal")])
+    def test_qg_selection_does_not_bypass_substantive_basis_check(wire, basis_issue, tmp_path):
+        book = case("dp-QG")
+        if basis_issue:
+            book["material"]["basis_issue"] = basis_issue
+        backend = decision.FakeBackend([decision.BackendOutcome(
+            True, None, False, {"decision_selection": {"value": wire, "confidence": 0.91}}, 1,
+        )])
+        client = decision.DecisionClient(
+            decision.DecisionConfig(enabled=True, project_root=ROOT, evidence_path=str(tmp_path / "transport.jsonl")),
+            backend,
+        )
+        result = client.request_prepared("dp-QG", book["material"], book["preparation"], actor_role="pm")
+>       assert result["reason"] == "bad-response" and result["business_decisions"] == 0
+E       AssertionError: assert ('input-incomplete' == 'bad-response'
+E         
+E         - bad-response
+E         + input-incomplete)
+
+packages\multi-workers\test_prepared_pair_selection.py:164: AssertionError
+____________ test_catalog_beyond_26_reasons_has_stable_unique_ids _____________
+
+    def test_catalog_beyond_26_reasons_has_stable_unique_ids():
+        book = case("dp-QG")
+        primary = book["preparation"]["basis_catalog"][0]
+        book["preparation"]["basis_catalog"] = [
+            *(dict(primary, id=f"basis-{index}") for index in range(28)),
+            *book["preparation"]["basis_catalog"][1:],
+        ]
+>       options = backends.prepared_selection_options("dp-QG", book["material"], book["preparation"])
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+packages\multi-workers\test_prepared_pair_selection.py:217: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+dp_id = 'dp-QG'
+material = {'review_evidence': ['packages/multi-workers/scripts/build_decide_cases.py:1', 'packages/multi-workers/test_decision_c...ements': '�ɼ�¼ֻ��ɸѡ������Ҫ��ֻ��չʾ��д����·��������״̬��ʮ�ڵ� DAG ����ͨ��������ʧ�ܲ���������', 'uncovered_scope': '��ʵ������ɼ��ԡ���ʵģ��ѡ��������ͶӰ�ֶβ����Ķ˵���δ���ǡ�'}
+preparation = {'basis_catalog': [{'applies_to': ['fix'], 'id': 'basis-0', 'material_refs': ['review_findings', 'uncovered_scope'], '...', 'uncovered_scope'], 'text': 'Ҫ����������� facets ������ͶӰ�о�������ȱ�ڣ�Ӧ�����ġ�'}, ...], 'prepared_at': '2026-10-27T13:45:28+00:00'}
+business_questions = None
+
+    def prepared_selection_options(
+        dp_id: str,
+        material: object,
+        preparation: object,
+        *,
+        business_questions: Mapping | None = None,
+    ) -> dict[str, dict[str, object]]:
+        """Render only legal conclusion/basis pairs from this prepared request.
+    
+        Wire ids are local to this exact material/catalog snapshot, never parsed as
+        a business conclusion. Static entries use readable ids such as fixA/fixB;
+        dynamic candidates use optionA/optionB so arbitrary caller-owned ids cannot
+        collide or become an illegal transport identifier. A basis may name more
+        than one conclusion, and each legal pairing receives its own option.
+        """
+        questions = _dpts.questions_map(dp_id)
+        if len(questions) != 1:
+            raise ValueError(f"{dp_id}: a prepared selection needs one business question")
+        spec = next(iter(questions.values()))
+        business_qid = next(iter(questions))
+        presentation = (
+            business_questions.get(business_qid)
+            if isinstance(business_questions, Mapping)
+            else None
+        )
+        catalog = preparation.get("basis_catalog") if isinstance(preparation, Mapping) else None
+        if _dpts.basis_catalog_issues(dp_id, catalog, material, require_complete=True):
+>           raise ValueError(f"{dp_id}: preparation.basis_catalog is not complete and legal")
+E           ValueError: dp-QG: preparation.basis_catalog is not complete and legal
+
+packages\multi-workers\decision_backends.py:820: ValueError
+_____________ test_observation_text_edits_use_same_pair_renderer ______________
+
+    def test_observation_text_edits_use_same_pair_renderer():
+        book = case("dp-QG")
+>       questions = backends.build_prepared_questions(
+            "dp-QG", book["material"], book["preparation"],
+            business_questions={"qg_verdict": {"instructions": "Edited review instruction", "criteria": {"fix": "Edited fix criterion"}}},
+        )
+
+packages\multi-workers\test_prepared_pair_selection.py:224: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+packages\multi-workers\decision_backends.py:928: in build_prepared_questions
+    options = prepared_selection_options(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+dp_id = 'dp-QG'
+material = {'review_evidence': ['packages/multi-workers/scripts/build_decide_cases.py:1', 'packages/multi-workers/test_decision_c...ements': '�ɼ�¼ֻ��ɸѡ������Ҫ��ֻ��չʾ��д����·��������״̬��ʮ�ڵ� DAG ����ͨ��������ʧ�ܲ���������', 'uncovered_scope': '��ʵ������ɼ��ԡ���ʵģ��ѡ��������ͶӰ�ֶβ����Ķ˵���δ���ǡ�'}
+preparation = {'basis_catalog': [{'applies_to': ['fix'], 'id': 'qg-fix', 'material_refs': ['review_findings', 'uncovered_scope'], 'text': 'Ҫ����������� facets ������ͶӰ�о�������ȱ�ڣ�Ӧ�����ġ�'}], 'prepared_at': '2026-10-27T13:45:28+00:00'}
+business_questions = {'qg_verdict': {'instructions': 'Edited review instruction', 'criteria': {'fix': 'Edited fix criterion'}}}
+
+    def prepared_selection_options(
+        dp_id: str,
+        material: object,
+        preparation: object,
+        *,
+        business_questions: Mapping | None = None,
+    ) -> dict[str, dict[str, object]]:
+        """Render only legal conclusion/basis pairs from this prepared request.
+    
+        Wire ids are local to this exact material/catalog snapshot, never parsed as
+        a business conclusion. Static entries use readable ids such as fixA/fixB;
+        dynamic candidates use optionA/optionB so arbitrary caller-owned ids cannot
+        collide or become an illegal transport identifier. A basis may name more
+        than one conclusion, and each legal pairing receives its own option.
+        """
+        questions = _dpts.questions_map(dp_id)
+        if len(questions) != 1:
+            raise ValueError(f"{dp_id}: a prepared selection needs one business question")
+        spec = next(iter(questions.values()))
+        business_qid = next(iter(questions))
+        presentation = (
+            business_questions.get(business_qid)
+            if isinstance(business_questions, Mapping)
+            else None
+        )
+        catalog = preparation.get("basis_catalog") if isinstance(preparation, Mapping) else None
+        if _dpts.basis_catalog_issues(dp_id, catalog, material, require_complete=True):
+>           raise ValueError(f"{dp_id}: preparation.basis_catalog is not complete and legal")
+E           ValueError: dp-QG: preparation.basis_catalog is not complete and legal
+
+packages\multi-workers\decision_backends.py:820: ValueError
+_________ test_unknown_pair_is_refused_after_one_call_without_default _________
+
+tmp_path = WindowsPath('E:/gitlite/Multi-Workers/.tmp/dp-closeout-runtime/dpm-release-tests/test_unknown_pair_is_refused_a0')
+
+    def test_unknown_pair_is_refused_after_one_call_without_default(tmp_path):
+        book = case("dp-QG")
+        fake = decision.FakeBackend([decision.BackendOutcome(
+            available=True, reason=None, retryable=False,
+            answers={"decision_selection": {"value": "fixZ", "confidence": 0.9}}, latency_ms=1,
+        )])
+        cfg = decision.DecisionConfig(enabled=True, project_root=ROOT, evidence_path=str(tmp_path / "evidence.jsonl"))
+        result = decision.DecisionClient(cfg, backend=fake).request_prepared(
+            "dp-QG", book["material"], book["preparation"], actor_role="pm"
+        )
+>       assert not result["available"] and result["reason"] == "bad-response"
+E       AssertionError: assert (not False and 'input-incomplete' == 'bad-response'
+E         
+E         - bad-response
+E         + input-incomplete)
+
+packages\multi-workers\test_prepared_pair_selection.py:244: AssertionError
+_____ test_catalog_reordering_during_call_cannot_remap_the_selected_pair ______
+
+tmp_path = WindowsPath('E:/gitlite/Multi-Workers/.tmp/dp-closeout-runtime/dpm-release-tests/test_catalog_reordering_during0')
+
+    def test_catalog_reordering_during_call_cannot_remap_the_selected_pair(tmp_path):
+        book = case("dp-QG")
+        preparation = book["preparation"]
+        original_basis = copy.deepcopy(preparation["basis_catalog"][0])
+        original_stamp = preparation["prepared_at"]
+        preparation["basis_catalog"].append(dict(original_basis, id="second-repair", text="A different repair"))
+    
+        def mutate(state, questions, cfg):
+            assert questions["decision_selection"]["choices"] == ["passA", "fixA", "fixB", "reopenA"]
+            preparation["basis_catalog"].reverse()
+            preparation["prepared_at"] = "2026-11-16T12:00:00Z"
+            assert "preparation" not in state
+            questions["decision_selection"]["labels"]["fixA"] = "Mutated after send"
+            return decision.BackendOutcome(True, None, False, {
+                "decision_selection": {"value": "fixA", "confidence": 0.91}
+            }, 1)
+    
+        client = decision.DecisionClient(
+            decision.DecisionConfig(enabled=True, project_root=ROOT, evidence_path=str(tmp_path / "transport.jsonl")),
+            decision.FakeBackend([mutate]),
+        )
+        result = client.request_prepared("dp-QG", book["material"], preparation, actor_role="pm")
+>       assert result["available"], result
+E       AssertionError: {'dp': 'dp-QG', 'available': False, 'replayed': False, 'choice': None, ...}
+E       assert False
+
+packages\multi-workers\test_prepared_pair_selection.py:285: AssertionError
+__ test_every_retired_id_is_refused_at_every_entry_with_zero_provider_calls ___
+
+tmp_path = WindowsPath('E:/gitlite/Multi-Workers/.tmp/dp-closeout-runtime/dpm-release-tests/test_every_retired_id_is_refus0')
+
+    def test_every_retired_id_is_refused_at_every_entry_with_zero_provider_calls(tmp_path):
+        """AC-002/AC-003: the 25 old ids are explicit refusals, never an alias.
+    
+        Every runtime entry (scaffold / validate / submit / case filter) refuses a
+        retired id before any provider is consulted; the case menu keeps the eight
+        active ids and explains the four legacy files read-only.
+        """
+        root = _root(tmp_path)
+        spy = _SpyPlayground()
+        deps = decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy)
+        retired_ids = sorted(decision_points.RETIRED_DP_IDS)
+        assert len(retired_ids) == 25
+        with _running(root, deps=deps) as instance:
+            page_token = _page_token(instance)
+            status, _headers, payload, _raw = _http(
+                instance.port, "GET", "/api/test/cases", token=page_token
+            )
+>           assert status == 200, payload
+E           AssertionError: {'ok': False, 'data': None, 'error': {'code': 'case-invalid', 'message': 'the case book is not legal (book-preparation...ook-preparation preparation: cannot render a legal conclusion/basis selection)', 'issues': []}, 'capture_status': None}
+E           assert 503 == 200
+
+packages\multi-workers\test_decision_monitor.py:1612: AssertionError
+=========================== short test summary info ===========================
+FAILED packages\multi-workers\test_prepared_pair_selection.py::test_all_prepared_entries_send_one_pair_and_normalize_business_result[dp-QG]
+FAILED packages\multi-workers\test_prepared_pair_selection.py::test_all_prepared_entries_send_one_pair_and_normalize_business_result[dp-sign-key]
+FAILED packages\multi-workers\test_prepared_pair_selection.py::test_all_prepared_entries_send_one_pair_and_normalize_business_result[dp-auto]
+FAILED packages\multi-workers\test_prepared_pair_selection.py::test_distinct_repair_reasons_have_distinct_fix_options
+FAILED packages\multi-workers\test_prepared_pair_selection.py::test_qg_without_reopen_criterion_refuses_before_transport
+FAILED packages\multi-workers\test_prepared_pair_selection.py::test_qg_selection_does_not_bypass_substantive_basis_check[reopenA-None]
+FAILED packages\multi-workers\test_prepared_pair_selection.py::test_qg_selection_does_not_bypass_substantive_basis_check[passA-The accepted requirement contradicts the goal]
+FAILED packages\multi-workers\test_prepared_pair_selection.py::test_catalog_beyond_26_reasons_has_stable_unique_ids
+FAILED packages\multi-workers\test_prepared_pair_selection.py::test_observation_text_edits_use_same_pair_renderer
+FAILED packages\multi-workers\test_prepared_pair_selection.py::test_unknown_pair_is_refused_after_one_call_without_default
+FAILED packages\multi-workers\test_prepared_pair_selection.py::test_catalog_reordering_during_call_cannot_remap_the_selected_pair
+FAILED packages\multi-workers\test_decision_monitor.py::test_every_retired_id_is_refused_at_every_entry_with_zero_provider_calls
+12 failed, 183 passed, 1 skipped in 60.00s (0:01:00)

@@ -1,0 +1,501 @@
+{
+  "candidates": {
+    "decision_selection": [
+      {
+        "id": "continueA",
+        "label": "结论 continue: 条件充足：继续任务\n依据 continueA-basis: continue：下一步条件已充足时继续；未知编码不能当成已知。"
+      },
+      {
+        "id": "terminateA",
+        "label": "结论 terminate: 条件不足：写出完成/未完成/阻断及证据，结束本次执行（不是取消目标或 key）\n依据 terminateA-basis: terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。"
+      },
+      {
+        "id": "investigateA",
+        "label": "结论 investigate: 继续任务并为具体未知做有界补证（须给来源、预算与结束判据）\n依据 investigateA-basis: investigate：按probe做一次既有授权读取后重评，不能刷新原预算。"
+      }
+    ]
+  },
+  "decision_id": "dp-w-check-task:current-receipt-1",
+  "dp": "dp-w-check-task",
+  "field_trace": {
+    "fields": {
+      "/model": {
+        "sources": [
+          "transport:resolved_model"
+        ],
+        "transform": "resolve-config"
+      },
+      "/questions/decision_selection/criteria/continueA": {
+        "sources": [
+          "book:/preparation/basis_catalog/0",
+          "registry:dp-w-check-task/reachability/labels/continue"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/investigateA": {
+        "sources": [
+          "book:/preparation/basis_catalog/2",
+          "registry:dp-w-check-task/reachability/labels/investigate"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/terminateA": {
+        "sources": [
+          "book:/preparation/basis_catalog/1",
+          "registry:dp-w-check-task/reachability/labels/terminate"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/instructions": {
+        "sources": [
+          "registry:dp-w-check-task/instructions",
+          "registry:prepared_basis_instructions"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/questions/decision_selection/type": {
+        "sources": [
+          "registry:dp-w-check-task/protocol"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/state/desc/0": {
+        "sources": [
+          "book:/preparation/model_context/desc/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/1": {
+        "sources": [
+          "book:/preparation/model_context/desc/1"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/2": {
+        "sources": [
+          "book:/preparation/model_context/desc/2"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/bytes": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/bytes"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/continue": {
+        "sources": [
+          "registry:dp-w-check-task/reachability/labels/continue"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/investigate": {
+        "sources": [
+          "registry:dp-w-check-task/reachability/labels/investigate"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/minutes": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/minutes"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/observed": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/observed"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/reads": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/reads"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/terminate": {
+        "sources": [
+          "registry:dp-w-check-task/reachability/labels/terminate"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/evidence_sources/0": {
+        "sources": [
+          "source:src-7c83a8bbe251d1fc3656",
+          "material.investigation.evidence_source"
+        ],
+        "transform": "full"
+      },
+      "/state/evidence_sources/1": {
+        "sources": [
+          "source:src-400f20feab4c9dabd03a",
+          "preparation.model_context.references.W1.path"
+        ],
+        "transform": "full"
+      },
+      "/state/material/blockers": {
+        "sources": [
+          "book:/material/blockers"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/completed": {
+        "sources": [
+          "book:/material/completed"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/constraints": {
+        "sources": [
+          "book:/material/constraints"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/investigation/budget": {
+        "sources": [
+          "book:/material/investigation/budget"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/investigation/evidence_source": {
+        "sources": [
+          "book:/material/investigation/evidence_source"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/investigation/stop_condition": {
+        "sources": [
+          "book:/material/investigation/stop_condition"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/investigation/unknown": {
+        "sources": [
+          "book:/material/investigation/unknown"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/reachability_facts": {
+        "sources": [
+          "book:/material/reachability_facts"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/remaining": {
+        "sources": [
+          "book:/material/remaining"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/task_goal": {
+        "sources": [
+          "book:/material/task_goal"
+        ],
+        "transform": "copy"
+      },
+      "/state/references/W1": {
+        "sources": [
+          "book:/preparation/model_context/references/W1",
+          "source:src-400f20feab4c9dabd03a"
+        ],
+        "transform": "file-reference"
+      },
+      "/state/terminology/ASCII": {
+        "sources": [
+          "book:/preparation/model_context/terminology/ASCII"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/ID": {
+        "sources": [
+          "book:/preparation/model_context/terminology/ID"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/PM": {
+        "sources": [
+          "registry:terminology/PM"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/UTF-8": {
+        "sources": [
+          "registry:terminology/UTF-8"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/Worker": {
+        "sources": [
+          "book:/preparation/model_context/terminology/Worker"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/desc": {
+        "sources": [
+          "book:/preparation/model_context/terminology/desc"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/host": {
+        "sources": [
+          "book:/preparation/model_context/terminology/host"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/run": {
+        "sources": [
+          "book:/preparation/model_context/terminology/run"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/补证": {
+        "sources": [
+          "book:/preparation/model_context/terminology/补证"
+        ],
+        "transform": "copy"
+      }
+    },
+    "local_only": [
+      "/meta",
+      "/notes",
+      "/preparation/prepared_at",
+      "/preparation/basis_catalog"
+    ]
+  },
+  "file_evidence": [
+    {
+      "canonical_path": null,
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer2\\.agenticdoc\\target.yml",
+      "sha256": null,
+      "status": "missing"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer2\\.agenticdoc\\key-worker\\workers\\task-1\\task.md",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer2\\.agenticdoc\\key-worker\\workers\\task-1\\task.md",
+      "sha256": "eb82919b4efe95c714834f0f303d2f76ad9349a8d987cfd78ee80e01a86fc8d1"
+    },
+    {
+      "canonical_path": null,
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer2\\.mw\\decision-evidence.yml",
+      "sha256": null,
+      "status": "missing"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer2\\encoding-note.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer2\\encoding-note.txt",
+      "sha256": "daf289741e512b728627ac57fbf573dda54ea12a1a995ed11f40b3a35a2a34a7"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer2\\v05-reference-W1.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer2\\v05-reference-W1.txt",
+      "sha256": "50dfc22264b01502f475102c62e777f697942128de8840eae187f1d50113920d"
+    }
+  ],
+  "kind": "input-state",
+  "local_preparation": {
+    "basis_catalog": [
+      {
+        "applies_to": [
+          "continue"
+        ],
+        "finding_ids": [],
+        "id": "continueA-basis",
+        "material_refs": [
+          "remaining"
+        ],
+        "remaining_ids": [],
+        "text": "continue：下一步条件已充足时继续；未知编码不能当成已知。"
+      },
+      {
+        "applies_to": [
+          "terminate"
+        ],
+        "finding_ids": [],
+        "id": "terminateA-basis",
+        "material_refs": [
+          "remaining"
+        ],
+        "remaining_ids": [],
+        "text": "terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。"
+      },
+      {
+        "applies_to": [
+          "investigate"
+        ],
+        "finding_ids": [],
+        "id": "investigateA-basis",
+        "material_refs": [
+          "remaining"
+        ],
+        "remaining_ids": [],
+        "text": "investigate：按probe做一次既有授权读取后重评，不能刷新原预算。"
+      }
+    ],
+    "model_context": {
+      "desc": [
+        "ASCII parsing passed in the reference fixture.",
+        "The worker still needs to verify non-ASCII fields.",
+        "A single authorized read can establish the encoding within the original budget."
+      ],
+      "enum_meanings": {
+        "bytes": "字节数，限制本次读取数据量。",
+        "continue": "继续原授权范围内的工作或补证。",
+        "investigate": "在原工具范围及累计预算内对明确未知做有界补证。",
+        "minutes": "分钟；本例对应原执行的剩余额度。",
+        "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+        "reads": "允许的读取次数。",
+        "terminate": "真实交付完成/未完成情况并结束本次执行，不取消整体目标。"
+      },
+      "references": {
+        "W1": {
+          "kind": "remaining_work",
+          "lines": {
+            "end": 1,
+            "start": 1
+          },
+          "path": "v05-reference-W1.txt"
+        }
+      },
+      "terminology": {
+        "ASCII": "American Standard Code for Information Interchange: 美国信息交换标准代码字符集；本例ASCII样本通过不能证明非ASCII字段可按真实编码正确解析。",
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+        "run": "task execution run: 一次具体任务执行；结束本run不等于取消整个目标或项目事项。",
+        "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+      }
+    },
+    "prepared_at": "2026-11-08T10:00:00+00:00"
+  },
+  "pair_map": {
+    "continueA": {
+      "basis_id": "continueA-basis",
+      "basis_text": "continue：下一步条件已充足时继续；未知编码不能当成已知。",
+      "choice": "continue",
+      "choice_label": "条件充足：继续任务",
+      "choice_label_source": "registry:dp-w-check-task/reachability/labels/continue",
+      "finding_ids": [],
+      "label": "结论 continue: 条件充足：继续任务\n依据 continueA-basis: continue：下一步条件已充足时继续；未知编码不能当成已知。",
+      "remaining_ids": []
+    },
+    "investigateA": {
+      "basis_id": "investigateA-basis",
+      "basis_text": "investigate：按probe做一次既有授权读取后重评，不能刷新原预算。",
+      "choice": "investigate",
+      "choice_label": "继续任务并为具体未知做有界补证（须给来源、预算与结束判据）",
+      "choice_label_source": "registry:dp-w-check-task/reachability/labels/investigate",
+      "finding_ids": [],
+      "label": "结论 investigate: 继续任务并为具体未知做有界补证（须给来源、预算与结束判据）\n依据 investigateA-basis: investigate：按probe做一次既有授权读取后重评，不能刷新原预算。",
+      "remaining_ids": []
+    },
+    "terminateA": {
+      "basis_id": "terminateA-basis",
+      "basis_text": "terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。",
+      "choice": "terminate",
+      "choice_label": "条件不足：写出完成/未完成/阻断及证据，结束本次执行（不是取消目标或 key）",
+      "choice_label_source": "registry:dp-w-check-task/reachability/labels/terminate",
+      "finding_ids": [],
+      "label": "结论 terminate: 条件不足：写出完成/未完成/阻断及证据，结束本次执行（不是取消目标或 key）\n依据 terminateA-basis: terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。",
+      "remaining_ids": []
+    }
+  },
+  "policy": null,
+  "questions_version": "q-add9d820",
+  "state": {
+    "desc": [
+      "ASCII parsing passed in the reference fixture.",
+      "The worker still needs to verify non-ASCII fields.",
+      "A single authorized read can establish the encoding within the original budget."
+    ],
+    "enum_meanings": {
+      "bytes": "字节数，限制本次读取数据量。",
+      "continue": "条件充足：继续任务",
+      "investigate": "继续任务并为具体未知做有界补证（须给来源、预算与结束判据）",
+      "minutes": "分钟；本例对应原执行的剩余额度。",
+      "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+      "reads": "允许的读取次数。",
+      "terminate": "条件不足：写出完成/未完成/阻断及证据，结束本次执行（不是取消目标或 key）"
+    },
+    "evidence_sources": [
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer2\\encoding-note.txt",
+        "references": [
+          "material.investigation.evidence_source"
+        ],
+        "representation": "full",
+        "sha256": "daf289741e512b728627ac57fbf573dda54ea12a1a995ed11f40b3a35a2a34a7",
+        "source_bytes": 44,
+        "source_id": "src-7c83a8bbe251d1fc3656",
+        "source_lines": 1,
+        "text": "UTF-8 is required for this isolated input.\r\n"
+      },
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer2\\v05-reference-W1.txt",
+        "references": [
+          "preparation.model_context.references.W1.path"
+        ],
+        "representation": "full",
+        "sha256": "50dfc22264b01502f475102c62e777f697942128de8840eae187f1d50113920d",
+        "source_bytes": 43,
+        "source_id": "src-400f20feab4c9dabd03a",
+        "source_lines": 1,
+        "text": "按真实编码约定验证非ASCII字段\r\n"
+      }
+    ],
+    "material": {
+      "blockers": "Input encoding not yet established.",
+      "completed": "ASCII parsing passed in the reference fixture.",
+      "constraints": "One read, at most 1024 bytes and within the original 8 minutes.",
+      "investigation": {
+        "budget": "one read, 1024 bytes and 8 minutes remaining",
+        "evidence_source": "encoding-note.txt:1",
+        "stop_condition": "stop after the read or at the original host boundary",
+        "unknown": "which input encoding the test uses"
+      },
+      "reachability_facts": "the write face is free and the budget is enough",
+      "remaining": "Non-ASCII validation.",
+      "task_goal": "Verify non-ASCII fields against the actual encoding contract."
+    },
+    "references": {
+      "W1": {
+        "kind": "remaining_work",
+        "source_id": "src-400f20feab4c9dabd03a"
+      }
+    },
+    "terminology": {
+      "ASCII": "American Standard Code for Information Interchange: 美国信息交换标准代码字符集；本例ASCII样本通过不能证明非ASCII字段可按真实编码正确解析。",
+      "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+      "PM": "Project manager: the current decision owner and result consumer.",
+      "UTF-8": "Unicode Transformation Format using eight-bit code units.",
+      "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+      "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+      "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+      "run": "task execution run: 一次具体任务执行；结束本run不等于取消整个目标或项目事项。",
+      "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+    }
+  },
+  "state_digest": "e67d36a2ace5e8be"
+}

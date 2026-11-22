@@ -1,0 +1,27 @@
+[
+  {
+    "source_id": "src-201dfb4aeea23f89fede",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-auto-optimized/source-files/timeout.txt",
+    "sha256": "80ddd69e7e78c49c66281dd24e1e83b7cffdc7cb88c930b1ec3580eda3da9e9d"
+  },
+  {
+    "source_id": "src-26ea405bd6ec8cf647f8",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-auto-optimized/source-files/v05-reference-current_goal.txt",
+    "sha256": "2eb22746272d8700b16d5c6a0267020374713a53903c70f1748ab886c2b2e313"
+  },
+  {
+    "source_id": "src-8f1e490bc08e1e87d8c2",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-auto-optimized/source-files/v05-reference-timeout_record.txt",
+    "sha256": "e66c65047b88c421195afa2f350b036bb52ca40961ecf9d15334100eabadf293"
+  },
+  {
+    "source_id": "src-a470a6e2d081c9048137",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-auto-optimized/source-files/v05-reference-health_contract.txt",
+    "sha256": "533a076e4f00d45485c4b2d595bb9ea019895027349f1952908a95a10c9944c9"
+  },
+  {
+    "source_id": "src-cc00e79e9dc4484c56af",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-auto-optimized/source-files/v05-reference-limits.txt",
+    "sha256": "8e0e399a4af08799d80de3bcd3cc967b34f0b646e01b88cccb350a36d8fb7d3e"
+  }
+]

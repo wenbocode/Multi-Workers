@@ -773,7 +773,7 @@ class DecisionPlayground:
                 request_state, request_questions = decision_points.prepared_observation_request(
                     dp, projected, book["preparation"],
                     reviewed_questions or decision_points.questions_map(point),
-                    project_dir=self.control_root, limits=request_limits,
+                    project_dir=self.control_root, key=(book.get("meta") or {}).get("key"), limits=request_limits,
                     source_references=(book.get("notes") or {}).get("evidence"),
                     evidence_refs=book.get("evidence_refs"),
                 )

@@ -1,0 +1,75 @@
+{
+  "book": {
+    "material": {
+      "review_requirements": "all listed acceptance checks pass",
+      "review_evidence": [
+        "cmd: python -m pytest"
+      ],
+      "review_findings": "no unresolved blocking finding",
+      "uncovered_scope": "live deployment is out of scope"
+    },
+    "preparation": {
+      "basis_catalog": [
+        {
+          "id": "b-primary",
+          "text": "PM-prepared reason drawn from the submitted material",
+          "material_refs": [
+            "review_requirements"
+          ],
+          "applies_to": [
+            "pass",
+            "fix"
+          ]
+        },
+        {
+          "id": "b-secondary",
+          "text": "PM-prepared alternative reason",
+          "material_refs": [
+            "review_requirements"
+          ],
+          "applies_to": [
+            "fix"
+          ]
+        }
+      ],
+      "prepared_at": "2026-11-08T10:00:00+00:00"
+    },
+    "meta": {
+      "record_version": 2,
+      "logical_id": "missing-reopen-v05-shape",
+      "key": "key-1",
+      "task_key": null,
+      "initiator_role": "pm",
+      "retry_of": null
+    }
+  },
+  "refusal": {
+    "available": false,
+    "transport": "none",
+    "model": null,
+    "confidence_source": "unknown",
+    "attempts": 0,
+    "latency_ms": 0,
+    "answers": null,
+    "reason": "input-incomplete",
+    "decision_id": null,
+    "mode": null,
+    "acted": false,
+    "escalated_reason": "input-incomplete",
+    "state_digest": null,
+    "logical_id": "missing-reopen-v05-shape",
+    "dp": "dp-QG",
+    "replayed": false,
+    "record_start": "not-recorded",
+    "business_decisions": 0,
+    "transport_attempts": 0,
+    "issues": [
+      {
+        "field": "basis_catalog",
+        "issue": "missing prepared criteria for reopen"
+      }
+    ],
+    "detail": "1 blocking material/preparation issue(s); no request sent",
+    "blocked_event_id": "dece2155-2f62-492d-874d-0866e32e7d68"
+  }
+}

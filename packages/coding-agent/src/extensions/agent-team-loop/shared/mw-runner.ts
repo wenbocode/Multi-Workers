@@ -526,7 +526,7 @@ function runMwCliRaw(
 	const result = spawnSync(PYTHON_EXE, argv, {
 		encoding: "utf8",
 		timeout: timeoutMs,
-		...(input === undefined ? {} : { input }),
+		...(input === undefined ? {} : { input, env: { ...process.env, PYTHONIOENCODING: "utf-8" } }),
 	});
 	if (result.error) {
 		return { code: -1, output: "", spawnError: `Failed to spawn mw.py: ${result.error.message}` };
@@ -622,6 +622,10 @@ export function thinkingMw(projectDir: string, args: string[]): MwCliResult {
  * and the monitor identity resolve against this window's project. */
 export function decideMw(projectDir: string, args: string[]): MwCliResult {
 	return runMwCli("decide", projectDir, args);
+}
+
+export function prepareDecisionMw(projectDir: string, input: object): MwCliResult {
+	return runMwCli("decide", projectDir, ["prepare", "--stdin"], 15_000, true, JSON.stringify(input));
 }
 
 /** `mw.py stats [args...]` — token + wall-clock attribution over a time window

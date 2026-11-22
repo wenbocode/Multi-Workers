@@ -1,0 +1,12 @@
+[
+  {
+    "source_id": "src-7c83a8bbe251d1fc3656",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-w-check-task/source-files/encoding-note.txt",
+    "sha256": "daf289741e512b728627ac57fbf573dda54ea12a1a995ed11f40b3a35a2a34a7"
+  },
+  {
+    "source_id": "src-400f20feab4c9dabd03a",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-w-check-task/source-files/v05-reference-W1.txt",
+    "sha256": "50dfc22264b01502f475102c62e777f697942128de8840eae187f1d50113920d"
+  }
+]

@@ -749,7 +749,7 @@ ENTRY_CANDIDATE_SOURCE: Mapping[str, str] = MappingProxyType(
 
 ENTRY_CANDIDATE_BOUNDS: Mapping[str, Mapping[str, object] | None] = MappingProxyType(
     {
-        "dp-auto": MappingProxyType({"min": 2, "max": None, "id_scheme": "free"}),
+        "dp-auto": MappingProxyType({"min": 2, "max": 5, "id_scheme": "free"}),
     }
 )
 
@@ -1328,12 +1328,8 @@ def _validate_protocol_contract() -> None:
             if entry.candidate_bounds is None:
                 raise ValueError(f"{entry.id}: dynamic candidates must declare candidate_bounds")
             bounds = dict(entry.candidate_bounds)
-            if bounds.get("id_scheme") != "free" or bounds.get("max") is not None:
-                raise ValueError(
-                    f"{entry.id}: candidate ids must be free/unbounded (no legacy cN/2..5)"
-                )
-            if bounds.get("min") != 2:
-                raise ValueError(f"{entry.id}: candidate_bounds.min must be 2")
+            if bounds != {"id_scheme": "free", "min": 2, "max": 5}:
+                raise ValueError(f"{entry.id}: expected 2..5 candidates with free IDs")
             if source_field not in _declared_state_paths(entry.id):
                 raise ValueError(
                     f"{entry.id}: candidate source {source_field!r} is not a declared state path"
@@ -1678,8 +1674,7 @@ def dynamic_choice_labels(
         if dp_id is not None and _REGISTRY_BY_ID.get(dp_id) is not None and (
             _REGISTRY_BY_ID[dp_id].kind == "dynamic-candidates"
         ):
-            # The active dynamic entry (dp-auto) has no legacy cN/2..5 bound; its
-            # one candidate contract is pm_candidate_issues.
+            # dp-auto uses its own free-ID candidate contract.
             if pm_candidate_issues(candidates):
                 return None
         elif dynamic_choices_value_error(candidates):
@@ -1854,9 +1849,8 @@ def question_override_issues(
         issues.append((str(qid), "is not a registered question id of this decision point"))
     for qid in sorted(set(registry) - set(questions), key=str):
         issues.append((str(qid), "is missing: an override carries every registered question id"))
-    # The entry id decides which candidate contract applies (the active dynamic
-    # entry has no legacy cN/2..5 bound): resolving without it refused exactly
-    # the entry whose candidates this override exists to describe.
+    # The entry id decides which candidate contract applies. dp-auto accepts
+    # free IDs, so applying the older cN contract would omit its actual choices.
     dynamic = dynamic_choice_labels(registry, state, dp_id=dp_point.id)
     for qid, base in registry.items():
         if qid not in questions:
@@ -1973,6 +1967,7 @@ def prepared_observation_request(
     questions: Mapping[str, Mapping],
     *,
     project_dir: pathlib.Path | str | None = None,
+    key: str | None = None,
     limits: Mapping[str, int] | None = None,
     source_references: Mapping | None = None,
     evidence_refs: list[dict] | None = None,
@@ -1984,17 +1979,22 @@ def prepared_observation_request(
     supply the pair labels. File sources use the same hydration and explicit
     excerpt budget as production, so preview and transport share one surface.
     """
+    options = decision_backends.prepared_selection_options(
+        dp_id, projected_material, preparation, business_questions=questions,
+    )
     prepared_questions = decision_backends.build_prepared_questions(
-        dp_id, projected_material, preparation, business_questions=questions
+        dp_id, projected_material, preparation, business_questions=questions, options=options,
     )
     resolved = limits or {}
-    state = decision_material_sources.prepare_source_state(
-        {"material": dict(projected_material), "preparation": copy.deepcopy(preparation)},
+    state = prepared_model_request(
+        dp_id, projected_material, preparation, prepared_questions,
         project_dir,
+        key=key,
+        options=options,
+        instruction_source=f"questions:/{next(iter(questions))}/instructions",
         max_state_bytes=int(resolved.get("max_state_bytes", 0)),
         max_total_tokens=int(resolved.get("max_total_tokens", 65536)),
         max_state_plus_question_tokens=int(resolved.get("max_state_plus_question_tokens", 32768)),
-        questions=prepared_questions,
         source_references=source_references,
         evidence_refs=evidence_refs,
     )
@@ -2002,6 +2002,37 @@ def prepared_observation_request(
         state,
         prepared_questions,
     )
+
+
+def prepared_model_request(
+    dp_id: str, material: Mapping, preparation: Mapping, questions: Mapping,
+    project_dir: pathlib.Path | str | None, *, key: str | None = None,
+    options: Mapping,
+    instruction_source: str | None = None,
+    contract_root: pathlib.Path | str | None = None,
+    sign_quality_gate: Mapping | None = None, **source_options,
+) -> dict:
+    """Use the same context projection for preview and actual prepared sends."""
+    model_fields, context_refs = decision_model_context.project(dp_id, material, preparation, questions, options)
+    if dp_id == "dp-sign-key" and sign_quality_gate is not None:
+        model_fields["quality_gate"] = dict(sign_quality_gate)
+    state = decision_material_sources.prepare_source_state(
+        {"material": material, "preparation": preparation, **model_fields},
+        project_dir, questions=questions, context_refs=context_refs,
+        bind_criteria=lambda prepared: decision_model_context.resolve_criterion_references(
+            prepared, questions, preparation, root=contract_root or project_dir, key=key,
+        ), **source_options,
+    )
+    decision_model_context.complete_reference_terminology(state)
+    state.pair_map = copy.deepcopy(dict(options))
+    state.field_trace = decision_model_context.field_trace(
+        dp_id, material, preparation, state, options, key=key, instruction_source=instruction_source,
+    )
+    if "quality_gate" in state:
+        state.field_trace["fields"]["/state/quality_gate"] = {
+            "sources": ["host:current-quality-gate"], "transform": "verified-independent-review",
+        }
+    return state
 
 
 # ---------------------------------------------------------------------------
@@ -2435,12 +2466,12 @@ STATE_FIELD_DESCRIPTIONS: Mapping[str, dict] = MappingProxyType(
         "handling_options": {
             "type": "array",
             "description": (
-                "PM-prepared, problem-specific action candidates "
+                "2 to 5 distinct PM-prepared action candidates "
                 "[{id,label,description,consequence,risk,conditions}]; ids only need to be "
-                "unique in this request (no legacy cN/2..5 bound)."
+                "unique in this request."
             ),
             "item_type": "object",
-            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "max_items": ENTRY_CANDIDATE_BOUNDS["dp-auto"]["max"],
         },
         "delivery_goal": {
             "type": "string",
@@ -3864,6 +3895,8 @@ _validate_state_field_contract()
 BASIS_SOURCE = "pm-prepared"
 PREPARATION_KEYS: tuple[str, ...] = ("basis_catalog", "prepared_at")
 BASIS_ITEM_KEYS: tuple[str, ...] = ("id", "text", "material_refs", "applies_to")
+PREPARATION_OPTIONAL_KEYS = ("model_context",)
+BASIS_ITEM_OPTIONAL_KEYS = ("finding_ids", "remaining_ids")
 CANDIDATE_ITEM_KEYS: tuple[str, ...] = (
     "id",
     "label",
@@ -3928,27 +3961,23 @@ def role_issues(dp_id: str, actor_role: object) -> tuple[tuple[str, str], ...]:
 
 
 def pm_candidate_issues(candidates: object) -> tuple[tuple[str, str], ...]:
-    """Validate the PM-prepared candidate set of dp-auto (no legacy cN/2..5).
-
-    AC-042: at least two distinguishable candidates, each with a non-empty
-    description, consequence, risk and conditions; ids are free-form and only
-    need to be unique inside this request, because the old ``c1..cN`` scheme and
-    the 2..5 cap are history, not this entry's contract.
-    """
+    """Validate 2..5 PM-prepared paths with distinct business content and free IDs."""
     key = "handling_options"
     if not isinstance(candidates, list):
         return ((key, "expected a list of PM-prepared candidates"),)
-    if len(candidates) < 2:
+    bounds = ENTRY_CANDIDATE_BOUNDS["dp-auto"]
+    minimum, maximum = bounds["min"], bounds["max"]
+    if not minimum <= len(candidates) <= maximum:
         return (
             (
                 key,
-                f"needs at least 2 distinguishable prepared candidates (got {len(candidates)}); "
-                "a single candidate is not a choice",
+                f"needs {minimum} to {maximum} distinguishable prepared candidates (got {len(candidates)})",
             ),
         )
     issues: list[tuple[str, str]] = []
     seen_ids: set[str] = set()
     seen_labels: set[str] = set()
+    seen_paths: dict[tuple[str, ...], int] = {}
     for index, item in enumerate(candidates):
         item_path = f"{key}[{index}]"
         if not isinstance(item, Mapping):
@@ -3961,6 +3990,13 @@ def pm_candidate_issues(candidates: object) -> tuple[tuple[str, str], ...]:
             value = item.get(name)
             if not isinstance(value, str) or not value.strip():
                 issues.append((f"{item_path}.{name}", "must be a non-empty string"))
+        content = [item.get(key) for key in CANDIDATE_ITEM_KEYS[2:]]
+        if all(isinstance(value, str) and value.strip() for value in content):
+            path = tuple(re.sub(r"[ \t\r\n]+", " ", value.strip()).lower() for value in content)
+            if path in seen_paths:
+                issues.append((item_path, f"duplicates the action, consequence, risk and conditions of {key}[{seen_paths[path]}]"))
+            else:
+                seen_paths[path] = index
         candidate_id = item.get("id")
         if isinstance(candidate_id, str) and candidate_id.strip():
             if candidate_id in seen_ids:
@@ -4152,6 +4188,8 @@ def basis_catalog_issues(
     dp_id: str,
     catalog: object,
     material: Mapping | None = None,
+    *,
+    require_complete: bool = False,
 ) -> tuple[tuple[str, str], ...]:
     """Validate the PM-prepared D012A basis catalog (independent of material).
 
@@ -4175,12 +4213,23 @@ def basis_catalog_issues(
     references = _material_reference_set(material)
     issues: list[tuple[str, str]] = []
     seen: set[str] = set()
+    covered: set[str] = set()
     for index, item in enumerate(catalog):
         path = f"{key}[{index}]"
         if not isinstance(item, Mapping):
             issues.append((path, "basis item is not an object"))
             continue
-        unknown = sorted(set(item) - set(BASIS_ITEM_KEYS))
+        unknown = sorted(set(item) - set(BASIS_ITEM_KEYS) - set(BASIS_ITEM_OPTIONAL_KEYS))
+        for name in BASIS_ITEM_OPTIONAL_KEYS:
+            if name not in item:
+                continue
+            values = item[name]
+            if (
+                not isinstance(values, list) or len(values) > 32
+                or not all(isinstance(value, str) and decision_model_context.REASON_ID.fullmatch(value) for value in values)
+                or len(set(values)) != len(values)
+            ):
+                issues.append((f"{path}.{name}", "requires a list of distinct reason ids"))
         if unknown:
             issues.append(
                 (
@@ -4235,6 +4284,12 @@ def basis_catalog_issues(
                             "is not a legal choice id of this entry",
                         )
                     )
+                else:
+                    covered.add(target)
+    if require_complete or dp_id == "dp-QG":
+        missing = [choice for choice in resolve_entry_choices(dp_id, material) if choice not in covered]
+        if missing:
+            issues.append((key, f"missing prepared criteria for {', '.join(missing)}"))
     return tuple(issues)
 
 
@@ -4275,6 +4330,7 @@ def preparation_issues(
     preparation: object,
     material: Mapping | None = None,
     *,
+    require_complete: bool = False,
     choice: object = None,
     basis_id: object = None,
 ) -> tuple[tuple[str, str], ...]:
@@ -4293,7 +4349,7 @@ def preparation_issues(
             ),
         )
     issues: list[tuple[str, str]] = []
-    unknown = sorted(set(preparation) - set(PREPARATION_KEYS))
+    unknown = sorted(set(preparation) - set(PREPARATION_KEYS) - set(PREPARATION_OPTIONAL_KEYS))
     if unknown:
         issues.append(("preparation", f"unknown preparation keys {unknown}"))
     prepared_at = preparation.get("prepared_at")
@@ -4318,7 +4374,8 @@ def preparation_issues(
                         "must be an ISO-8601 timestamp with an explicit offset (Z or +hh:mm)",
                     )
                 )
-    issues.extend(basis_catalog_issues(dp_id, preparation.get("basis_catalog"), material))
+    issues.extend(basis_catalog_issues(dp_id, preparation.get("basis_catalog"), material,
+                                      require_complete=require_complete))
     if basis_id is not None:
         issues.extend(
             basis_selection_issues(
@@ -4352,8 +4409,10 @@ def prepared_request_issues(
     issues.extend(role_issues(dp_id, actor_role))
     issues.extend(entry_material_issues(dp_id, material))
     issues.extend(
-        preparation_issues(dp_id, preparation, material, choice=choice, basis_id=basis_id)
+        preparation_issues(dp_id, preparation, material, choice=choice, basis_id=basis_id, require_complete=True)
     )
+    if dp_id == "dp-auto" and not issues:
+        issues.extend(decision_model_context.auto_issues(preparation.get("model_context"), material))
     if choice is not None:
         issues.extend(entry_choice_issues(dp_id, choice, material))
     return tuple(issues)
@@ -5386,6 +5445,9 @@ class _DecisionCapture:
     material_refused: bool = False
     #: Local source dependencies for replay/consumer freshness, outside model state.
     file_evidence: list[dict] | None = None
+    local_preparation: Mapping | None = None
+    field_trace: Mapping | None = None
+    pair_map: Mapping | None = None
 
     def attach(
         self,
@@ -5414,6 +5476,8 @@ class _DecisionCapture:
         """Keep the material of this call (never a reconstruction of it)."""
         self.state = copy.deepcopy(dict(state))
         self.file_evidence = copy.deepcopy(getattr(state, "file_evidence", None))
+        self.field_trace = copy.deepcopy(getattr(state, "field_trace", None))
+        self.pair_map = copy.deepcopy(getattr(state, "pair_map", None))
         self.questions = copy.deepcopy(questions)
         self.state_digest = state_digest
 
@@ -5473,6 +5537,12 @@ class _DecisionCapture:
         }
         if self.file_evidence:
             document["file_evidence"] = self.file_evidence
+        if self.local_preparation is not None:
+            document["local_preparation"] = self.local_preparation
+        if self.field_trace is not None:
+            document["field_trace"] = self.field_trace
+        if self.pair_map is not None:
+            document["pair_map"] = self.pair_map
         if kind == "book":
             document["book"] = self.observation.book if self.observation is not None else None
         return document
@@ -5486,6 +5556,7 @@ class _DecisionCapture:
             "questions_version": document.get("questions_version"),
             "state_digest": document.get("state_digest"),
             "file_evidence": document.get("file_evidence"),
+            **{name: document[name] for name in ("pair_map", "field_trace") if name in document},
             "candidates": {
                 qid: [item["id"] for item in items if isinstance(item, Mapping)]
                 for qid, items in (document.get("candidates") or {}).items()
@@ -5578,7 +5649,7 @@ class _DecisionCapture:
                 )
                 snapshot_ref = self._snapshot_ref(document)
                 snapshot_scope = scope
-                if isinstance(self.state, Mapping) and self.state.get("evidence_sources"):
+                if self.pair_map or (isinstance(self.state, Mapping) and self.state.get("evidence_sources")):
                     # A hydrated source snapshot can be larger than the normal
                     # HTTP segment cap. Retain this bounded JSON document whole
                     # using the same sink and redactor, without raising caps for
@@ -5647,6 +5718,27 @@ class _DecisionCapture:
         except Exception:  # noqa: BLE001 - capture must never break the decision
             return False
         return written
+
+
+def capture_prepared_result(capture, client, point, trigger, response, mode) -> dict:
+    """Persist the exact prepared state, sources and wire pairing from this call."""
+    state = getattr(client, "last_prepared_state", None)
+    questions = getattr(client, "last_prepared_questions", None)
+    if not isinstance(state, Mapping) or not isinstance(questions, Mapping):
+        return {}
+    digest = _state_digest(state)
+    capture.mode = mode
+    capture.local_preparation = getattr(client, "last_prepared_preparation", None)
+    capture.remember_state(state, questions=questions, state_digest=digest)
+    capture.record_call(client)
+    available = bool(response.get("available"))
+    outcome = _outcome(
+        dp_point=point, trigger=trigger, status="suggested" if available else "escalated",
+        escalated_reason=None if available else "unavailable", mode=mode,
+        state_digest=digest, response=response,
+    )
+    updates = capture.finish(_ArchiveTrace(), outcome=outcome)
+    return {"state_digest": digest, **{key: updates.get(key) for key in ("snapshot_ref", "call_id", "capture_status")}}
 
 
 def _capture_status_of(scope: Any) -> str | None:
@@ -6908,7 +7000,7 @@ def _decide_for(
         try:
             prepared_state, questions = prepared_observation_request(
                 dp_point.id, state, preparation, questions,
-                project_dir=project,
+                project_dir=project, key=trigger_obj.key,
                 limits={
                     "max_questions": cfg.max_questions,
                     "max_state_bytes": cfg.max_state_bytes,
@@ -6951,7 +7043,7 @@ def _decide_for(
                 state_digest=digest,
             )
         if decision.secret_hit(
-            json.dumps(prepared_state, ensure_ascii=False, default=str),
+            json.dumps({"state": prepared_state, "questions": questions}, ensure_ascii=False, default=str),
             command_known_secret_redactor(cfg, snapshot=snapshot),
         ):
             capture.material_refused = True
@@ -7055,12 +7147,18 @@ def _decide_for(
     if defect is None and book is not None:
         try:
             answers = decision_backends.decode_prepared_selection(
-                dp_point.id, capture.state["material"], capture.state["preparation"], answers
+                dp_point.id, capture.state["material"], book["preparation"], answers, options=capture.pair_map,
             )
         except ValueError:
             defect = "unknown or missing legal conclusion/basis selection"
         else:
-            response = dict(response, answers=answers)
+            business_qid = next(iter(questions_map(dp_point)))
+            selected_choice = answers[business_qid]["value"]
+            selection_issues = entry_choice_issues(dp_point.id, selected_choice, capture.state["material"])
+            if selection_issues:
+                defect = "; ".join(f"{field}: {detail}" for field, detail in selection_issues)
+            else:
+                response = dict(response, answers=answers)
     if defect is not None:
         # The transport was available but the payload is not an answer, so the
         # archive row must not claim one (available=false + a frozen reason).
@@ -7360,3 +7458,4 @@ def _apply_per_dp_budget(
 # imports read the completed DP contract. Keep this a module-level import after
 # the definitions so every supported module import order sees that contract.
 import decision_material_sources  # noqa: E402
+import decision_model_context  # noqa: E402

@@ -1,0 +1,517 @@
+{
+  "key": "mw-dp-material-pipeline",
+  "kind": "planning-index-not-runtime-authority",
+  "version": 3,
+  "execution_authorized": false,
+  "tasks": [
+    {
+      "id": "T01",
+      "card": "T01-contracts.md",
+      "deps": [],
+      "ac_ids": [
+        "AC-001",
+        "AC-010"
+      ],
+      "vc_ids": [
+        "VC-001",
+        "VC-010"
+      ],
+      "status": "planned",
+      "dispatched": false,
+      "verification": "not-run",
+      "acceptance_cwd": "E:\\gitlite\\Multi-Workers",
+      "acceptance_argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "packages/multi-workers/test/test_dp_material_schema_v1.py"
+      ],
+      "execution_role": "implementation_or_independent_worker",
+      "worker_dispatch_allowed": true,
+      "live_authorization_pending": false,
+      "reference_library": "../docs/reference-records/index.json",
+      "reference_comparison_contract": "../reference-comparison-contract.md",
+      "reference_stages": [
+        "decision_book",
+        "model_input",
+        "model_return",
+        "pm_decision"
+      ],
+      "reference_scope": "全部9例，重点dp-QG、dp-route",
+      "reference_evidence_status": "not-run"
+    },
+    {
+      "id": "T02",
+      "card": "T02-sources.md",
+      "deps": [
+        "T01"
+      ],
+      "ac_ids": [
+        "AC-002",
+        "AC-004"
+      ],
+      "vc_ids": [
+        "VC-002",
+        "VC-004"
+      ],
+      "status": "planned",
+      "dispatched": false,
+      "verification": "not-run",
+      "acceptance_cwd": "E:\\gitlite\\Multi-Workers",
+      "acceptance_argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "packages/multi-workers/test/test_dp_material_source_pipeline.py"
+      ],
+      "execution_role": "implementation_or_independent_worker",
+      "worker_dispatch_allowed": true,
+      "live_authorization_pending": false,
+      "reference_library": "../docs/reference-records/index.json",
+      "reference_comparison_contract": "../reference-comparison-contract.md",
+      "reference_stages": [
+        "decision_book",
+        "model_input",
+        "model_return",
+        "pm_decision"
+      ],
+      "reference_scope": "全部9例，重点dp-QG、dp-sign-key及两个auto",
+      "reference_evidence_status": "not-run"
+    },
+    {
+      "id": "T03",
+      "card": "T03-projection.md",
+      "deps": [
+        "T01",
+        "T02"
+      ],
+      "ac_ids": [
+        "AC-003",
+        "AC-004",
+        "AC-005"
+      ],
+      "vc_ids": [
+        "VC-003",
+        "VC-004",
+        "VC-005"
+      ],
+      "status": "planned",
+      "dispatched": false,
+      "verification": "not-run",
+      "acceptance_cwd": "E:\\gitlite\\Multi-Workers",
+      "acceptance_argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "packages/multi-workers/test/test_dp_material_projection_v1.py"
+      ],
+      "execution_role": "implementation_or_independent_worker",
+      "worker_dispatch_allowed": true,
+      "live_authorization_pending": false,
+      "reference_library": "../docs/reference-records/index.json",
+      "reference_comparison_contract": "../reference-comparison-contract.md",
+      "reference_stages": [
+        "decision_book",
+        "model_input",
+        "model_return",
+        "pm_decision"
+      ],
+      "reference_scope": "全部9例",
+      "reference_evidence_status": "not-run"
+    },
+    {
+      "id": "T04",
+      "card": "T04-prepare-worker.md",
+      "deps": [
+        "T01",
+        "T02",
+        "T03"
+      ],
+      "ac_ids": [
+        "AC-007",
+        "AC-011",
+        "AC-013"
+      ],
+      "vc_ids": [
+        "VC-007",
+        "VC-011",
+        "VC-013"
+      ],
+      "status": "planned",
+      "dispatched": false,
+      "verification": "not-run",
+      "acceptance_cwd": "E:\\gitlite\\Multi-Workers",
+      "acceptance_argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "packages/multi-workers/test/test_dp_prepare_profile_v1.py"
+      ],
+      "execution_role": "implementation_or_independent_worker",
+      "worker_dispatch_allowed": true,
+      "live_authorization_pending": false,
+      "reference_library": "../docs/reference-records/index.json",
+      "reference_comparison_contract": "../reference-comparison-contract.md",
+      "reference_stages": [
+        "decision_book",
+        "model_input",
+        "model_return",
+        "pm_decision"
+      ],
+      "reference_scope": "全部9例，重点dp-w-check-task、dp-pm-steer",
+      "reference_evidence_status": "not-run"
+    },
+    {
+      "id": "T05",
+      "card": "T05-business-checks.md",
+      "deps": [
+        "T03",
+        "T04"
+      ],
+      "ac_ids": [
+        "AC-001",
+        "AC-006",
+        "AC-008",
+        "AC-009"
+      ],
+      "vc_ids": [
+        "VC-001",
+        "VC-006",
+        "VC-008",
+        "VC-009"
+      ],
+      "status": "planned",
+      "dispatched": false,
+      "verification": "not-run",
+      "acceptance_cwd": "E:\\gitlite\\Multi-Workers",
+      "acceptance_argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "packages/multi-workers/test/test_dp_material_business_checks.py"
+      ],
+      "execution_role": "implementation_or_independent_worker",
+      "worker_dispatch_allowed": true,
+      "live_authorization_pending": false,
+      "reference_library": "../docs/reference-records/index.json",
+      "reference_comparison_contract": "../reference-comparison-contract.md",
+      "reference_stages": [
+        "decision_book",
+        "model_input",
+        "model_return",
+        "pm_decision"
+      ],
+      "reference_scope": "dp-QG、dp-sign-key、dp-auto-original、dp-auto-optimized；其余案例核适用前提",
+      "reference_evidence_status": "not-run"
+    },
+    {
+      "id": "T06",
+      "card": "T06-transport-continuity.md",
+      "deps": [
+        "T03",
+        "T04",
+        "T05"
+      ],
+      "ac_ids": [
+        "AC-009",
+        "AC-010",
+        "AC-011",
+        "AC-013"
+      ],
+      "vc_ids": [
+        "VC-009",
+        "VC-010",
+        "VC-011",
+        "VC-013"
+      ],
+      "status": "planned",
+      "dispatched": false,
+      "verification": "not-run",
+      "acceptance_cwd": "E:\\gitlite\\Multi-Workers",
+      "acceptance_argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "packages/multi-workers/test/test_dp_material_transport_v1.py"
+      ],
+      "execution_role": "implementation_or_independent_worker",
+      "worker_dispatch_allowed": true,
+      "live_authorization_pending": false,
+      "reference_library": "../docs/reference-records/index.json",
+      "reference_comparison_contract": "../reference-comparison-contract.md",
+      "reference_stages": [
+        "decision_book",
+        "model_input",
+        "model_return",
+        "pm_decision"
+      ],
+      "reference_scope": "全部9例，重点dp-QG与dp-w-check-task",
+      "reference_evidence_status": "not-run"
+    },
+    {
+      "id": "T07",
+      "card": "T07-monitor.md",
+      "deps": [
+        "T06"
+      ],
+      "ac_ids": [
+        "AC-012"
+      ],
+      "vc_ids": [
+        "VC-012"
+      ],
+      "status": "planned",
+      "dispatched": false,
+      "verification": "not-run",
+      "acceptance_cwd": "E:\\gitlite\\Multi-Workers",
+      "acceptance_argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "packages/multi-workers/test/test_dp_material_monitor_v1.py"
+      ],
+      "execution_role": "implementation_or_independent_worker",
+      "worker_dispatch_allowed": true,
+      "live_authorization_pending": false,
+      "reference_library": "../docs/reference-records/index.json",
+      "reference_comparison_contract": "../reference-comparison-contract.md",
+      "reference_stages": [
+        "decision_book",
+        "model_input",
+        "model_return",
+        "pm_decision"
+      ],
+      "reference_scope": "全部9例",
+      "reference_evidence_status": "not-run"
+    },
+    {
+      "id": "T08",
+      "card": "T08-integration.md",
+      "deps": [
+        "T01",
+        "T02",
+        "T03",
+        "T04",
+        "T05",
+        "T06",
+        "T07",
+        "T10"
+      ],
+      "ac_ids": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-005",
+        "AC-006",
+        "AC-007",
+        "AC-008",
+        "AC-009",
+        "AC-010",
+        "AC-011",
+        "AC-012",
+        "AC-013",
+        "AC-015",
+        "AC-016",
+        "AC-017",
+        "AC-018"
+      ],
+      "vc_ids": [
+        "VC-001",
+        "VC-002",
+        "VC-003",
+        "VC-004",
+        "VC-005",
+        "VC-006",
+        "VC-007",
+        "VC-008",
+        "VC-009",
+        "VC-010",
+        "VC-011",
+        "VC-012",
+        "VC-013",
+        "VC-015",
+        "VC-016",
+        "VC-017",
+        "VC-018"
+      ],
+      "status": "planned",
+      "dispatched": false,
+      "verification": "not-run",
+      "acceptance_cwd": "E:\\gitlite\\Multi-Workers",
+      "acceptance_argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "packages/multi-workers/test/test_dp_material_pipeline_l2.py"
+      ],
+      "execution_role": "implementation_or_independent_worker",
+      "worker_dispatch_allowed": true,
+      "live_authorization_pending": false,
+      "reference_library": "../docs/reference-records/index.json",
+      "reference_comparison_contract": "../reference-comparison-contract.md",
+      "reference_stages": [
+        "decision_book",
+        "model_input",
+        "model_return",
+        "pm_decision"
+      ],
+      "reference_scope": "全部9例、两个cohort",
+      "reference_evidence_status": "not-run"
+    },
+    {
+      "id": "T09",
+      "card": "T09-independent-review.md",
+      "deps": [
+        "T08"
+      ],
+      "ac_ids": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-005",
+        "AC-006",
+        "AC-007",
+        "AC-008",
+        "AC-009",
+        "AC-010",
+        "AC-011",
+        "AC-012",
+        "AC-013",
+        "AC-014",
+        "AC-015",
+        "AC-016",
+        "AC-017",
+        "AC-018"
+      ],
+      "vc_ids": [
+        "VC-001",
+        "VC-002",
+        "VC-003",
+        "VC-004",
+        "VC-005",
+        "VC-006",
+        "VC-007",
+        "VC-008",
+        "VC-009",
+        "VC-010",
+        "VC-011",
+        "VC-012",
+        "VC-013",
+        "VC-014",
+        "VC-015",
+        "VC-016",
+        "VC-017",
+        "VC-018"
+      ],
+      "status": "planned",
+      "dispatched": false,
+      "verification": "not-run",
+      "acceptance_cwd": "E:\\gitlite\\Multi-Workers",
+      "acceptance_argv": [
+        "python",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/check_review.py",
+        "--report",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/review/final-review.md",
+        "--spec",
+        ".agenticdoc/mw-dp-material-pipeline/spec.md",
+        "--evidence-index",
+        ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/evidence-index.json",
+        "--reference-index",
+        ".agenticdoc/mw-dp-material-pipeline/docs/reference-records/index.json"
+      ],
+      "execution_role": "implementation_or_independent_worker",
+      "worker_dispatch_allowed": true,
+      "live_authorization_pending": false,
+      "reference_library": "../docs/reference-records/index.json",
+      "reference_comparison_contract": "../reference-comparison-contract.md",
+      "reference_stages": [
+        "decision_book",
+        "model_input",
+        "model_return",
+        "pm_decision"
+      ],
+      "reference_scope": "全部9例、两个cohort",
+      "reference_evidence_status": "not-run"
+    },
+    {
+      "id": "T10",
+      "card": "T10-sample-contracts.md",
+      "deps": [
+        "T01"
+      ],
+      "ac_ids": [
+        "AC-015",
+        "AC-016",
+        "AC-017",
+        "AC-018"
+      ],
+      "vc_ids": [
+        "VC-015",
+        "VC-016",
+        "VC-017",
+        "VC-018"
+      ],
+      "status": "planned",
+      "dispatched": false,
+      "verification": "not-run",
+      "acceptance_cwd": "E:\\gitlite\\Multi-Workers",
+      "acceptance_argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "packages/multi-workers/test/test_dp_v05_reference_chain.py"
+      ],
+      "execution_role": "implementation_or_independent_worker",
+      "worker_dispatch_allowed": true,
+      "live_authorization_pending": false,
+      "reference_library": "../docs/reference-records/index.json",
+      "reference_comparison_contract": "../reference-comparison-contract.md",
+      "reference_stages": [
+        "decision_book",
+        "model_input",
+        "model_return",
+        "pm_decision"
+      ],
+      "reference_scope": "全部9例、两个cohort",
+      "reference_evidence_status": "not-run"
+    },
+    {
+      "id": "T11",
+      "card": "T11-live-samples.md",
+      "deps": [],
+      "ac_ids": [],
+      "vc_ids": [],
+      "status": "obsolete",
+      "dispatched": false,
+      "verification": "not-applicable-withdrawn",
+      "acceptance_cwd": "E:\\gitlite\\Multi-Workers",
+      "acceptance_argv": null,
+      "execution_role": "withdrawn-no-execution",
+      "worker_dispatch_allowed": false,
+      "live_authorization_pending": false
+    }
+  ],
+  "reference_library": "docs/reference-records/index.json",
+  "reference_comparison_contract": "reference-comparison-contract.md",
+  "required_comparison_rows": 36
+}

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+from itertools import combinations
 import os
 import pathlib
 import socket
@@ -123,7 +124,7 @@ def _material(dp_id: str) -> dict:
                 "current_state": "the conflicting file is claimed by another key",
                 "tried": "asked the other window, no answer yet",
                 "unknowns": "whether the other claim is still live",
-                "constraints": "no new write permission is available",
+                "constraints": "Remaining 60 seconds; no new write permission is available.",
             },
             "handling_options": _auto_candidates(),
         },
@@ -139,7 +140,7 @@ def _material(dp_id: str) -> dict:
 def _preparation(dp_id: str, material: dict) -> dict:
     legal = list(dpts.resolve_entry_choices(dp_id, material))
     first_ref = next(iter(material))
-    return {
+    preparation = {
         "basis_catalog": [
             {
                 "id": "b-primary",
@@ -156,6 +157,25 @@ def _preparation(dp_id: str, material: dict) -> dict:
         ],
         "prepared_at": PREPARED_AT,
     }
+    if dp_id == "dp-auto":
+        preparation["model_context"] = {
+            "auto_comparison": {
+                "priority": {"source": "background.constraints", "rule": "Make progress within the existing scope."},
+                "budget": {"remaining_seconds": 60, "reserve_seconds": 10},
+                "paths": {
+                    name: {"max_seconds": 10, "observation": f"Result from {name}",
+                           "stop": "Stop at the first result", "successor": f"Report the result of {name}",
+                           "steps": [{"id": name, "max_seconds": 10, "on_success": None, "on_failure": None}]}
+                    for name in legal
+                },
+                "pairs": [
+                    {"candidates": [a, b], "criterion": f"Prefer {a} while its premise holds.",
+                     "reversal": f"Prefer {b} if the earlier premise fails."}
+                    for a, b in combinations(legal, 2)
+                ],
+            },
+        }
+    return preparation
 
 
 @pytest.fixture(autouse=True)
@@ -893,11 +913,14 @@ def test_renderperformance_qg_evidence_binding_hints_and_replay(
         (tmp_path / ref["path"]).write_text("Fixture evidence\n", encoding="utf-8")
     preparation = {
         "prepared_at": "2026-11-20T17:14:00Z",
-        "basis_catalog": [{
-            "id": "frame-source-f001-f004", "text": "Four findings from the source review",
-            "applies_to": ["fix"],
-            "material_refs": ["review_findings", "review_evidence", "review_requirements"],
-        }],
+        "basis_catalog": [
+            {"id": "frame-source-f001-f004", "text": "Four findings from the source review",
+             "applies_to": ["fix"], "material_refs": ["review_findings", "review_evidence", "review_requirements"]},
+            {"id": "frame-pass", "text": "If independent review confirms all frame capture checks",
+             "applies_to": ["pass"], "material_refs": ["review_requirements"]},
+            {"id": "frame-reopen", "text": "If the accepted frame capture scope itself is contradictory",
+             "applies_to": ["reopen"], "material_refs": ["review_requirements"]},
+        ],
     }
     _write_decide_config(tmp_path, enabled=True)
     (tmp_path / ".mw/decide-points.json").write_text(
@@ -930,7 +953,7 @@ def test_renderperformance_qg_evidence_binding_hints_and_replay(
     assert diagnostic["allowed_fields"] == [
         *[f"material.review_evidence[{i}]" for i in range(6)],
         "material.review_findings", "material.review_requirements", "material.uncovered_scope",
-        "preparation.basis_catalog[0].text",
+        *[f"preparation.basis_catalog[{i}].text" for i in range(3)],
     ]
     assert diagnostic["allowed_fields_truncated"] is False
     replay = invoke()
@@ -1923,7 +1946,7 @@ def _answer_backend(conclusion: str) -> "decision.FakeBackend":
         business_id = _business_question_id("dp-sign-key")
         assert set(questions) == {"decision_selection"}, questions
         assert state["material"] == _sign_material()
-        assert state["preparation"] == _preparation("dp-sign-key", _sign_material())
+        assert "preparation" not in state
         return decision.BackendOutcome(
             available=True,
             reason=None,

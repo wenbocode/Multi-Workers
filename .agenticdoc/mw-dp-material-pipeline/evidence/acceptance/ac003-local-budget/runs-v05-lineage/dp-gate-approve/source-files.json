@@ -1,0 +1,17 @@
+[
+  {
+    "source_id": "src-1ed2b7426307247ad384",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-gate-approve/source-files/replay-plan.txt",
+    "sha256": "cf5d5a5bcd7bb53f9cc0b0b6ddbf5f88fe3ba1b601829bc4cd6b54964518a1c4"
+  },
+  {
+    "source_id": "src-f69d1ac638425075fe7a",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-gate-approve/source-files/v05-reference-C1.txt",
+    "sha256": "a8403f2e8a625968b6756bc14c27176ec36e66421dd0816c18f218a087c51d08"
+  },
+  {
+    "source_id": "src-8c88dcda438c35a02f2b",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-gate-approve/source-files/v05-reference-C2.txt",
+    "sha256": "dc6f8ff3144e0097c055f5922b3b3577aea0640fdadfd49e473557ea9f6c5bd7"
+  }
+]

@@ -1,0 +1,25 @@
+{
+  "before": [
+    "AC-003",
+    "AC-014",
+    "VC-003",
+    "VC-014",
+    "FLOW-001",
+    "FLOW-003"
+  ],
+  "after": [],
+  "removed": [
+    "AC-003",
+    "AC-014",
+    "FLOW-001",
+    "FLOW-003",
+    "VC-003",
+    "VC-014"
+  ],
+  "qg_report": ".agenticdoc/mw-dp-material-pipeline/evidence/quality-gate-report-ac003-cx-ee474fbc353feb7aba95.md@e0a20bf8375eef5aa6c01b8d832ee257ebbcb902ef204c9bca03be4623dea547",
+  "independent_review": {
+    "run_id": "cx-ee474fbc353feb7aba95@2026-11-22T16:49:12.378Z",
+    "source": "workers/cx-ee474fbc353feb7aba95/report.md",
+    "evidence_sha256": "51c1906d483b69ed645691f71ed2b4950909e9cde74317f2c02646db47157e63"
+  }
+}

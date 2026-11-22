@@ -1,0 +1,2 @@
+AC-001 / VC-001 FAIL: checks.py must contain one explicit assertion for input row order.
+AC-002 / VC-002 FAIL: The ordering_assertion anchor points to checks.py:2, which does not contain the ordering assertion.

@@ -1,0 +1,22 @@
+{
+  "review": {
+    "rows": 36,
+    "reference_matched": 36,
+    "implementation": {
+      "justified-change": 32,
+      "expected-rejection": 4
+    },
+    "independent_review_present": true,
+    "independent_criteria_met": 36
+  },
+  "whole_key_qg_checked": 39,
+  "signoff_logical_id": "eb478840f8ddc14578e47c3bc0bce1cb",
+  "signoff_sha256": "3bf81ca4bec9d9a05c32e4e17b1aac874cd51f514bc7081b5f2bbdfe7a031026",
+  "review_run": "cx-ee474fbc353feb7aba95@2026-11-22T16:49:12.378Z",
+  "source_changes_since_qg": {
+    "packages/multi-workers/codex_pm.py": {
+      "signed_source_sha256": "c42992cde9b172323827bd0ed0cd9d8c9e7bb0b6102f2ec228c7b430ad91e1b4",
+      "closure_source_sha256": "7d0aabf45826af85702158e5c1d0933d1e46b16435c6e72bfa4bed498b0af2e8"
+    }
+  }
+}

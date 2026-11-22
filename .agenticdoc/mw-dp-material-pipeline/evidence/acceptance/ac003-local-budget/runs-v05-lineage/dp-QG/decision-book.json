@@ -1,0 +1,141 @@
+{
+  "material": {
+    "review_requirements": "AC-001 and AC-002 of the scoped import transaction adapter.",
+    "review_evidence": [
+      "review.txt:1"
+    ],
+    "review_findings": "F1 duplicate rejection still inserts once. F2 concurrency order remains unverified.",
+    "uncovered_scope": "VC-002 concurrency order check did not run."
+  },
+  "preparation": {
+    "basis_catalog": [
+      {
+        "id": "pass-basis",
+        "text": "Both criteria have current independent passing evidence.",
+        "applies_to": [
+          "pass"
+        ],
+        "material_refs": [
+          "review_requirements"
+        ]
+      },
+      {
+        "id": "fixA-basis",
+        "text": "Address F1 and leave F2 open.",
+        "applies_to": [
+          "fix"
+        ],
+        "material_refs": [
+          "review_findings"
+        ],
+        "finding_ids": [
+          "F1"
+        ],
+        "remaining_ids": [
+          "F2"
+        ]
+      },
+      {
+        "id": "fixB-basis",
+        "text": "Repair the duplicate rejection side effect and add the missing concurrency check.",
+        "applies_to": [
+          "fix"
+        ],
+        "material_refs": [
+          "review_findings"
+        ],
+        "finding_ids": [
+          "F1",
+          "F2"
+        ],
+        "remaining_ids": []
+      },
+      {
+        "id": "reopen-basis",
+        "text": "Escalate a substantive contradiction in the accepted requirements.",
+        "applies_to": [
+          "reopen"
+        ],
+        "material_refs": [
+          "review_requirements"
+        ]
+      }
+    ],
+    "prepared_at": "2026-11-08T10:00:00+00:00",
+    "model_context": {
+      "enum_meanings": {
+        "completed": "此处所指核对过程已结束，不代表所有验收标准通过。",
+        "fail": "该验证实际失败。",
+        "fix": "有明确产物缺陷或证据缺口，需修复/补证后复核。",
+        "not-met": "验收标准已确认未满足。",
+        "not-run": "这条验证尚未执行，不能填通过。",
+        "open": "该发现或缺口尚未关闭。",
+        "pass": "在当前检查/审核上下文满足要求；不能由局部检查扩大为整体验收。",
+        "unverified": "验收标准尚无足够验证，不能当作完成。"
+      },
+      "terminology": {
+        "AC": "Acceptance Criterion / Acceptance Criteria: 验收标准：已确认的应达到的业务结果；具体编号的完整正文在references中。",
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "QG": "Quality Gate: 质量门禁/正式质量审核：按已确认验收标准、验证结果和独立审查形成pass/fix/reopen业务结论；不等于模型置信度。",
+        "VC": "Verification Contract: 验证合同/验证项：本项目设计文档规定如何验证关联验收标准、应观察什么结果；具体编号定义在references中。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。",
+        "独审": "独立审查: 由与实现/准备角色独立的审查来源核对当前标准、实际证据和未覆盖面，不能以作者自评替代。",
+        "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+      },
+      "references": {
+        "F1": {
+          "kind": "review_finding",
+          "path": "v05-reference-F1.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        },
+        "F2": {
+          "kind": "review_finding",
+          "path": "v05-reference-F2.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        }
+      },
+      "desc": [
+        "Review duplicate rejection and import ordering.",
+        "The fixture recorded a write on rejection.",
+        "The concurrency ordering check has not run."
+      ],
+      "review": {
+        "AC-001": {
+          "status": "unmet",
+          "evidence": "review.txt:1"
+        },
+        "AC-002": {
+          "status": "unverified",
+          "evidence": "review.txt:1"
+        },
+        "VC-001": {
+          "status": "unmet",
+          "evidence": "review.txt:1"
+        },
+        "VC-002": {
+          "status": "unverified",
+          "evidence": "review.txt:1"
+        }
+      },
+      "reasons": {
+        "F1": "重复键拒绝仍有写入",
+        "F2": "并发顺序未验证"
+      }
+    }
+  },
+  "meta": {
+    "record_version": 2,
+    "logical_id": "v05-original-scope",
+    "key": "key-1",
+    "task_key": null,
+    "initiator_role": "pm",
+    "retry_of": null
+  }
+}

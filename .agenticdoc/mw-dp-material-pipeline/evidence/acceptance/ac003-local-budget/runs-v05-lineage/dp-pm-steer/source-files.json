@@ -1,0 +1,12 @@
+[
+  {
+    "source_id": "src-bd81c2f61ab885991ac3",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-pm-steer/source-files/v05-reference-W1.txt",
+    "sha256": "cf121c7a1434fedfe71b4418c6b09c8b97efca6b3431ee2b82a8632d3606f2d8"
+  },
+  {
+    "source_id": "src-08bc6bae43a999b66e00",
+    "file": "evidence/acceptance/ac003-local-budget/runs-v05-lineage/dp-pm-steer/source-files/v05-reference-W2.txt",
+    "sha256": "ece3e1df1682f5f42a6ab84a5c9ceb928af6919ee32f7fed4ce6db380c832aa4"
+  }
+]

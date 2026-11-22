@@ -146,6 +146,7 @@ REASON_ENTRY_UNAVAILABLE = "entry-unavailable"
 REASON_TIMEOUT = "timeout"
 REASON_RATE_LIMITED = "rate-limited"
 REASON_UPSTREAM_ERROR = "upstream-error"
+REASON_TRANSPORT_UNKNOWN = "transport-unknown"
 REASON_BAD_RESPONSE = "bad-response"
 REASON_UNSUPPORTED_QUESTION_TYPE = "unsupported-question-type"
 REASON_INPUT_INCOMPLETE = "input-incomplete"
@@ -281,6 +282,10 @@ class TransportTimeout(Exception):
 
 class TransportConnectionError(Exception):
     """Connection-level failure (DNS/refused/reset) before a response."""
+
+
+class TransportOutcomeUnknown(Exception):
+    """A prepared POST may have reached the service without a complete response."""
 
 
 def _decode_bytes(raw: bytes) -> str:
@@ -419,6 +424,7 @@ def _http_post(url: str, headers: dict, payload: dict, timeout_s: float) -> Http
     contract (and therefore the decision result) is unchanged.
     """
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    prepared = set(payload.get("questions", {})) == {PREPARED_SELECTION_QUESTION_ID}
     attempt = _begin_attempt(url, headers, data, payload, timeout_s)
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
@@ -437,6 +443,8 @@ def _http_post(url: str, headers: dict, payload: dict, timeout_s: float) -> Http
                     error_class="response-read",
                     error_detail=_describe_exception(exc),
                 )
+                if prepared:
+                    raise TransportOutcomeUnknown(_describe_exception(exc)) from exc
                 raise
             body = _decode_bytes(raw)
             _end_attempt(
@@ -470,6 +478,8 @@ def _http_post(url: str, headers: dict, payload: dict, timeout_s: float) -> Http
                 error_class="response-read",
                 error_detail=_describe_exception(read_exc),
             )
+            if prepared:
+                raise TransportOutcomeUnknown(_describe_exception(read_exc)) from read_exc
             body = ""
         else:
             body = _decode_bytes(raw)
@@ -499,11 +509,15 @@ def _http_post(url: str, headers: dict, payload: dict, timeout_s: float) -> Http
         _end_attempt(
             attempt, error_class="connection-error", error_detail=_describe_exception(exc.reason)
         )
+        if prepared and isinstance(exc.reason, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+            raise TransportOutcomeUnknown(_describe_exception(exc.reason)) from exc
         raise TransportConnectionError(str(exc.reason)) from None
     except OSError as exc:
         _end_attempt(
             attempt, error_class="connection-error", error_detail=_describe_exception(exc)
         )
+        if prepared and isinstance(exc, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+            raise TransportOutcomeUnknown(_describe_exception(exc)) from exc
         raise TransportConnectionError(str(exc)) from None
 
 
@@ -782,7 +796,7 @@ def prepared_selection_options(
     preparation: object,
     *,
     business_questions: Mapping | None = None,
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, object]]:
     """Render only legal conclusion/basis pairs from this prepared request.
 
     Wire ids are local to this exact material/catalog snapshot, never parsed as
@@ -802,10 +816,11 @@ def prepared_selection_options(
         else None
     )
     catalog = preparation.get("basis_catalog") if isinstance(preparation, Mapping) else None
-    if _dpts.basis_catalog_issues(dp_id, catalog, material):
+    if _dpts.basis_catalog_issues(dp_id, catalog, material, require_complete=True):
         raise ValueError(f"{dp_id}: preparation.basis_catalog is not complete and legal")
     labels = spec.get("labels")
     labels = dict(labels) if isinstance(labels, Mapping) else {}
+    label_sources = {choice: f"registry:{dp_id}/{business_qid}/labels/{choice}" for choice in labels}
     dynamic_source = spec.get("dynamic_choices")
     if isinstance(dynamic_source, str):
         candidates = material.get(dynamic_source) if isinstance(material, Mapping) else None
@@ -817,12 +832,21 @@ def prepared_selection_options(
                 and isinstance(item.get("id"), str)
                 and isinstance(item.get("label"), str)
             }
+            label_sources = {
+                item["id"]: f"book:/material/{dynamic_source}/{index}/label"
+                for index, item in enumerate(candidates)
+                if isinstance(item, Mapping) and isinstance(item.get("id"), str) and item["id"] in labels
+            }
     if isinstance(presentation, Mapping):
-        labels.update(_choice_criteria(presentation, None))
-    options: dict[str, dict[str, str]] = {}
-    for choice in _dpts.resolve_entry_choices(dp_id, material):
-        if _dpts.entry_choice_issues(dp_id, choice, material):
-            continue
+        overrides = _choice_criteria(presentation, None)
+        labels.update(overrides)
+        field = "criteria" if presentation.get("criteria") else "labels"
+        label_sources.update({choice: f"questions:/{business_qid}/{field}/{choice}" for choice in overrides})
+    options: dict[str, dict[str, object]] = {}
+    entry_choices = _dpts.resolve_entry_choices(dp_id, material)
+    for choice in entry_choices:
+        # Conditional choices retain their prepared criteria. The host checks
+        # the selected branch's preconditions after decoding the frozen pair.
         number = 0
         for item in catalog:
             if choice not in item["applies_to"]:
@@ -839,14 +863,22 @@ def prepared_selection_options(
             option_id = prefix + suffix
             if option_id in options:
                 raise ValueError(f"{dp_id}: prepared option ids are not unique")
-            label = labels.get(choice, choice)
+            label = labels.get(choice) or choice
+            reason_labels = "".join(
+                f"\n{field}: {', '.join(item[field])}"
+                for field in ("finding_ids", "remaining_ids") if item.get(field)
+            )
             options[option_id] = {
                 "choice": choice,
                 "basis_id": item["id"],
                 "basis_text": item["text"],
+                "choice_label": label,
+                "choice_label_source": label_sources.get(choice, f"registry:{dp_id}/{business_qid}/choices/{choice}"),
+                "finding_ids": list(item.get("finding_ids", [])),
+                "remaining_ids": list(item.get("remaining_ids", [])),
                 "label": (
                     f"结论 {choice}: {label}\n"
-                    f"依据 {item['id']}: {item['text']}"
+                    f"依据 {item['id']}: {item['text']}{reason_labels}"
                 ),
             }
     if not options:
@@ -855,7 +887,7 @@ def prepared_selection_options(
 
 
 def decode_prepared_selection(
-    dp_id: str, material: object, preparation: object, answers: object
+    dp_id: str, material: object, preparation: object, answers: object, *, options: Mapping | None = None,
 ) -> dict[str, dict[str, object]]:
     """Decode one model selection into the unchanged business answer shape.
 
@@ -870,7 +902,8 @@ def decode_prepared_selection(
     if not isinstance(selection, Mapping):
         raise ValueError("missing prepared pair selection")
     value = selection.get("value")
-    options = prepared_selection_options(dp_id, material, preparation)
+    if options is None:
+        options = prepared_selection_options(dp_id, material, preparation)
     if not isinstance(value, str) or value not in options:
         raise ValueError("selected pair is not an option of this prepared request")
     selected = options[value]
@@ -888,11 +921,13 @@ def build_prepared_questions(
     preparation: object,
     *,
     business_questions: Mapping | None = None,
+    options: Mapping | None = None,
 ) -> dict:
     """One choice over the legal conclusion/basis pairs of any active entry."""
-    options = prepared_selection_options(
-        dp_id, material, preparation, business_questions=business_questions
-    )
+    if options is None:
+        options = prepared_selection_options(
+            dp_id, material, preparation, business_questions=business_questions
+        )
     canonical = _dpts.questions_map(dp_id)
     business_qid = next(iter(canonical))
     business_spec = canonical[business_qid]
@@ -909,6 +944,10 @@ def build_prepared_questions(
         "choices": list(options),
         "labels": {option_id: option["label"] for option_id, option in options.items()},
     }
+    if dp_id == "dp-QG":
+        question["instructions"] += (
+            "\n各选项为条件式判据。按当前质量要求、独立核验事实和未覆盖面判断其条件是否成立。"
+        )
     return {PREPARED_SELECTION_QUESTION_ID: question}
 
 
@@ -1120,13 +1159,18 @@ class TimiDecisionsBackend:
         """
         timeout_s = float(_cfg_get(cfg, "timeout_s", 20.0) or 20.0)
         max_retries = max(0, int(_cfg_get(cfg, "max_retries", 0) or 0))
+        prepared = set(payload.get("questions", {})) == {PREPARED_SELECTION_QUESTION_ID}
         attempt = 0
         while True:
             attempt += 1
             self.last_transport_attempts += 1
             try:
                 resp = _http_post(self.endpoint(cfg), self.headers(key), payload, timeout_s)
+            except TransportOutcomeUnknown as exc:
+                return None, (REASON_TRANSPORT_UNKNOWN, False, f"incomplete decision response: {exc}")
             except TransportTimeout as exc:
+                if prepared:
+                    return None, (REASON_TRANSPORT_UNKNOWN, False, f"request timeout without a complete response: {exc}")
                 return None, (REASON_TIMEOUT, True, f"request timeout: {exc}")
             except TransportConnectionError as exc:
                 return None, (REASON_UPSTREAM_ERROR, True, f"connection error: {exc}")

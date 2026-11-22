@@ -57,6 +57,7 @@ import decision_lifecycle
 import decision_monitor
 import decision_points
 import decision_policy
+import decision_prepare
 import decision_signoff_result
 import decision_wire
 import mw_common
@@ -1097,7 +1098,7 @@ def _decide_process_chain(pid: int, limit: int = 8) -> list[int]:
 
 
 def _decide_worker_binding(
-    project_dir: pathlib.Path, meta: object
+    project_dir: pathlib.Path, meta: object, *, terminal_reachability_id: str | None = None,
 ) -> tuple[str | None, str | None, str | None]:
     """Prove a Worker caller from its real run, queue row and task card.
 
@@ -1157,7 +1158,15 @@ def _decide_worker_binding(
         return None, "actor-unbound", "the worker run.json is not an object"
     if run.get("owner_key") != owner_key or run.get("task_key") != task_key:
         return None, "actor-unbound", "the worker run.json names another key/task"
-    if run.get("status") != "running":
+    status = run.get("status")
+    reachability = run.get("reachability")
+    terminal_receipt = (
+        terminal_reachability_id is not None and status == "failed" and run.get("exit") == 1
+        and not run.get("aborted") and isinstance(reachability, dict)
+        and reachability.get("choice") == "terminate"
+        and reachability.get("decision_id") == terminal_reachability_id
+    )
+    if status != "running" and not terminal_receipt:
         return None, "actor-unbound", (
             "the worker run is not running (run.json status is not 'running')"
         )
@@ -1171,13 +1180,22 @@ def _decide_worker_binding(
         )
     if not mw_common._is_alive(pid):  # noqa: SLF001 - the shared liveness probe
         return None, "actor-unbound", "the worker run PID is not alive"
+    if terminal_receipt:
+        run_id = run.get("run_id")
+        try:
+            with (task_dir / "output.md").open(encoding="utf-8") as report:
+                marker = report.readline(4096).strip()
+        except (OSError, UnicodeError):
+            marker = ""
+        if not isinstance(run_id, str) or not run_id or marker != f"<!-- mw-run: {run_id} status=failed -->":
+            return None, "actor-unbound", "the terminal worker report does not bind to this run"
     rows = mw_common.parse_workers_file(mw_common.workers_path(project_dir))
     expected = os.path.normcase(os.path.normpath(str(task_md)))
     matching = [
         row
         for row in rows
         if row.get("task_key") == task_key
-        and row.get("status") == "running"
+        and (row.get("status") == "running" or (terminal_receipt and row.get("status") == "failed"))
         and os.path.normcase(
             os.path.normpath(str(pathlib.Path(str(row.get("task_path") or "")).resolve()))
         )
@@ -1217,7 +1235,7 @@ def _decide_pm_binding(
 
 
 def _decide_actor_binding(
-    project_dir: pathlib.Path, meta: object
+    project_dir: pathlib.Path, meta: object, *, terminal_reachability_id: str | None = None,
 ) -> tuple[str | None, str | None, str | None]:
     """Identify the real initiating role of this process, never from JSON.
 
@@ -1228,7 +1246,7 @@ def _decide_actor_binding(
     meta by the caller; a mismatch is a refusal, never a grant.
     """
     if (os.environ.get("PI_WORKER_TASK") or "").strip():
-        role, reason, detail = _decide_worker_binding(project_dir, meta)
+        role, reason, detail = _decide_worker_binding(project_dir, meta, terminal_reachability_id=terminal_reachability_id)
     else:
         role, reason, detail = _decide_pm_binding(project_dir, meta)
     if role is None:
@@ -1652,7 +1670,7 @@ def _decide_replayed_payload(
     replay_block: dict | None = None,
 ) -> dict:
     """The honest response for an already-started logical id (no model call)."""
-    last = linked[-1] if linked else {}
+    last = next((event for event in reversed(linked) if event.get("kind") == "request"), linked[-1] if linked else {})
     choice = last.get("choice")
     basis_id = last.get("basis_id")
     answers = None
@@ -1663,8 +1681,8 @@ def _decide_replayed_payload(
             question_id = None
         if question_id is not None:
             answers = {
-                question_id: {"type": "choice", "choice": choice, "confidence": None},
-                "basis_id": {"type": "choice", "choice": basis_id, "confidence": None},
+                question_id: {"value": choice, "type": "choice", "choice": choice, "confidence": None},
+                "basis_id": {"value": basis_id, "type": "choice", "choice": basis_id, "confidence": None},
             }
     result = {
         "available": bool(linked),
@@ -1687,6 +1705,8 @@ def _decide_replayed_payload(
         "choice": last.get("choice"),
         "basis_id": basis_id,
         "basis_text": last.get("basis_text"),
+        "finding_ids": last.get("finding_ids"),
+        "remaining_ids": last.get("remaining_ids"),
         "basis_source": last.get("basis_source"),
         "business_decisions": int(last.get("business_decisions") or 0),
     }
@@ -1695,9 +1715,11 @@ def _decide_replayed_payload(
         result.update({
             "reason": replay_block["reason"],
             "escalated_reason": replay_block["escalated_reason"],
-            "input_diagnostics": replay_block["input_diagnostics"],
+            "detail": replay_block.get("detail"),
             "original_blocked_event_id": replay_block["event_id"],
         })
+        if "input_diagnostics" in replay_block:
+            result["input_diagnostics"] = replay_block["input_diagnostics"]
     if linked and control_root is not None and isinstance(last.get("decision_id"), str):
         try:
             source_required = bool(evidence_refs) if evidence_refs is not None else bool(
@@ -1727,40 +1749,6 @@ def _decide_replayed_payload(
         if dependencies is not None:
             result["file_evidence"] = dependencies
     return result
-
-
-def _decide_prepared_capture(
-    capture: decision_points._DecisionCapture,
-    client: decision.DecisionClient,
-    point: decision_points.DecisionPoint,
-    trigger: decision_points.Trigger,
-    response: Mapping,
-    mode: str,
-) -> dict:
-    """Retain the actual prepared source snapshot and rendered pair vocabulary."""
-    state = getattr(client, "last_prepared_state", None)
-    questions = getattr(client, "last_prepared_questions", None)
-    if not isinstance(state, Mapping) or not isinstance(questions, Mapping):
-        return {}
-    digest = decision_points._state_digest(state)
-    capture.mode = mode
-    capture.remember_state(state, questions=questions, state_digest=digest)
-    capture.record_call(client)
-    available = bool(response.get("available"))
-    outcome = decision_points._outcome(
-        dp_point=point,
-        trigger=trigger,
-        status="suggested" if available else "escalated",
-        escalated_reason=None if available else "unavailable",
-        mode=mode,
-        state_digest=digest,
-        response=response,
-    )
-    updates = capture.finish(decision_points._ArchiveTrace(), outcome=outcome)
-    return {
-        "state_digest": digest,
-        **{key: updates.get(key) for key in ("snapshot_ref", "call_id", "capture_status")},
-    }
 
 
 def _decide_run_prepared(
@@ -1818,16 +1806,20 @@ def _decide_run_prepared(
         _decide_print(result, as_json)
 
     def refuse(reason: str, *, issues=(), detail: str = "", escalated: str | None = None) -> int:
-        emit(
-            _decide_request_failure(
-                dp,
-                logical_id,
-                reason,
-                escalated_reason=escalated,
-                issues=tuple(issues),
-                detail=detail,
-            ),
+        issues = tuple(issues)
+        result = _decide_request_failure(
+            dp,
+            logical_id,
+            reason,
+            escalated_reason=escalated,
+            issues=issues,
+            detail=detail,
         )
+        if dp == "dp-auto" and reason == "input-incomplete":
+            status = decision_points.decision_model_context.auto_preparation_status(issues)
+            if status is not None:
+                result["preparation_status"] = status
+        emit(result)
         return 2
 
     # 1. Active identity first. A retired id is history, never an alias.
@@ -1935,7 +1927,7 @@ def _decide_run_prepared(
                 material=material, preparation=preparation,
                 source_references=book_meta.get("evidence") if isinstance(book_meta, Mapping) else None,
                 evidence_refs=evidence_refs,
-                replay_block=decision_blocked.recall_input_block(
+                replay_block=decision_blocked.recall_prepared_block(
                     control_root, str(logical_id), dp, meta.key, meta.task_key,
                 ),
             ),
@@ -1964,7 +1956,7 @@ def _decide_run_prepared(
                 material=material, preparation=preparation,
                 source_references=book_meta.get("evidence") if isinstance(book_meta, Mapping) else None,
                 evidence_refs=evidence_refs,
-                replay_block=decision_blocked.recall_input_block(
+                replay_block=decision_blocked.recall_prepared_block(
                     control_root, str(logical_id), dp, meta.key, meta.task_key,
                 ),
             ),
@@ -2010,6 +2002,14 @@ def _decide_run_prepared(
         cfg, project_root=project_dir, credential_snapshot=credential_snapshot,
         wire_scope=scope,
     )
+    key_dir = control_root / ".agenticdoc" / meta.key
+    qg_scope = frozenset()
+    qg_review = None
+    if dp == "dp-QG":
+        review = preparation.get("model_context", {}).get("review", {})
+        if isinstance(review, Mapping) and all(isinstance(item, Mapping) and item.get("status") == "met" for item in review.values()):
+            qg_scope = frozenset(review)
+            qg_review = decision_signoff_result.current_scoped_qg_binding(key_dir, meta.key, qg_scope)
     stage = "request"
     try:
         request_result = client.request_prepared(
@@ -2018,6 +2018,7 @@ def _decide_run_prepared(
             preparation,
             actor_role=_decide_protocol_actor_role(verified_role),
             logical_id=str(logical_id),
+            **({"contract_root": control_root} if project_dir != control_root else {}),
             **({"source_references": book_meta.get("evidence")} if book_meta is not None else {}),
             **({"evidence_refs": evidence_refs} if evidence_refs is not None else {}),
         )
@@ -2036,7 +2037,22 @@ def _decide_run_prepared(
     if not isinstance(request_result, dict):
         return refuse("bad-response", detail="the transport returned no prepared result")
 
-    capture_fields = _decide_prepared_capture(
+    if dp == "dp-QG" and request_result.get("choice") == "pass":
+        prepared_state = client.last_prepared_state or {}
+        references = prepared_state.get("references", {})
+        referenced_criteria = frozenset(name for name, item in references.items()
+                                        if item.get("kind") in {"acceptance-criterion", "verification-criterion"})
+        if qg_review is None or referenced_criteria != qg_scope or (
+            decision_signoff_result.current_scoped_qg_binding(key_dir, meta.key, qg_scope) != qg_review
+        ):
+            request_result = {
+                **request_result, "available": False, "answers": None, "choice": None,
+                "basis_id": None, "basis_text": None, "finding_ids": [], "remaining_ids": [],
+                "business_decisions": 0, "reason": "input-incomplete", "preparation_status": "needs-review",
+                "issues": [{"field": "review_evidence", "issue": "pass requires current independently verified AC/VC evidence"}],
+                "detail": "the model returned pass without a current independently verified review bound to the same key",
+            }
+    capture_fields = decision_points.capture_prepared_result(
         capture, client, point, trigger, request_result, mode
     )
 
@@ -2095,6 +2111,9 @@ def _decide_run_prepared(
         "choice": request_result.get("choice"),
         "basis_id": request_result.get("basis_id"),
         "basis_text": request_result.get("basis_text"),
+        "finding_ids": request_result.get("finding_ids"),
+        "remaining_ids": request_result.get("remaining_ids"),
+        "desc_measurement": request_result.get("desc_measurement"),
         "basis_source": request_result.get("basis_source"),
         "business_decisions": int(request_result.get("business_decisions") or 0),
         "transport_attempts": int(request_result.get("transport_attempts") or 0),
@@ -2103,6 +2122,8 @@ def _decide_run_prepared(
         "prepared_at": request_result.get("prepared_at"),
     }
     result.update(capture_fields)
+    if "preparation_status" in request_result:
+        result["preparation_status"] = request_result["preparation_status"]
     if "input_diagnostics" in request_result:
         result["input_diagnostics"] = request_result["input_diagnostics"]
     file_evidence = getattr(client, "last_file_evidence", None)
@@ -6100,6 +6121,20 @@ def _decide_lifecycle(args: argparse.Namespace, project_dir: pathlib.Path) -> in
             event_id=payload.get("event_id"),
         )
         try:
+            task_after = payload.get("task_after")
+            terminal_reachability = (
+                dp == "dp-w-check-task" and isinstance(task_after, dict) and task_after.get("status") == "failed"
+                and ((stage == "executed" and payload.get("action") == "record")
+                     or (stage == "settled" and payload.get("outcome") == "ok"))
+            )
+            role, _reason, detail = _decide_actor_binding(
+                project_dir, meta, terminal_reachability_id=decision_id if terminal_reachability else None,
+            )
+            if role is None:
+                raise decision_lifecycle.LifecycleInputError(detail or "receipt actor is unbound")
+            binding = dict(decision_id=decision_id, stage=stage, answer=payload.get("answer"),
+                           event_id=payload.get("event_id"), required_choice="terminate" if terminal_reachability else None)
+            decision_lifecycle.require_receipt_binding(store, meta, **binding)
             if stage == "consumed":
                 result = decision_lifecycle.record_consumed(
                     store,
@@ -6133,6 +6168,10 @@ def _decide_lifecycle(args: argparse.Namespace, project_dir: pathlib.Path) -> in
                     snapshot_sha256=payload.get("snapshot_sha256"),
                     **common,
                 )
+            if result.duplicate:
+                # The writer adds nothing on a duplicate. Recheck the now
+                # recorded identity so a concurrent reuse cannot report success.
+                decision_lifecycle.require_receipt_binding(store, meta, **binding)
         except decision_lifecycle.LifecycleInputError as exc:
             _decide_print(
                 {
@@ -6485,6 +6524,10 @@ def _decide_sign_finalize(
     # Freeze the real contract/goal identity before any request or model call.
     # The response is bound to this capture, never to a later resample.
     requested_basis = decision_signoff_result.capture_native_basis(key_dir_path)
+    requested_review = decision_signoff_result.current_review_binding(key_dir_path, key)
+    sign_quality_gate = decision_signoff_result.model_quality_gate(key_dir_path, key, requested_review)
+    if sign_quality_gate["status"] != "verified" or sign_quality_gate["conclusion"] != "pass":
+        requested_review = None
     problems.extend(
         f"native basis is not usable: {problem}"
         for problem in decision_signoff_result.basis_usable_now(requested_basis)
@@ -6694,12 +6737,13 @@ def _decide_sign_finalize(
                 point.id, material, preparation,
                 actor_role="pm", logical_id=meta.logical_id,
                 **({"evidence_refs": evidence_refs} if evidence_refs is not None else {}),
+                sign_quality_gate=sign_quality_gate,
             )
         except decision.DecisionInputError as exc:
             return _decide_sign_refusal(
                 key_dir_path, as_json, [str(exc)], logical_id=meta.logical_id
             )
-        _decide_prepared_capture(capture, client, point, trigger, response, mode)
+        decision_points.capture_prepared_result(capture, client, point, trigger, response, mode)
         file_evidence = getattr(client, "last_file_evidence", [])
         archive_response = response
         if not response.get("available") and response.get("reason") not in decision.REASON_CODES:
@@ -6794,6 +6838,8 @@ def _decide_sign_finalize(
                 "actor_role": verified_role,
                 "material_sha256": decision_signoff_result.digest_material(material)[0],
                 "file_evidence": file_evidence,
+                "review_binding": requested_review,
+                "quality_gate_sha256": decision_signoff_result.canonical_sha256(sign_quality_gate),
             },
         )
         record_status = "written"
@@ -6844,6 +6890,7 @@ def _decide_sign_refusal(
     key_dir_path: pathlib.Path, as_json: bool, problems: list[str], *, logical_id: str | None,
     file_evidence: list[dict] | None = None,
     input_diagnostics: dict | None = None,
+    preparation_status: str | None = None,
 ) -> int:
     for problem in problems:
         print(f"[mw decide sign] {problem}", file=sys.stderr)
@@ -6858,6 +6905,7 @@ def _decide_sign_refusal(
         "problems": list(problems),
         **({"file_evidence": file_evidence} if file_evidence else {}),
         **({"input_diagnostics": input_diagnostics} if input_diagnostics is not None else {}),
+        **({"preparation_status": preparation_status} if preparation_status is not None else {}),
     }
     _decide_sign_audit_block(key_dir_path, payload, problems)
     _decide_print(payload, as_json)
@@ -6944,6 +6992,8 @@ def _decide_sign_finish(
         or response.get("basis_source") != decision_points.BASIS_SOURCE
         or not isinstance(selected_basis, Mapping)
         or response.get("basis_text") != selected_basis.get("text")
+        or any(response.get(name, []) != selected_basis.get(name, [])
+               for name in decision_points.BASIS_ITEM_OPTIONAL_KEYS)
         or not isinstance(business_answer, Mapping)
         or business_answer.get("value") != record.conclusion
         or not isinstance(basis_answer, Mapping)
@@ -6978,6 +7028,9 @@ def _decide_sign_finish(
         "choice": response.get("choice"),
         "basis_id": response.get("basis_id"),
         "basis_text": response.get("basis_text"),
+        "finding_ids": response.get("finding_ids"),
+        "remaining_ids": response.get("remaining_ids"),
+        "desc_measurement": response.get("desc_measurement"),
         "basis_source": response.get("basis_source"),
         "prepared_at": response.get("prepared_at"),
         "preparation": dict(preparation),
@@ -7012,6 +7065,18 @@ def _decide_sign_finish(
             )
 
     if record.conclusion == "finalize":
+        review_binding = proof.get("review_binding")
+        current_qg = decision_signoff_result.model_quality_gate(
+            key_dir_path, key, review_binding if isinstance(review_binding, Mapping) else None,
+        )
+        if (
+            current_qg["status"] != "verified" or current_qg["conclusion"] != "pass"
+            or decision_signoff_result.canonical_sha256(current_qg) != proof.get("quality_gate_sha256")
+        ):
+            return _decide_sign_refusal(
+                key_dir_path, as_json, ["input-incomplete: finalize requires the same current independent QG proof"],
+                logical_id=record.logical_id, file_evidence=payload["file_evidence"], preparation_status="needs-review",
+            )
         path = decision_signoff_result.signoff_path(key_dir_path)
         validation = decision_signoff_result.validate_signoff(
             key_dir_path,
@@ -7044,6 +7109,8 @@ def _decide_sign_finish(
                     result=record,
                 )
                 with contract_guard.contract_publication_lock(key_dir_path):
+                    if decision_signoff_result.model_quality_gate(key_dir_path, key, review_binding) != current_qg:
+                        raise decision_signoff_result.SignoffResultError("the independent QG proof changed before publication")
                     if path.exists():
                         existing_text = decision_signoff_result._safe_read_text(key_dir_path, path)
                         if decision_signoff_result.parse_machine_lines(existing_text).get("decision_source") == "pm-evidence":
@@ -7303,6 +7370,30 @@ def cmd_decide(args: argparse.Namespace) -> int:
         return _decide_run(args, project_dir)
     if action == "lifecycle":
         return _decide_lifecycle(args, project_dir)
+    if action == "prepare":
+        payload, error = _decide_read_envelope_json(args)
+        if error or not isinstance(payload, dict):
+            _decide_print({"preparation_status": "rejected", "detail": error, "dp_result": None}, True)
+            return 2
+        try:
+            key, task = payload["key"], payload["task"]
+            if not isinstance(key, str) or not isinstance(task, str):
+                raise decision_prepare.Refusal("rejected", "expected key and preparation task")
+            control_root = _decide_control_root(project_dir)
+            caller_path = os.environ.get("PI_WORKER_TASK", "").strip()
+            caller = pathlib.Path(caller_path).resolve(strict=True) if caller_path else None
+            identity = argparse.Namespace(key=key, task_key=caller.parent.name if caller else None)
+            role, _reason, detail = (
+                _decide_worker_binding(control_root, identity) if caller else _decide_pm_binding(control_root, identity)
+            )
+            if not role:
+                raise decision_prepare.Refusal("rejected", detail or "missing current caller authority")
+            result = decision_prepare.operate(control_root, payload, key=key, task=task, role=role, caller_task=caller)
+        except (OSError, ValueError, RuntimeError, TypeError, KeyError) as exc:
+            result = {"preparation_status": exc.status if isinstance(exc, decision_prepare.Refusal) else "rejected",
+                      "detail": str(exc), "dp_result": None}
+        _decide_print(result, True)
+        return 0
     if action == "probe":
         return _decide_probe(args, project_dir)
     if action == "show":
@@ -15393,6 +15484,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     decide_sub = decide_p.add_subparsers(dest="decide_action", required=True)
     decide_sub.add_parser("capabilities", help="Report supported local decision request and diagnostic protocols")
+    decide_prepare_p = decide_sub.add_parser("prepare", help="Advance or absorb a bounded preparation run")
+    decide_prepare_p.add_argument("--project", default=".")
+    decide_prepare_p.add_argument("--stdin", action="store_true", required=True)
     decide_run_p = decide_sub.add_parser(
         "run", help="Ask one decision point (JSON request on stdin or --request-file; state is never argv)"
     )

@@ -1,0 +1,20 @@
+{
+  "record_scope": "reference-check-vectors-not-production-receipt",
+  "expected_wire": "codingA",
+  "expected_business_choice": "coding",
+  "expected_basis_id": "codingA-basis",
+  "expected_finding_ids": [],
+  "expected_remaining_ids": [],
+  "expected_pm_disposition": "adopt-direction-in-reference",
+  "required_pm_facts": [
+    "四类候选及原约束",
+    "代码与回归断言均需交付"
+  ],
+  "forbidden_pm_claims": [
+    "Worker已经启动或测试已通过"
+  ],
+  "original_request_bytes_must_remain_identical": true,
+  "historical_response_must_not_be_applied_to_changed_payload": true,
+  "known_material_failures": [],
+  "must_not_assume_actual_execution": true
+}

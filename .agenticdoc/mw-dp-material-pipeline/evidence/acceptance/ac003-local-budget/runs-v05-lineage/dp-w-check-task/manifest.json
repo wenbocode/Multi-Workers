@@ -1,0 +1,33 @@
+{
+  "case_id": "dp-w-check-task",
+  "dp": "dp-w-check-task",
+  "decision_id": "dp-w-check-task:current-receipt-1",
+  "call_id": "63045a5e84ca4604bd143cee05665eab",
+  "writer": "mw decide lifecycle",
+  "normalized": {
+    "choice": "investigate",
+    "basis_id": "investigateA-basis",
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  "desc_measurement": {
+    "local_budget": {
+      "rule": "desc-local-v1",
+      "count": 45,
+      "limit": 1000,
+      "passed": true
+    },
+    "estimated_tokens": 45,
+    "exact_count": null,
+    "exact_limit_passed": null
+  },
+  "choice": "investigate",
+  "basis_id": "investigateA-basis",
+  "observed": "UTF-8 is required for this isolated input.",
+  "pm_reason": "Accept the assigned worker's bounded investigation. Permit one encoding-note read, at most 1024 bytes and within the original 8 minutes. Report the observed encoding, retain the non-ASCII check as unfinished and stop on the original boundary.",
+  "consumer_role": "coding",
+  "receipts": {
+    "consumed": "9581e280c5be42efa637ffdaced3bff0",
+    "settled": "settlement-dp-w-check-task"
+  }
+}

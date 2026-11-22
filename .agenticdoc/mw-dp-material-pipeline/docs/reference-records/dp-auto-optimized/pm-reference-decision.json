@@ -1,0 +1,40 @@
+{
+  "record_kind": "current_session_pm_reference_adjudication",
+  "recorded_on": "2026-11-19",
+  "author": "Codex PM 当前设计整理会话",
+  "historical_runtime_pm_record": null,
+  "scope": "针对所列真实API回包的离线PM参考裁定；不是原生产窗口已采纳/执行的记录",
+  "model_wire_id": "retryA",
+  "decoded_choice": "retry",
+  "basis_id": "retryA-basis",
+  "finding_ids": [],
+  "remaining_ids": [],
+  "summary": "参考采纳先重试路径；60秒一次，失败按余量再读健康，保留停止与报告预留。",
+  "disposition": "adopt-bounded-retry-first-in-reference",
+  "reasoning": [
+    "该新增合成前提明确当前响应优先、诊断次之，单次响应体超时未确认离线。",
+    "服务级健康快照不能代当前接口响应；retryA成功可直接结束，失败才按条件进入健康读取。"
+  ],
+  "follow_up": [
+    "原主体执行前核当时原余额和授权；只允许一次60秒重试，成功结束。",
+    "失败且余量足够120秒加30秒报告时读一次健康快照，再报告阻塞/失败/未知并结束；取消/授权失效/期限/余量不足立即按原规则停。"
+  ],
+  "must_preserve": [
+    "原300秒为准备时样例值而非当前执行授权",
+    "次数/硬上限/30秒报告预留/停止条件"
+  ],
+  "must_not_claim": [
+    "重试已成功",
+    "confidence=1证明普遍正确",
+    "可刷新原次数或预算"
+  ],
+  "pending_real_host_checks": [
+    "原真实owner/matter/run与对象版本",
+    "原权限/取消/停止和当前余额",
+    "该DP必要独审/业务writer前提"
+  ],
+  "runtime_business_acceptance": null,
+  "actual_dispatch_run_ids": [],
+  "actual_business_receipt": null,
+  "production_executed": false
+}

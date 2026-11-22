@@ -1,0 +1,22 @@
+{
+  "record_scope": "reference-check-vectors-not-production-receipt",
+  "expected_wire": "retryA",
+  "expected_business_choice": "retry",
+  "expected_basis_id": "retryA-basis",
+  "expected_finding_ids": [],
+  "expected_remaining_ids": [],
+  "expected_pm_disposition": "adopt-bounded-retry-first-in-reference",
+  "required_pm_facts": [
+    "原300秒为准备时样例值而非当前执行授权",
+    "次数/硬上限/30秒报告预留/停止条件"
+  ],
+  "forbidden_pm_claims": [
+    "重试已成功",
+    "confidence=1证明普遍正确",
+    "可刷新原次数或预算"
+  ],
+  "original_request_bytes_must_remain_identical": true,
+  "historical_response_must_not_be_applied_to_changed_payload": true,
+  "known_material_failures": [],
+  "must_not_assume_actual_execution": true
+}

@@ -1,0 +1,21 @@
+{
+  "record_scope": "reference-check-vectors-not-production-receipt",
+  "expected_wire": "splitA",
+  "expected_business_choice": "split",
+  "expected_basis_id": "splitA-basis",
+  "expected_finding_ids": [],
+  "expected_remaining_ids": [],
+  "expected_pm_disposition": "adopt-direction-with-budget-recheck",
+  "required_pm_facts": [
+    "W1、W2均未完成的真实状态",
+    "独立复核要求与原预算"
+  ],
+  "forbidden_pm_claims": [
+    "两个Worker已派发或并行执行",
+    "50工时分钟已足够含复核全部工作"
+  ],
+  "original_request_bytes_must_remain_identical": true,
+  "historical_response_must_not_be_applied_to_changed_payload": true,
+  "known_material_failures": [],
+  "must_not_assume_actual_execution": true
+}

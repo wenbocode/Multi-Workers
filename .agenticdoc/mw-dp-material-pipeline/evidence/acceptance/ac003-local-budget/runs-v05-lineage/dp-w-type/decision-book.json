@@ -1,0 +1,90 @@
+{
+  "material": {
+    "task_goal": "Repair the CSV export so special characters round-trip unchanged.",
+    "task_requirements": "Touch the exporter and its tests only. Preserve the format protocol.",
+    "task_deliverables": "Exporter escape fix and regression assertions for commas and double quotes.",
+    "images_required": false
+  },
+  "preparation": {
+    "basis_catalog": [
+      {
+        "id": "codingA-basis",
+        "text": "coding：有明确算法改动和测试交付时选coding。",
+        "applies_to": [
+          "coding"
+        ],
+        "material_refs": [
+          "task_deliverables"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "researchA-basis",
+        "text": "research：若当前工作仅为取证、无需修改代码时选research。",
+        "applies_to": [
+          "research"
+        ],
+        "material_refs": [
+          "task_deliverables"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "reviewA-basis",
+        "text": "review：若当前工作是审查别人已完成的产物时选review。",
+        "applies_to": [
+          "review"
+        ],
+        "material_refs": [
+          "task_deliverables"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "visionA-basis",
+        "text": "vision：若必须解释图像像素且host能力允许时选vision。",
+        "applies_to": [
+          "vision"
+        ],
+        "material_refs": [
+          "task_deliverables"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      }
+    ],
+    "prepared_at": "2026-11-08T10:00:00+00:00",
+    "model_context": {
+      "desc": [
+        "Repair CSV export round trips for special characters.",
+        "Deliver an escape fix and regression tests without changing the format."
+      ],
+      "enum_meanings": {
+        "coding": "需要修改代码或测试的任务类型。",
+        "known": "对应约束或条件已由本次来源确认。",
+        "research": "以取证/研究为主的任务类型。",
+        "review": "审查已有产物的任务类型。",
+        "vision": "必须解释图像像素的任务类型。"
+      },
+      "terminology": {
+        "CSV": "Comma-Separated Values: 逗号分隔值文本格式；本例需正确转义逗号和双引号并保持往返解析一致。",
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+        "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+      }
+    }
+  },
+  "meta": {
+    "record_version": 2,
+    "logical_id": "current-receipt-1",
+    "key": "key-1",
+    "task_key": null,
+    "initiator_role": "pm",
+    "retry_of": null
+  }
+}

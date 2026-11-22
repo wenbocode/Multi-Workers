@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "task_key": "cx-ee474fbc353feb7aba95",
+  "run_id": "cx-ee474fbc353feb7aba95@2026-11-22T16:49:12.378Z",
+  "owner_key": "mw-dp-material-pipeline",
+  "kind": "review",
+  "status": "done",
+  "started_at": "2026-11-22T16:49:12.378Z",
+  "artifacts": [
+    "output.md",
+    "report.md"
+  ],
+  "pid": 80688,
+  "last_heartbeat_at": "2026-11-22T16:50:42.420Z",
+  "ended_at": "2026-11-22T16:51:08.220Z",
+  "exit": 0
+}

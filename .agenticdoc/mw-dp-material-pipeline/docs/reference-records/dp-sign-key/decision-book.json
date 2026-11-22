@@ -1,0 +1,163 @@
+{
+  "schema": "dp-reference-v0.5-draft",
+  "sample_kind": "synthetic-reference",
+  "dp": "dp-sign-key",
+  "role_scope": "pm",
+  "binding": {
+    "owner_ref": null,
+    "matter_ref": null,
+    "budget_ref": null,
+    "status": "合成参考，无生产身份"
+  },
+  "sources": [
+    {
+      "id": "S1",
+      "label": "当前交付承诺",
+      "path": "sources/S1.txt",
+      "sha256": "0cbc1b2193abd6e00e515ada912153d1ce6eb67ba7667e9bc0d0c52aa3c25fa4",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    },
+    {
+      "id": "S2",
+      "label": "当前真实验证与独审",
+      "path": "sources/S2.txt",
+      "sha256": "41d3dd2688cebc0ef773b50c3b0f026a0164ca21403fe550cb211a322d2e6d8c",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    }
+  ],
+  "field_trace": {
+    "file": "field-trace.json",
+    "note": "真实原件与字段变换留本地；本例源正文见sources/。"
+  },
+  "preparation": {
+    "prepared_at": "由实际准备者/host落盘",
+    "basis_catalog": "见pair-map.json",
+    "material_refs": "每个选项关联本次材料",
+    "applies_to": "本地校验，不能据此裁剪固定候选",
+    "producer": "原PM/实际Worker，或受托prepare Worker起草后由原主体工具吸收"
+  },
+  "pair_map": {
+    "file": "pair-map.json"
+  },
+  "host_exclusions": [],
+  "execution_plan": {
+    "status": "未制定；选择方向后由原主体按授权准备",
+    "send": false
+  },
+  "expected": {
+    "choices": [
+      "continue"
+    ],
+    "status": "作者参考预期，禁止发给模型"
+  },
+  "actual_capture": {
+    "request": "not-sent-v0.5",
+    "response": "not-observed-v0.5"
+  },
+  "post_checks": "核当前全部交付标准、真实独审、未完成/外部条件和唯一writer；finalize不等于已签收，user-confirm必须是具体真实问题。",
+  "freeze": {
+    "file": "payload.json",
+    "sha256": "609ae3e2283faa901f66d9fc5e5285a44c9faee220dff601720998900975e29c",
+    "bytes": 4436
+  },
+  "desc_preparation": {
+    "sentences": [
+      "交付目标是稳定导出，必须满足特殊字符往返一致及中断不留半成品。",
+      "当前偏差是中断场景尚未执行，AC-002仍未验证。",
+      "同版本独立复核确认AC-001测试有效，并指出AC-002证据缺口。",
+      "本合成示例的当前同范围QG业务结论是fix，未关闭项就是中断验证，不借用其它产物的QG结果。",
+      "依据为当前交付检查和QG摘要；缺口可在原权限内补取，没有真实需用户决定的外部条件。"
+    ],
+    "sentence_count": 5,
+    "max_sentences": 10,
+    "max_tokens": 1000,
+    "estimated_tokens": 157,
+    "token_count": null,
+    "meter": "existing-estimator-precheck; target-model exact count not available",
+    "source_note": "从v0.3合成来源归纳；QG/sign增加显式同范围fixture，非当前业务事实",
+    "source_pointers": [
+      "qg-fixture.json",
+      "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-sign-key\\reference.json"
+    ],
+    "sentence_sources": [
+      {
+        "sentence": 1,
+        "sources": [
+          "qg-fixture.json",
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-sign-key\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 2,
+        "sources": [
+          "qg-fixture.json",
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-sign-key\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 3,
+        "sources": [
+          "qg-fixture.json",
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-sign-key\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 4,
+        "sources": [
+          "qg-fixture.json",
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-sign-key\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 5,
+        "sources": [
+          "qg-fixture.json",
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-sign-key\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      }
+    ],
+    "claims": "目标/偏差/事件/证据与未知，不写推荐答案"
+  },
+  "qg_fixture": {
+    "sample_kind": "synthetic-QG-fixture-not-a-production-verdict",
+    "artifact": "稳定导出",
+    "version": "demo-export-v04",
+    "verdict": "fix",
+    "open_ac_ids": [
+      "AC-002"
+    ],
+    "open_items": [
+      "中断不留半成品尚未验证"
+    ],
+    "review_scope": "特殊字符往返与中断恢复两项当前交付标准",
+    "freshness": "与本sign示例交付对象和当前版本一致",
+    "note": "不引用导入适配器QG，不把v0.3 jev响应伪装成此处QG产品",
+    "criteria_version": "demo-export-criteria-v04",
+    "scope_ac_ids": [
+      "AC-001",
+      "AC-002"
+    ]
+  },
+  "delivery_binding": {
+    "artifact": "稳定导出",
+    "version": "demo-export-v04",
+    "criteria_version": "demo-export-criteria-v04",
+    "scope_ac_ids": [
+      "AC-001",
+      "AC-002"
+    ]
+  },
+  "definition_sources": {
+    "AC": "已确认验收正文；本例来自v0.4合成scope",
+    "VC": "项目设计Verification Contract；本例来自v0.4合成review矩阵",
+    "other_refs": "本次来源中的发现/剩余工作/入口职责",
+    "registry": "仅使用当前请求出现的术语，未知项拒绝准备"
+  }
+}

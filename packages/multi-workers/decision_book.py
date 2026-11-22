@@ -1281,7 +1281,7 @@ def _check_budget(
     try:
         payload, questions = decision_points.prepared_observation_request(
             dp_id, projected, dict(preparation or {}), decision_points.questions_map(dp_id),
-            project_dir=project_dir, limits=resolved,
+            project_dir=project_dir, key=(book.get("meta") or {}).get("key"), limits=resolved,
             source_references=(book.get("notes") or {}).get("evidence"),
             evidence_refs=book.get("evidence_refs"),
         )

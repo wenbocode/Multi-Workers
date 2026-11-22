@@ -1,0 +1,100 @@
+{
+  "material": {
+    "task_goal": "Verify non-ASCII fields against the actual encoding contract.",
+    "reachability_facts": "the write face is free and the budget is enough",
+    "completed": "ASCII parsing passed in the reference fixture.",
+    "remaining": "Non-ASCII validation.",
+    "blockers": "Input encoding not yet established.",
+    "constraints": "One read, at most 1024 bytes and within the original 8 minutes.",
+    "investigation": {
+      "unknown": "which input encoding the test uses",
+      "evidence_source": "encoding-note.txt:1",
+      "budget": "one read, 1024 bytes and 8 minutes remaining",
+      "stop_condition": "stop after the read or at the original host boundary"
+    }
+  },
+  "preparation": {
+    "basis_catalog": [
+      {
+        "id": "continueA-basis",
+        "text": "continue：下一步条件已充足时继续；未知编码不能当成已知。",
+        "applies_to": [
+          "continue"
+        ],
+        "material_refs": [
+          "remaining"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "terminateA-basis",
+        "text": "terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。",
+        "applies_to": [
+          "terminate"
+        ],
+        "material_refs": [
+          "remaining"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "investigateA-basis",
+        "text": "investigate：按probe做一次既有授权读取后重评，不能刷新原预算。",
+        "applies_to": [
+          "investigate"
+        ],
+        "material_refs": [
+          "remaining"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      }
+    ],
+    "prepared_at": "2026-11-08T10:00:00+00:00",
+    "model_context": {
+      "desc": [
+        "ASCII parsing passed in the reference fixture.",
+        "The worker still needs to verify non-ASCII fields.",
+        "A single authorized read can establish the encoding within the original budget."
+      ],
+      "enum_meanings": {
+        "bytes": "字节数，限制本次读取数据量。",
+        "continue": "继续原授权范围内的工作或补证。",
+        "investigate": "在原工具范围及累计预算内对明确未知做有界补证。",
+        "minutes": "分钟；本例对应原执行的剩余额度。",
+        "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+        "reads": "允许的读取次数。",
+        "terminate": "真实交付完成/未完成情况并结束本次执行，不取消整体目标。"
+      },
+      "terminology": {
+        "ASCII": "American Standard Code for Information Interchange: 美国信息交换标准代码字符集；本例ASCII样本通过不能证明非ASCII字段可按真实编码正确解析。",
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "Worker": "Worker agent: 执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。",
+        "run": "task execution run: 一次具体任务执行；结束本run不等于取消整个目标或项目事项。",
+        "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+      },
+      "references": {
+        "W1": {
+          "kind": "remaining_work",
+          "path": "v05-reference-W1.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        }
+      }
+    }
+  },
+  "meta": {
+    "record_version": 2,
+    "logical_id": "current-receipt-1",
+    "key": "key-worker",
+    "task_key": "task-1",
+    "initiator_role": "coding",
+    "retry_of": null
+  }
+}

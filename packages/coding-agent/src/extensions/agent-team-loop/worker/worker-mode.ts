@@ -30,6 +30,7 @@ import {
 	DP2_STEER_REQUEST_HEADER,
 	recordDispatchAlarm,
 } from "../pm/pm-orchestrator.ts";
+import { PREPARE_PROFILE } from "../pm/prepare-tool.ts";
 import {
 	buildMatterBudgetFromCard,
 	type ProductionRuntimeHost,
@@ -72,6 +73,7 @@ import { roleForTaskType } from "../shared/dispatch-models.ts";
 import { openFixedAllocation } from "../shared/fixed-child-budget.ts";
 import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.ts";
 import { IndexStore, normalizeKey } from "../shared/index-store.ts";
+import { atomicWriteJson } from "../shared/local-selection-store.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
 import { MW_RUN_DETACHED_TOOL, registerRunDetachedTool } from "../shared/run-detached.ts";
 import { recordRunProgress } from "../shared/run-progress.ts";
@@ -2957,6 +2959,55 @@ export function appendIdleKillEvidence(taskKey: string, agenticdocRoot: string, 
 	}
 }
 
+type InvestigationRange = { start: number; end: number };
+
+function investigationCitation(value: string): { file: string; range?: InvestigationRange } {
+	const match = /^(.+?\.[A-Za-z][A-Za-z0-9_.-]*):([0-9]+)(?:-([0-9]+))?$/.exec(value.trim());
+	if (!match) return { file: value };
+	const start = Number(match[2]);
+	const end = Number(match[3] ?? match[2]);
+	if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < start || end > 2 ** 31 - 1)
+		throw new Error("invalid investigation citation lines");
+	return { file: match[1], range: { start, end } };
+}
+
+function bindInvestigationRead(
+	input: Record<string, unknown>,
+	cwd: string,
+	source: string,
+	range?: InvestigationRange,
+): boolean {
+	if (typeof input.path !== "string") return false;
+	try {
+		const citation = investigationCitation(input.path);
+		const target = path.resolve(cwd, citation.file);
+		if (fs.realpathSync(target) !== source) return false;
+		const bound = range ?? citation.range;
+		if (bound) {
+			const start = input.offset ?? citation.range?.start ?? bound.start;
+			const limit =
+				input.limit ??
+				(citation.range ? citation.range.end - citation.range.start + 1 : bound.end - bound.start + 1);
+			if (
+				typeof start !== "number" ||
+				typeof limit !== "number" ||
+				!Number.isSafeInteger(start) ||
+				!Number.isSafeInteger(limit) ||
+				start < bound.start ||
+				limit < 1 ||
+				start + limit - 1 > bound.end
+			)
+				return false;
+			input.offset = start;
+			input.limit = limit;
+		}
+		input.path = target;
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 // ── VC-014 worker-face emission (T-14) ───────────────────────────────────────
 // `required = role.require OR phase.require` is a warning-only contract
 // (AC-010): a required role/phase that produced no verifiable citation gets one
@@ -3123,6 +3174,8 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	// task.md is read once here and reused for the read-scope parent root below.
 	const taskDir = path.dirname(taskPath);
 	const taskContent = fs.readFileSync(taskPath, "utf8");
+	const boundedPreparation =
+		meta.type === DECIDE_PREPARE_TYPE && readTaskHeaderScalar(taskContent, "prepare_profile") === PREPARE_PROFILE;
 	const fixedAllocation = openFixedAllocation(taskDir, taskContent);
 	const configuredBudgetMs = resolveBudgetMs(meta.timeoutMin, process.env.PI_WORKER_TIMEOUT_MS);
 	const initialDeadline = Math.min(startedAt + configuredBudgetMs, fixedAllocation?.deadline ?? Infinity);
@@ -3249,6 +3302,26 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		parentRootFromTaskContent(taskContent),
 	);
 	const readScopeState: ReadScopeState = { allowedCalls: 0, bytesRead: 0 };
+	const sharedReadAllowance =
+		readScopeConfig?.scope != null && !boundedPreparation
+			? path.join(meta.trueAgenticdocRoot, "_runtime", "read-allowance", runState.owner_key, `${meta.taskKey}.json`)
+			: undefined;
+	const readAllowanceScope = createHash("sha256").update(taskContent, "utf8").digest("hex");
+	const persistReadAllowance = (file: string) =>
+		atomicWriteJson(file, {
+			run_id: runState.run_id,
+			scope_sha256: readAllowanceScope,
+			calls: readScopeState.allowedCalls,
+			bytes: readScopeState.bytesRead,
+		});
+	if (sharedReadAllowance) {
+		try {
+			fs.mkdirSync(path.dirname(sharedReadAllowance), { recursive: true });
+			persistReadAllowance(sharedReadAllowance);
+		} catch {
+			appendTrace(meta.taskKey, meta.agenticdocRoot, "read allowance unavailable");
+		}
+	}
 	const readScopeRejections: ReadScopeRejection[] = [];
 	// D-014: what the scope actually let through. `allowedReads` is the honest
 	// `fetches` counter (a blocked call is not a fetch), `allowedReadTargets` is
@@ -3304,6 +3377,9 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		runState.ended_at = new Date().toISOString();
 		if (exit !== undefined) runState.exit = exit;
 		runState.artifacts = collectArtifacts(taskDir);
+		if (boundedPreparation && status === "done" && publishedPreparationRevision()) {
+			runState.artifacts.push("prepare.json");
+		}
 		writeRunState(taskDir, runState);
 	}
 
@@ -3655,13 +3731,9 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				event.toolName === "read" &&
 				typeof event.input.path === "string"
 			) {
-				try {
-					if (fs.realpathSync(path.resolve(ctx.cwd, event.input.path)) === active.source) {
-						active.readCallId = event.toolCallId;
-						return;
-					}
-				} catch {
-					/* fail closed below */
+				if (active.source && bindInvestigationRead(event.input, ctx.cwd, active.source, active.range)) {
+					active.readCallId = event.toolCallId;
+					return;
 				}
 			}
 			return {
@@ -3687,12 +3759,14 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				reason: "Reassess dp-w-check-task using the observed evidence. Supply fresh reachability_facts.",
 			};
 		}
-		if (event.toolName === "read" && typeof event.input.path === "string" && reachability.source) {
-			try {
-				if (fs.realpathSync(path.resolve(ctx.cwd, event.input.path)) === reachability.source) return;
-			} catch {
-				/* report the same closed source boundary */
-			}
+		if (
+			event.toolName === "read" &&
+			reachability.source &&
+			!reachability.readCallId &&
+			bindInvestigationRead(event.input, ctx.cwd, reachability.source, reachability.range)
+		) {
+			reachability.readCallId = event.toolCallId;
+			return;
 		}
 		return {
 			block: true,
@@ -3757,13 +3831,45 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 			}
 			const inputPath = (event.input as { path?: unknown } | undefined)?.path;
 			const rawPath = typeof inputPath === "string" && inputPath !== "" ? inputPath : ".";
-			const verdict = checkReadScopeCall(projectRoot, readScopeConfig, readScopeState, event.toolName, rawPath);
-			if (verdict.allowed) {
-				readScopeState.allowedCalls++;
-				readScopeState.bytesRead += verdict.chargedBytes;
-				allowedReads++;
-				allowedReadTargets.add(normalizeForCompare(projectRoot, rawPath));
-				return undefined;
+			let lease: number | undefined;
+			const lock = sharedReadAllowance === undefined ? undefined : `${sharedReadAllowance}.lock`;
+			let verdict: ReturnType<typeof checkReadScopeCall>;
+			try {
+				if (sharedReadAllowance && lock) {
+					lease = fs.openSync(lock, "wx");
+					const raw = JSON.parse(fs.readFileSync(sharedReadAllowance, "utf8"));
+					if (
+						raw.run_id !== runState.run_id ||
+						raw.scope_sha256 !== readAllowanceScope ||
+						!Number.isSafeInteger(raw.calls) ||
+						raw.calls < readScopeState.allowedCalls ||
+						!Number.isSafeInteger(raw.bytes) ||
+						raw.bytes < readScopeState.bytesRead
+					)
+						return { block: true, reason: "The original Worker read allowance is not current." };
+					readScopeState.allowedCalls = raw.calls;
+					readScopeState.bytesRead = raw.bytes;
+				}
+				verdict = checkReadScopeCall(projectRoot, readScopeConfig, readScopeState, event.toolName, rawPath);
+				if (verdict.allowed) {
+					readScopeState.allowedCalls++;
+					readScopeState.bytesRead += verdict.chargedBytes;
+					if (sharedReadAllowance) persistReadAllowance(sharedReadAllowance);
+					allowedReads++;
+					allowedReadTargets.add(normalizeForCompare(projectRoot, rawPath));
+					return undefined;
+				}
+			} catch {
+				return { block: true, reason: "The original Worker read allowance could not be charged." };
+			} finally {
+				if (lease !== undefined && lock) {
+					fs.closeSync(lease);
+					try {
+						fs.unlinkSync(lock);
+					} catch {
+						// A failed lock release leaves later operations blocked.
+					}
+				}
 			}
 			const rejection: ReadScopeRejection = {
 				tool: event.toolName,
@@ -4650,6 +4756,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				claimId: string;
 				bindingVersion: string;
 				source?: string;
+				range?: InvestigationRange;
 				readCallId?: string;
 				readDeadline?: number;
 				blocked?: string;
@@ -4772,6 +4879,8 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				id: string;
 				material: Record<string, unknown>;
 				source?: string;
+				range?: InvestigationRange;
+				readCallId?: string;
 				observed: boolean;
 				blocked?: string;
 		  }
@@ -5066,7 +5175,8 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 					"Investigation requires one readable source, an explicit stop condition and a finite allowance within the original remaining budget.";
 			} else {
 				try {
-					const target = path.resolve(ctx.cwd, String(plan.evidence_source));
+					const citation = investigationCitation(String(plan.evidence_source));
+					const target = path.resolve(ctx.cwd, citation.file);
 					const source = fs.realpathSync(target);
 					fs.accessSync(source, fs.constants.R_OK);
 					if (!fs.statSync(source).isFile() || !activeToolsForType(meta.type).includes("read")) throw new Error();
@@ -5079,6 +5189,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 					)
 						throw new Error();
 					active.source = source;
+					active.range = citation.range;
 					active.readDeadline = Date.now() + duration;
 				} catch {
 					active.blocked = "Investigation source is unreadable or outside the original read scope.";
@@ -5123,7 +5234,13 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		if (event.toolName !== ASK_DECISION_TOOL) {
 			if (!active || !activeToolsForType(meta.type).includes(event.toolName)) return;
 			if (active.choice === "investigate") {
-				if (active.observed || active.blocked || event.toolName !== "read" || typeof event.input.path !== "string")
+				if (
+					active.observed ||
+					active.blocked ||
+					event.toolName !== "read" ||
+					active.readCallId !== event.toolCallId ||
+					typeof event.input.path !== "string"
+				)
 					return;
 				let actual: string;
 				try {
@@ -5209,6 +5326,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		}
 		const plan = asPlainRecord(material.investigation);
 		let source: string | undefined;
+		let range: InvestigationRange | undefined;
 		let blocked: string | undefined;
 		if (active?.choice === "investigate" && active.observed)
 			blocked = "The bounded investigation ended; only a fresh continue or terminate conclusion can follow.";
@@ -5222,7 +5340,9 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 			blocked = "Investigation requires a viable evidence_source, remaining budget and stop condition.";
 		else {
 			try {
-				const target = path.resolve(ctx.cwd, String(plan.evidence_source));
+				const citation = investigationCitation(String(plan.evidence_source));
+				const target = path.resolve(ctx.cwd, citation.file);
+				range = citation.range;
 				source = fs.realpathSync(target);
 				if (!fs.statSync(source).isFile() || !activeToolsForType(meta.type).includes("read")) throw new Error();
 				if (readScopeConfig) {
@@ -5237,7 +5357,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				blocked = "Investigation evidence_source is unavailable or outside this worker's read authority.";
 			}
 		}
-		reachability = { ...decision, choice, material, source, blocked, observed: false };
+		reachability = { ...decision, choice, material, source, range, blocked, observed: false };
 		return {
 			content: [
 				...event.content,
@@ -5453,6 +5573,25 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	 * chance to fix a substantive gap; an undelivered (no-product) settle keeps
 	 * the immediate no-product verdict (AC-006/C5 alarm is never delayed). */
 	async function settleOrSelfCheck(): Promise<void> {
+		if (boundedPreparation) {
+			const revision = publishedPreparationRevision();
+			lastAssistantText = revision
+				? [
+						"## 结论",
+						"已发布供原主体核验的决策材料。",
+						"## 证据",
+						`[VERIFY] prepare.json revision=${revision}`,
+						"## 残留与未验证",
+						"等待原主体吸收材料；尚未产生决策。",
+						"## 上下文来源",
+						"prepare.json 记录本次卡片、固定预算和来源版本。",
+						"## 改动清单",
+						"准备运行产物 prepare.json。",
+					].join("\n\n")
+				: "";
+			await finishSuccess();
+			return;
+		}
 		if (judgedType !== undefined && (isWritelessRole(meta.type) || hasReportProduct(taskDir))) {
 			const summary = buildSummary();
 			const missing = currentRecoveryMissing({
@@ -5522,6 +5661,24 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 			}
 		}
 		await finishSuccess();
+	}
+
+	function publishedPreparationRevision(): string | undefined {
+		try {
+			const state = asPlainRecord(JSON.parse(fs.readFileSync(path.join(taskDir, "prepare.json"), "utf8")));
+			const binding = asPlainRecord(state?.binding);
+			const revision = state?.revision;
+			if (
+				binding?.run_id === runState.run_id &&
+				(state?.phase === "published" || state?.phase === "absorbed") &&
+				typeof revision === "string" &&
+				/^[0-9a-f]{64}$/.test(revision)
+			)
+				return revision;
+		} catch {
+			// An incomplete or unreadable artifact cannot settle the run.
+		}
+		return undefined;
 	}
 
 	/** AC-004 chain: every model the launcher moved through plus the current one.

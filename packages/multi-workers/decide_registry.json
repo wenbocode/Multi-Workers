@@ -542,7 +542,7 @@
       "candidate_source": "pm-supplied:handling_options",
       "candidate_bounds": {
         "min": 2,
-        "max": null,
+        "max": 5,
         "id_scheme": "free"
       },
       "target_entries": [],
@@ -587,8 +587,8 @@
         {
           "name": "handling_options",
           "type": "array",
-          "description": "PM-prepared, problem-specific action candidates [{id,label,description,consequence,risk,conditions}]; ids only need to be unique in this request (no legacy cN/2..5 bound).",
-          "max_items": 32,
+          "description": "2 to 5 distinct PM-prepared action candidates [{id,label,description,consequence,risk,conditions}]; ids only need to be unique in this request.",
+          "max_items": 5,
           "item_type": "object"
         }
       ],

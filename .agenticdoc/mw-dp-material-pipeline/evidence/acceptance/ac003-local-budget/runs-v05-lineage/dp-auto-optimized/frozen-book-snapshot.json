@@ -1,0 +1,784 @@
+{
+  "candidates": {
+    "decision_selection": [
+      {
+        "id": "optionA",
+        "label": "结论 retry: Retry the status request once\n依据 retryA-basis: 先重试路径：先用唯一一次60秒上限读取当前状态。信息价值：直接得到当前有效响应，或增加一次失败证据，不能证明根因。若成功立即结束；若失败且当时余量足够120秒加30秒报告，再读一次健康快照，随后报告有证据的阻塞或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：可能再次超时；快照仍可能无法解释本请求。适合优先当前响应且没有已确认离线证据的目标；根因诊断更重要或已有适用离线证据时价值下降。始终遵守公共停止条件，不再第二次重试。"
+      },
+      {
+        "id": "optionB",
+        "label": "结论 diagnose: Read the health snapshot first\n依据 diagnoseA-basis: 先诊断路径：先读一次120秒上限的同服务健康快照。信息价值：得到服务级状态、实际采样时间与适用性；健康不能证明本状态接口可用。若适用且明确当前服务离线，报告阻塞并结束；若健康、不明或读失败且当时余量足够60秒加30秒报告，再用唯一一次60秒重试，随后报告响应或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：取得当前状态前增加一次读取；可能节省对离线服务的无效重试。适合原因诊断优先或快照可先确认阻塞的情形。始终遵守公共停止条件，不再第二次读取。"
+      }
+    ]
+  },
+  "decision_id": "dp-auto:current-receipt-1",
+  "dp": "dp-auto",
+  "field_trace": {
+    "fields": {
+      "/model": {
+        "sources": [
+          "transport:resolved_model"
+        ],
+        "transform": "resolve-config"
+      },
+      "/questions/decision_selection/criteria/optionA": {
+        "sources": [
+          "book:/preparation/basis_catalog/0",
+          "book:/material/handling_options/0/label"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/optionB": {
+        "sources": [
+          "book:/preparation/basis_catalog/1",
+          "book:/material/handling_options/1/label"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/instructions": {
+        "sources": [
+          "registry:dp-auto/instructions",
+          "registry:prepared_basis_instructions"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/questions/decision_selection/type": {
+        "sources": [
+          "registry:dp-auto/protocol"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/state/desc/0": {
+        "sources": [
+          "book:/preparation/model_context/desc/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/1": {
+        "sources": [
+          "book:/preparation/model_context/desc/1"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/2": {
+        "sources": [
+          "book:/preparation/model_context/desc/2"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/3": {
+        "sources": [
+          "book:/preparation/model_context/desc/3"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/diagnose": {
+        "sources": [
+          "book:/material/handling_options/1/label"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/explicit": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/explicit"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/retry": {
+        "sources": [
+          "book:/material/handling_options/0/label"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/synthetic-accepted-premise": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/synthetic-accepted-premise"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/synthetic-budget-premise": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/synthetic-budget-premise"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/synthetic-observation": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/synthetic-observation"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/synthetic-source-contract": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/synthetic-source-contract"
+        ],
+        "transform": "copy"
+      },
+      "/state/evidence_sources/0": {
+        "sources": [
+          "source:src-201dfb4aeea23f89fede",
+          "material.background.tried"
+        ],
+        "transform": "full"
+      },
+      "/state/evidence_sources/1": {
+        "sources": [
+          "source:src-26ea405bd6ec8cf647f8",
+          "preparation.model_context.references.current_goal.path"
+        ],
+        "transform": "full"
+      },
+      "/state/evidence_sources/2": {
+        "sources": [
+          "source:src-8f1e490bc08e1e87d8c2",
+          "preparation.model_context.references.timeout_record.path"
+        ],
+        "transform": "full"
+      },
+      "/state/evidence_sources/3": {
+        "sources": [
+          "source:src-a470a6e2d081c9048137",
+          "preparation.model_context.references.health_contract.path"
+        ],
+        "transform": "full"
+      },
+      "/state/evidence_sources/4": {
+        "sources": [
+          "source:src-cc00e79e9dc4484c56af",
+          "preparation.model_context.references.limits.path"
+        ],
+        "transform": "full"
+      },
+      "/state/material/background/constraints": {
+        "sources": [
+          "book:/material/background/constraints"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/background/current_state": {
+        "sources": [
+          "book:/material/background/current_state"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/background/task_goal": {
+        "sources": [
+          "book:/material/background/task_goal"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/background/tried": {
+        "sources": [
+          "book:/material/background/tried"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/background/unknowns": {
+        "sources": [
+          "book:/material/background/unknowns"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/handling_options/0/conditions": {
+        "sources": [
+          "book:/material/handling_options/0/conditions"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/handling_options/0/consequence": {
+        "sources": [
+          "book:/material/handling_options/0/consequence"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/handling_options/0/description": {
+        "sources": [
+          "book:/material/handling_options/0/description"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/handling_options/0/id": {
+        "sources": [
+          "book:/material/handling_options/0/id"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/handling_options/0/label": {
+        "sources": [
+          "book:/material/handling_options/0/label"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/handling_options/0/risk": {
+        "sources": [
+          "book:/material/handling_options/0/risk"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/handling_options/1/conditions": {
+        "sources": [
+          "book:/material/handling_options/1/conditions"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/handling_options/1/consequence": {
+        "sources": [
+          "book:/material/handling_options/1/consequence"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/handling_options/1/description": {
+        "sources": [
+          "book:/material/handling_options/1/description"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/handling_options/1/id": {
+        "sources": [
+          "book:/material/handling_options/1/id"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/handling_options/1/label": {
+        "sources": [
+          "book:/material/handling_options/1/label"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/handling_options/1/risk": {
+        "sources": [
+          "book:/material/handling_options/1/risk"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/question": {
+        "sources": [
+          "book:/material/question"
+        ],
+        "transform": "copy"
+      },
+      "/state/path_comparison": {
+        "sources": [
+          "book:/preparation/model_context/auto_comparison"
+        ],
+        "transform": "validated-comparison"
+      },
+      "/state/references/current_goal": {
+        "sources": [
+          "book:/preparation/model_context/references/current_goal",
+          "source:src-26ea405bd6ec8cf647f8"
+        ],
+        "transform": "file-reference"
+      },
+      "/state/references/health_contract": {
+        "sources": [
+          "book:/preparation/model_context/references/health_contract",
+          "source:src-a470a6e2d081c9048137"
+        ],
+        "transform": "file-reference"
+      },
+      "/state/references/limits": {
+        "sources": [
+          "book:/preparation/model_context/references/limits",
+          "source:src-cc00e79e9dc4484c56af"
+        ],
+        "transform": "file-reference"
+      },
+      "/state/references/timeout_record": {
+        "sources": [
+          "book:/preparation/model_context/references/timeout_record",
+          "source:src-8f1e490bc08e1e87d8c2"
+        ],
+        "transform": "file-reference"
+      },
+      "/state/terminology/ID": {
+        "sources": [
+          "book:/preparation/model_context/terminology/ID"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/PM": {
+        "sources": [
+          "registry:terminology/PM"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/desc": {
+        "sources": [
+          "book:/preparation/model_context/terminology/desc"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/host": {
+        "sources": [
+          "book:/preparation/model_context/terminology/host"
+        ],
+        "transform": "copy"
+      }
+    },
+    "local_only": [
+      "/meta",
+      "/notes",
+      "/preparation/prepared_at",
+      "/preparation/basis_catalog"
+    ]
+  },
+  "file_evidence": [
+    {
+      "canonical_path": null,
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\.agenticdoc\\target.yml",
+      "sha256": null,
+      "status": "missing"
+    },
+    {
+      "canonical_path": null,
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\.mw\\decision-evidence.yml",
+      "sha256": null,
+      "status": "missing"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\timeout.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\timeout.txt",
+      "sha256": "80ddd69e7e78c49c66281dd24e1e83b7cffdc7cb88c930b1ec3580eda3da9e9d"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\v05-reference-current_goal.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\v05-reference-current_goal.txt",
+      "sha256": "2eb22746272d8700b16d5c6a0267020374713a53903c70f1748ab886c2b2e313"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\v05-reference-timeout_record.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\v05-reference-timeout_record.txt",
+      "sha256": "e66c65047b88c421195afa2f350b036bb52ca40961ecf9d15334100eabadf293"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\v05-reference-health_contract.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\v05-reference-health_contract.txt",
+      "sha256": "533a076e4f00d45485c4b2d595bb9ea019895027349f1952908a95a10c9944c9"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\v05-reference-limits.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\v05-reference-limits.txt",
+      "sha256": "8e0e399a4af08799d80de3bcd3cc967b34f0b646e01b88cccb350a36d8fb7d3e"
+    }
+  ],
+  "kind": "input-state",
+  "local_preparation": {
+    "basis_catalog": [
+      {
+        "applies_to": [
+          "retry"
+        ],
+        "finding_ids": [],
+        "id": "retryA-basis",
+        "material_refs": [
+          "background.constraints"
+        ],
+        "remaining_ids": [],
+        "text": "先重试路径：先用唯一一次60秒上限读取当前状态。信息价值：直接得到当前有效响应，或增加一次失败证据，不能证明根因。若成功立即结束；若失败且当时余量足够120秒加30秒报告，再读一次健康快照，随后报告有证据的阻塞或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：可能再次超时；快照仍可能无法解释本请求。适合优先当前响应且没有已确认离线证据的目标；根因诊断更重要或已有适用离线证据时价值下降。始终遵守公共停止条件，不再第二次重试。"
+      },
+      {
+        "applies_to": [
+          "diagnose"
+        ],
+        "finding_ids": [],
+        "id": "diagnoseA-basis",
+        "material_refs": [
+          "background.constraints"
+        ],
+        "remaining_ids": [],
+        "text": "先诊断路径：先读一次120秒上限的同服务健康快照。信息价值：得到服务级状态、实际采样时间与适用性；健康不能证明本状态接口可用。若适用且明确当前服务离线，报告阻塞并结束；若健康、不明或读失败且当时余量足够60秒加30秒报告，再用唯一一次60秒重试，随后报告响应或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：取得当前状态前增加一次读取；可能节省对离线服务的无效重试。适合原因诊断优先或快照可先确认阻塞的情形。始终遵守公共停止条件，不再第二次读取。"
+      }
+    ],
+    "model_context": {
+      "auto_comparison": {
+        "budget": {
+          "remaining_seconds": 300,
+          "reserve_seconds": 30
+        },
+        "pairs": [
+          {
+            "candidates": [
+              "retry",
+              "diagnose"
+            ],
+            "criterion": "The retry can give current interface status directly.",
+            "reversal": "An applicable, fresh outage observation makes an immediate retry unnecessary."
+          }
+        ],
+        "paths": {
+          "diagnose": {
+            "max_seconds": 180,
+            "observation": "One 120-second read of the service snapshot.",
+            "steps": [
+              {
+                "id": "health",
+                "max_seconds": 120,
+                "on_failure": "status",
+                "on_success": null
+              },
+              {
+                "id": "status",
+                "max_seconds": 60,
+                "on_failure": null,
+                "on_success": null
+              }
+            ],
+            "stop": "Stop on current applicable proof of outage, lost scope, cancellation, or exhausted allowance.",
+            "successor": "If inconclusive, retry status once only if 60 seconds plus the 30-second reserve remain."
+          },
+          "retry": {
+            "max_seconds": 180,
+            "observation": "One 60-second retry for the current status.",
+            "steps": [
+              {
+                "id": "status",
+                "max_seconds": 60,
+                "on_failure": "health",
+                "on_success": null
+              },
+              {
+                "id": "health",
+                "max_seconds": 120,
+                "on_failure": null,
+                "on_success": null
+              }
+            ],
+            "stop": "Stop on a valid status, lost scope, cancellation, or exhausted allowance.",
+            "successor": "On failure, read health once only if 120 seconds plus the 30-second reserve remain."
+          }
+        },
+        "priority": {
+          "rule": "Obtain current status first within the original read-only allowance.",
+          "source": "background.task_goal"
+        }
+      },
+      "desc": [
+        "Get current read-only status before diagnosing the cause.",
+        "The first request connected but timed out awaiting its body.",
+        "There is no evidence of service outage or of snapshot freshness.",
+        "Keep the original 300-second allowance and reserve 30 seconds to report."
+      ],
+      "enum_meanings": {
+        "explicit": "来自本例明确的合成目标约定，不是准备者推断。",
+        "synthetic-accepted-premise": "本例新设的已确认目标前提；不是对旧例缺失偏好的补事实。",
+        "synthetic-budget-premise": "本例原额度约定，无真实业务授权。",
+        "synthetic-observation": "合成场景所设观察，不代表生产实测。",
+        "synthetic-source-contract": "合成来源的范围和能力说明。"
+      },
+      "references": {
+        "current_goal": {
+          "kind": "synthetic-accepted-premise",
+          "lines": {
+            "end": 1,
+            "start": 1
+          },
+          "path": "v05-reference-current_goal.txt"
+        },
+        "health_contract": {
+          "kind": "synthetic-source-contract",
+          "lines": {
+            "end": 1,
+            "start": 1
+          },
+          "path": "v05-reference-health_contract.txt"
+        },
+        "limits": {
+          "kind": "synthetic-budget-premise",
+          "lines": {
+            "end": 1,
+            "start": 1
+          },
+          "path": "v05-reference-limits.txt"
+        },
+        "timeout_record": {
+          "kind": "synthetic-observation",
+          "lines": {
+            "end": 1,
+            "start": 1
+          },
+          "path": "v05-reference-timeout_record.txt"
+        }
+      },
+      "terminology": {
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。"
+      }
+    },
+    "prepared_at": "2026-11-08T10:00:00+00:00"
+  },
+  "pair_map": {
+    "optionA": {
+      "basis_id": "retryA-basis",
+      "basis_text": "先重试路径：先用唯一一次60秒上限读取当前状态。信息价值：直接得到当前有效响应，或增加一次失败证据，不能证明根因。若成功立即结束；若失败且当时余量足够120秒加30秒报告，再读一次健康快照，随后报告有证据的阻塞或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：可能再次超时；快照仍可能无法解释本请求。适合优先当前响应且没有已确认离线证据的目标；根因诊断更重要或已有适用离线证据时价值下降。始终遵守公共停止条件，不再第二次重试。",
+      "choice": "retry",
+      "choice_label": "Retry the status request once",
+      "choice_label_source": "book:/material/handling_options/0/label",
+      "finding_ids": [],
+      "label": "结论 retry: Retry the status request once\n依据 retryA-basis: 先重试路径：先用唯一一次60秒上限读取当前状态。信息价值：直接得到当前有效响应，或增加一次失败证据，不能证明根因。若成功立即结束；若失败且当时余量足够120秒加30秒报告，再读一次健康快照，随后报告有证据的阻塞或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：可能再次超时；快照仍可能无法解释本请求。适合优先当前响应且没有已确认离线证据的目标；根因诊断更重要或已有适用离线证据时价值下降。始终遵守公共停止条件，不再第二次重试。",
+      "remaining_ids": []
+    },
+    "optionB": {
+      "basis_id": "diagnoseA-basis",
+      "basis_text": "先诊断路径：先读一次120秒上限的同服务健康快照。信息价值：得到服务级状态、实际采样时间与适用性；健康不能证明本状态接口可用。若适用且明确当前服务离线，报告阻塞并结束；若健康、不明或读失败且当时余量足够60秒加30秒报告，再用唯一一次60秒重试，随后报告响应或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：取得当前状态前增加一次读取；可能节省对离线服务的无效重试。适合原因诊断优先或快照可先确认阻塞的情形。始终遵守公共停止条件，不再第二次读取。",
+      "choice": "diagnose",
+      "choice_label": "Read the health snapshot first",
+      "choice_label_source": "book:/material/handling_options/1/label",
+      "finding_ids": [],
+      "label": "结论 diagnose: Read the health snapshot first\n依据 diagnoseA-basis: 先诊断路径：先读一次120秒上限的同服务健康快照。信息价值：得到服务级状态、实际采样时间与适用性；健康不能证明本状态接口可用。若适用且明确当前服务离线，报告阻塞并结束；若健康、不明或读失败且当时余量足够60秒加30秒报告，再用唯一一次60秒重试，随后报告响应或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：取得当前状态前增加一次读取；可能节省对离线服务的无效重试。适合原因诊断优先或快照可先确认阻塞的情形。始终遵守公共停止条件，不再第二次读取。",
+      "remaining_ids": []
+    }
+  },
+  "policy": null,
+  "questions_version": "q-72397e0a",
+  "state": {
+    "desc": [
+      "Get current read-only status before diagnosing the cause.",
+      "The first request connected but timed out awaiting its body.",
+      "There is no evidence of service outage or of snapshot freshness.",
+      "Keep the original 300-second allowance and reserve 30 seconds to report."
+    ],
+    "enum_meanings": {
+      "diagnose": "Read the health snapshot first",
+      "explicit": "来自本例明确的合成目标约定，不是准备者推断。",
+      "retry": "Retry the status request once",
+      "synthetic-accepted-premise": "本例新设的已确认目标前提；不是对旧例缺失偏好的补事实。",
+      "synthetic-budget-premise": "本例原额度约定，无真实业务授权。",
+      "synthetic-observation": "合成场景所设观察，不代表生产实测。",
+      "synthetic-source-contract": "合成来源的范围和能力说明。"
+    },
+    "evidence_sources": [
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\timeout.txt",
+        "references": [
+          "material.background.tried"
+        ],
+        "representation": "full",
+        "sha256": "80ddd69e7e78c49c66281dd24e1e83b7cffdc7cb88c930b1ec3580eda3da9e9d",
+        "source_bytes": 85,
+        "source_id": "src-201dfb4aeea23f89fede",
+        "source_lines": 1,
+        "text": "One request connected, timed out awaiting the body, and produced no current status.\r\n"
+      },
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\v05-reference-current_goal.txt",
+        "references": [
+          "preparation.model_context.references.current_goal.path"
+        ],
+        "representation": "full",
+        "sha256": "2eb22746272d8700b16d5c6a0267020374713a53903c70f1748ab886c2b2e313",
+        "source_bytes": 272,
+        "source_id": "src-26ea405bd6ec8cf647f8",
+        "source_lines": 1,
+        "text": "在原剩余300秒内，首先遵守只读、仅一次重试及原期限，其次优先尽快取得这次状态接口的当前有效响应，最后才是原因诊断；本轮不要求根因定位。若无法取得当前响应，保留可复核失败和未知并交付。\r\n"
+      },
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\v05-reference-timeout_record.txt",
+        "references": [
+          "preparation.model_context.references.timeout_record.path"
+        ],
+        "representation": "full",
+        "sha256": "e66c65047b88c421195afa2f350b036bb52ca40961ecf9d15334100eabadf293",
+        "source_bytes": 190,
+        "source_id": "src-8f1e490bc08e1e87d8c2",
+        "source_lines": 1,
+        "text": "第一次只读请求连接已建立，在等待响应体时达到60秒上限，没有得到可用状态。当前仅这一次失败；未确认服务离线，也不知道重试成功率。\r\n"
+      },
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\v05-reference-health_contract.txt",
+        "references": [
+          "preparation.model_context.references.health_contract.path"
+        ],
+        "representation": "full",
+        "sha256": "533a076e4f00d45485c4b2d595bb9ea019895027349f1952908a95a10c9944c9",
+        "source_bytes": 310,
+        "source_id": "src-a470a6e2d081c9048137",
+        "source_lines": 1,
+        "text": "已授权读取同服务健康快照，读取硬上限120秒。来源为服务级汇总，每60秒采样，不能直接证明当前状态接口可用。最新快照尚未读取，其实际采样时间和内容未知；只有时间与对象适用且明确当前服务离线的记录才足以报告该阻塞。\r\n"
+      },
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer3\\v05-reference-limits.txt",
+        "references": [
+          "preparation.model_context.references.limits.path"
+        ],
+        "representation": "full",
+        "sha256": "8e0e399a4af08799d80de3bcd3cc967b34f0b646e01b88cccb350a36d8fb7d3e",
+        "source_bytes": 349,
+        "source_id": "src-cc00e79e9dc4484c56af",
+        "source_lines": 1,
+        "text": "准备交付时原余量300秒；所有准备、决策、执行及报告持续扣减同一额度。允许状态请求最多重试一次、健康快照最多读取一次；动作各有60/120秒硬上限，预留30秒报告。进入每一步前必须重核剩余时间，余量不足不开始；取消、授权失效或原期限到达立即停止。\r\n"
+      }
+    ],
+    "material": {
+      "background": {
+        "constraints": "300 seconds remaining at preparation time, reserve 30 for the report, one retry and one health read.",
+        "current_state": "No current status or proof of unavailability.",
+        "task_goal": "Prefer the first verified current status within the original read-only allowance. Diagnosis is secondary.",
+        "tried": "One read-only request, as recorded in timeout.txt:1.",
+        "unknowns": "Actual health snapshot sampling time, scope applicability, and outcome of a retry."
+      },
+      "handling_options": [
+        {
+          "conditions": "Read-only scope, original allowance, and reserve for the report.",
+          "consequence": "A valid status completes the goal.",
+          "description": "Read current status within 60 seconds.",
+          "id": "retry",
+          "label": "Retry the status request once",
+          "risk": "The request can time out again."
+        },
+        {
+          "conditions": "Check time and applicability before relying on the result.",
+          "consequence": "A fresh applicable offline result supports a blocker.",
+          "description": "Read the service health snapshot within 120 seconds.",
+          "id": "diagnose",
+          "label": "Read the health snapshot first",
+          "risk": "Service evidence may be stale or not apply."
+        }
+      ],
+      "question": "Retry the status request first or read the service health snapshot first?"
+    },
+    "path_comparison": {
+      "budget": {
+        "remaining_seconds": 300,
+        "reserve_seconds": 30
+      },
+      "pairs": [
+        {
+          "candidates": [
+            "retry",
+            "diagnose"
+          ],
+          "criterion": "The retry can give current interface status directly.",
+          "reversal": "An applicable, fresh outage observation makes an immediate retry unnecessary."
+        }
+      ],
+      "paths": {
+        "diagnose": {
+          "max_seconds": 180,
+          "observation": "One 120-second read of the service snapshot.",
+          "steps": [
+            {
+              "id": "health",
+              "max_seconds": 120,
+              "on_failure": "status",
+              "on_success": null
+            },
+            {
+              "id": "status",
+              "max_seconds": 60,
+              "on_failure": null,
+              "on_success": null
+            }
+          ],
+          "stop": "Stop on current applicable proof of outage, lost scope, cancellation, or exhausted allowance.",
+          "successor": "If inconclusive, retry status once only if 60 seconds plus the 30-second reserve remain."
+        },
+        "retry": {
+          "max_seconds": 180,
+          "observation": "One 60-second retry for the current status.",
+          "steps": [
+            {
+              "id": "status",
+              "max_seconds": 60,
+              "on_failure": "health",
+              "on_success": null
+            },
+            {
+              "id": "health",
+              "max_seconds": 120,
+              "on_failure": null,
+              "on_success": null
+            }
+          ],
+          "stop": "Stop on a valid status, lost scope, cancellation, or exhausted allowance.",
+          "successor": "On failure, read health once only if 120 seconds plus the 30-second reserve remain."
+        }
+      },
+      "priority": {
+        "rule": "Obtain current status first within the original read-only allowance.",
+        "source": "background.task_goal"
+      }
+    },
+    "references": {
+      "current_goal": {
+        "kind": "synthetic-accepted-premise",
+        "source_id": "src-26ea405bd6ec8cf647f8"
+      },
+      "health_contract": {
+        "kind": "synthetic-source-contract",
+        "source_id": "src-a470a6e2d081c9048137"
+      },
+      "limits": {
+        "kind": "synthetic-budget-premise",
+        "source_id": "src-cc00e79e9dc4484c56af"
+      },
+      "timeout_record": {
+        "kind": "synthetic-observation",
+        "source_id": "src-8f1e490bc08e1e87d8c2"
+      }
+    },
+    "terminology": {
+      "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+      "PM": "Project manager: the current decision owner and result consumer.",
+      "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+      "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。"
+    }
+  },
+  "state_digest": "1811a4c52a1ce43a"
+}

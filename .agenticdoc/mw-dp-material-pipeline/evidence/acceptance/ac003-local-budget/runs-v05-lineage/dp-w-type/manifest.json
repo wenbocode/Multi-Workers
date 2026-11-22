@@ -1,0 +1,33 @@
+{
+  "case_id": "dp-w-type",
+  "dp": "dp-w-type",
+  "decision_id": "dp-w-type:current-receipt-1",
+  "call_id": "c6e6e32213a844a3b19b4319a0be1adb",
+  "writer": "mw decide lifecycle",
+  "normalized": {
+    "choice": "coding",
+    "basis_id": "codingA-basis",
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  "desc_measurement": {
+    "local_budget": {
+      "rule": "desc-local-v1",
+      "count": 32,
+      "limit": 1000,
+      "passed": true
+    },
+    "estimated_tokens": 32,
+    "exact_count": null,
+    "exact_limit_passed": null
+  },
+  "choice": "coding",
+  "basis_id": "codingA-basis",
+  "observed": "Read the selected worker type coding.",
+  "pm_reason": "Adopt coding for the export repair and CSV round-trip checks for commas and quotes. Keep the format protocol and write scope. Verify model, permission and budget before drafting dispatch. No worker started.",
+  "consumer_role": "pm",
+  "receipts": {
+    "consumed": "5f9bb9a8550541919833a0cf74a91f38",
+    "settled": "settlement-dp-w-type"
+  }
+}

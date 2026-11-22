@@ -16,7 +16,7 @@ import json
 import os
 import pathlib
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import decision
@@ -30,10 +30,15 @@ MAX_SOURCE_REFERENCES = 64
 MAX_DIAGNOSTIC_ISSUES = 8
 MAX_DIAGNOSTIC_FIELDS = 64
 
+CRITERION_ID_PATTERN = r"(?:AC|VC)-[0-9]{3}"
+CONTRACT_ID = re.compile(rf"(?<![A-Za-z0-9_-]){CRITERION_ID_PATTERN}(?![A-Za-z0-9_-])", re.IGNORECASE | re.ASCII)
+
 _SAFE_DIAGNOSTIC_PATH = re.compile(r"[A-Za-z0-9_./-]{1,240}\Z")
 _SAFE_BINDING_HINT = re.compile(
     r"(?:material(?:\.[A-Za-z_][A-Za-z0-9_-]*(?:\[[0-9]{1,6}\])*)+"
-    r"|preparation\.basis_catalog\[[0-9]{1,6}\]\.text)\Z"
+    r"|preparation\.basis_catalog\[[0-9]{1,6}\]\.text"
+    r"|preparation\.model_context\.(?:desc\[[0-9]{1,6}\]|review\.(?:AC|VC)-[0-9]{3}\.evidence"
+    r"|references\.[A-Za-z][A-Za-z0-9_-]{0,63}\.path))\Z"
 )
 _SOURCE_ERROR_CODES = {
     "referenced file is outside the configured read roots": "evidence-read-denied",
@@ -103,6 +108,8 @@ class PreparedSourceState(dict):
     def __init__(self, state: Mapping) -> None:
         super().__init__(copy.deepcopy(dict(state)))
         self.file_evidence: list[dict[str, object]] = []
+        self.field_trace: dict[str, object] = {}
+        self.pair_map: dict[str, object] = {}
 
 
 @dataclass(frozen=True)
@@ -120,8 +127,10 @@ class _Snapshot:
     sha256: str
 
 
-def explicit_references(material: object, preparation: object, refs: object) -> list[_Reference]:
+def explicit_references(material: object, preparation: object, refs: object, *, context_owned=False) -> list[_Reference]:
     fields = {field for field, _ in _string_leaves(material)}
+    fields.update(field for field, _ in _context_citations(preparation)
+                  if context_owned or not field.startswith("preparation.model_context.references."))
     if isinstance(preparation, Mapping) and isinstance(preparation.get("basis_catalog"), list):
         fields.update(
             f"preparation.basis_catalog[{index}].text"
@@ -140,7 +149,7 @@ def explicit_references(material: object, preparation: object, refs: object) -> 
             continue
         field, name = entry["field"], entry["path"]
         if not isinstance(field, str) or field not in fields:
-            issues.append((label + ".field", "expected an existing material or prepared basis text field"))
+            issues.append((label + ".field", "expected an existing material, basis, or prepared context text field"))
         elif (not isinstance(name, str) or not 1 <= len(name) <= 1024 or name != name.strip()
               or any(ord(char) < 32 for char in name)
               or ":" in name.removeprefix(name[:2] if re.match(r"^[A-Za-z]:[\\/]", name) else "")):
@@ -209,10 +218,22 @@ def _string_leaves(value: object, field: str = "material") -> list[tuple[str, st
     return []
 
 
+def _context_citations(preparation: object) -> list[tuple[str, str]]:
+    context = preparation.get("model_context") if isinstance(preparation, Mapping) else None
+    if not isinstance(context, Mapping):
+        return []
+    return [
+        (path, text) for path, text in _string_leaves(context, "preparation.model_context")
+        if _SAFE_BINDING_HINT.fullmatch(path)
+    ]
+
+
 def _references(material: object, source_references: Mapping | None = None,
                 preparation: object = None) -> list[_Reference]:
     found: list[_Reference] = []
     leaves = _string_leaves(material)
+    leaves.extend((field, text) for field, text in _context_citations(preparation)
+                  if not field.startswith("preparation.model_context.references."))
     if source_references is not None:
         leaves.extend(_string_leaves(source_references, "notes.evidence"))
     if isinstance(preparation, Mapping):
@@ -227,7 +248,7 @@ def _references(material: object, source_references: Mapping | None = None,
             continue
         # Basis IDs/prose are not file names. Only explicit Markdown/backtick
         # citations or unambiguous file:line citations in basis text are read.
-        basis_text = field.startswith("preparation.basis_catalog[")
+        basis_text = field.startswith(("preparation.basis_catalog[", "preparation.model_context.desc["))
         candidates = [] if basis_text else [text]
         delimited = list(_DELIMITED.finditer(text))
         candidates.extend(match.group(1) or match.group(2) for match in delimited)
@@ -490,9 +511,12 @@ def prepare_source_state(
     questions: Mapping | None = None,
     source_references: Mapping | None = None,
     evidence_refs: list[dict] | None = None,
+    context_refs: list[dict] | None = None,
+    bind_criteria: Callable[[PreparedSourceState], None] | None = None,
 ) -> dict:
     """Hydrate precise file citations, deduplicate, and fit explicit excerpts.
 
+    Preparation is inspected for citations and stays out of the model state.
     A no-reference request is deep-copied without reading workspace config.
     Caller-supplied ``evidence_sources`` is never trusted: this function owns
     that field and regenerates it from the submitted material on every call.
@@ -501,12 +525,19 @@ def prepare_source_state(
     """
     prepared = PreparedSourceState(state)
     prepared.pop("evidence_sources", None)
+    preparation = prepared.pop("preparation", None)
     references = (
-        _references(prepared.get("material"), source_references, prepared.get("preparation"))
+        _references(prepared.get("material"), source_references, preparation)
         if evidence_refs is None
-        else explicit_references(prepared.get("material"), prepared.get("preparation"), evidence_refs)
+        else explicit_references(prepared.get("material"), preparation, evidence_refs)
     )
+    if context_refs:
+        references.extend(explicit_references(prepared.get("material"), preparation, context_refs, context_owned=True))
+    if len(references) > MAX_SOURCE_REFERENCES:
+        raise SourceMaterialError((("evidence_sources", "too many file references; narrow the submitted citations"),))
     if not references:
+        if bind_criteria is not None:
+            bind_criteria(prepared)
         return prepared
     if project_root is None:
         raise SourceMaterialError((("evidence_sources", "project root is required to read cited files"),))
@@ -583,15 +614,23 @@ def prepare_source_state(
     if failures:
         raise SourceMaterialError(tuple(failures), prepared.file_evidence, diagnostics, truncated)
     prepared["evidence_sources"] = sources
+    for source in sources:
+        for field in source["references"]:
+            if field.startswith("preparation.model_context.references.") and field.endswith(".path"):
+                name = field.removeprefix("preparation.model_context.references.").removesuffix(".path")
+                prepared["references"][name]["source_id"] = source["source_id"]
+    if bind_criteria is not None:
+        bind_criteria(prepared)
     if _fits(prepared, questions, max_state_bytes, max_total_tokens, max_state_plus_question_tokens):
         return prepared
 
-    # Every detected negative/constraint, section heading and its immediate
-    # neighbours is protected. First and last lines give each source context.
+    # Keep criterion mentions, negatives, constraints, headings and their
+    # neighbours. First and last lines give each source context.
     kept_by_source: list[set[int]] = []
     for lines in source_lines:
         anchors = {0, len(lines) - 1}
-        anchors.update(index for index, line in enumerate(lines) if _PROTECTED.search(line) or _HEADING.search(line))
+        anchors.update(index for index, line in enumerate(lines) if _PROTECTED.search(line) or _HEADING.search(line)
+                       or (bind_criteria is not None and CONTRACT_ID.search(line)))
         kept_by_source.append({near for index in anchors for near in (index - 1, index, index + 1)
                                if 0 <= near < len(lines)})
     prepared["evidence_sources"] = [_excerpt(source, lines, kept)

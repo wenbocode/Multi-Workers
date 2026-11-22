@@ -1,0 +1,39 @@
+{
+  "record_kind": "current_session_pm_reference_adjudication",
+  "recorded_on": "2026-11-19",
+  "author": "Codex PM 当前设计整理会话",
+  "historical_runtime_pm_record": null,
+  "scope": "针对所列真实API回包的离线PM参考裁定；不是原生产窗口已采纳/执行的记录",
+  "model_wire_id": "approveA",
+  "decoded_choice": "approve",
+  "basis_id": "approveA-basis",
+  "finding_ids": [],
+  "remaining_ids": [],
+  "summary": "参考采纳approve该限定只读回放；保留C1/C2，不能扩成额外清理授权。",
+  "disposition": "adopt-limited-action-in-reference",
+  "reasoning": [
+    "C1无产品写入、C2保留完整差异均由样例观测标pass。",
+    "effects给估计10分钟和原20分钟余额，仍需发送/执行前核真实余额和授权。"
+  ],
+  "follow_up": [
+    "原主体在真实host复核通过后做一次冻结输入的隔离只读回放，并保存实际差异。",
+    "只覆盖该样本；若拒绝则仅按原授权整理证据，不执行额外清理。"
+  ],
+  "must_preserve": [
+    "限定动作/无产品写入/完整差异",
+    "单份样本覆盖局限"
+  ],
+  "must_not_claim": [
+    "动作已经执行",
+    "approve创造了新权限"
+  ],
+  "pending_real_host_checks": [
+    "原真实owner/matter/run与对象版本",
+    "原权限/取消/停止和当前余额",
+    "该DP必要独审/业务writer前提"
+  ],
+  "runtime_business_acceptance": null,
+  "actual_dispatch_run_ids": [],
+  "actual_business_receipt": null,
+  "production_executed": false
+}

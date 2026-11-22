@@ -1,0 +1,183 @@
+{
+  "material": {
+    "question": "Retry the status request first or read the service health snapshot first?",
+    "background": {
+      "task_goal": "Prefer the first verified current status within the original read-only allowance. Diagnosis is secondary.",
+      "current_state": "No current status or proof of unavailability.",
+      "tried": "One read-only request, as recorded in timeout.txt:1.",
+      "unknowns": "Actual health snapshot sampling time, scope applicability, and outcome of a retry.",
+      "constraints": "300 seconds remaining at preparation time, reserve 30 for the report, one retry and one health read."
+    },
+    "handling_options": [
+      {
+        "id": "retry",
+        "label": "Retry the status request once",
+        "description": "Read current status within 60 seconds.",
+        "consequence": "A valid status completes the goal.",
+        "risk": "The request can time out again.",
+        "conditions": "Read-only scope, original allowance, and reserve for the report."
+      },
+      {
+        "id": "diagnose",
+        "label": "Read the health snapshot first",
+        "description": "Read the service health snapshot within 120 seconds.",
+        "consequence": "A fresh applicable offline result supports a blocker.",
+        "risk": "Service evidence may be stale or not apply.",
+        "conditions": "Check time and applicability before relying on the result."
+      }
+    ]
+  },
+  "preparation": {
+    "basis_catalog": [
+      {
+        "id": "retryA-basis",
+        "text": "先重试路径：先用唯一一次60秒上限读取当前状态。信息价值：直接得到当前有效响应，或增加一次失败证据，不能证明根因。若成功立即结束；若失败且当时余量足够120秒加30秒报告，再读一次健康快照，随后报告有证据的阻塞或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：可能再次超时；快照仍可能无法解释本请求。适合优先当前响应且没有已确认离线证据的目标；根因诊断更重要或已有适用离线证据时价值下降。始终遵守公共停止条件，不再第二次重试。",
+        "applies_to": [
+          "retry"
+        ],
+        "material_refs": [
+          "background.constraints"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "diagnoseA-basis",
+        "text": "先诊断路径：先读一次120秒上限的同服务健康快照。信息价值：得到服务级状态、实际采样时间与适用性；健康不能证明本状态接口可用。若适用且明确当前服务离线，报告阻塞并结束；若健康、不明或读失败且当时余量足够60秒加30秒报告，再用唯一一次60秒重试，随后报告响应或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：取得当前状态前增加一次读取；可能节省对离线服务的无效重试。适合原因诊断优先或快照可先确认阻塞的情形。始终遵守公共停止条件，不再第二次读取。",
+        "applies_to": [
+          "diagnose"
+        ],
+        "material_refs": [
+          "background.constraints"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      }
+    ],
+    "prepared_at": "2026-11-08T10:00:00+00:00",
+    "model_context": {
+      "desc": [
+        "Get current read-only status before diagnosing the cause.",
+        "The first request connected but timed out awaiting its body.",
+        "There is no evidence of service outage or of snapshot freshness.",
+        "Keep the original 300-second allowance and reserve 30 seconds to report."
+      ],
+      "enum_meanings": {
+        "explicit": "来自本例明确的合成目标约定，不是准备者推断。",
+        "synthetic-observation": "合成场景所设观察，不代表生产实测。",
+        "synthetic-source-contract": "合成来源的范围和能力说明。",
+        "synthetic-accepted-premise": "本例新设的已确认目标前提；不是对旧例缺失偏好的补事实。",
+        "synthetic-budget-premise": "本例原额度约定，无真实业务授权。"
+      },
+      "terminology": {
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "host": "host runtime: 执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。"
+      },
+      "references": {
+        "current_goal": {
+          "kind": "synthetic-accepted-premise",
+          "path": "v05-reference-current_goal.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        },
+        "timeout_record": {
+          "kind": "synthetic-observation",
+          "path": "v05-reference-timeout_record.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        },
+        "health_contract": {
+          "kind": "synthetic-source-contract",
+          "path": "v05-reference-health_contract.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        },
+        "limits": {
+          "kind": "synthetic-budget-premise",
+          "path": "v05-reference-limits.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        }
+      },
+      "auto_comparison": {
+        "priority": {
+          "source": "background.task_goal",
+          "rule": "Obtain current status first within the original read-only allowance."
+        },
+        "budget": {
+          "remaining_seconds": 300,
+          "reserve_seconds": 30
+        },
+        "paths": {
+          "retry": {
+            "max_seconds": 180,
+            "observation": "One 60-second retry for the current status.",
+            "stop": "Stop on a valid status, lost scope, cancellation, or exhausted allowance.",
+            "successor": "On failure, read health once only if 120 seconds plus the 30-second reserve remain.",
+            "steps": [
+              {
+                "id": "status",
+                "max_seconds": 60,
+                "on_success": null,
+                "on_failure": "health"
+              },
+              {
+                "id": "health",
+                "max_seconds": 120,
+                "on_success": null,
+                "on_failure": null
+              }
+            ]
+          },
+          "diagnose": {
+            "max_seconds": 180,
+            "observation": "One 120-second read of the service snapshot.",
+            "stop": "Stop on current applicable proof of outage, lost scope, cancellation, or exhausted allowance.",
+            "successor": "If inconclusive, retry status once only if 60 seconds plus the 30-second reserve remain.",
+            "steps": [
+              {
+                "id": "health",
+                "max_seconds": 120,
+                "on_success": null,
+                "on_failure": "status"
+              },
+              {
+                "id": "status",
+                "max_seconds": 60,
+                "on_success": null,
+                "on_failure": null
+              }
+            ]
+          }
+        },
+        "pairs": [
+          {
+            "candidates": [
+              "retry",
+              "diagnose"
+            ],
+            "criterion": "The retry can give current interface status directly.",
+            "reversal": "An applicable, fresh outage observation makes an immediate retry unnecessary."
+          }
+        ]
+      }
+    }
+  },
+  "meta": {
+    "record_version": 2,
+    "logical_id": "current-receipt-1",
+    "key": "key-1",
+    "task_key": null,
+    "initiator_role": "pm",
+    "retry_of": null
+  }
+}

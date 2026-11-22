@@ -1,0 +1,104 @@
+{
+  "material": {
+    "delivery_goal": "稳定导出：特殊字符往返保持一致，中断时不留下半成品。",
+    "actual_completion": "Special-character round trip was checked. The interruption scenario has not run.",
+    "verification_evidence": {
+      "verified": [
+        "AC-001: Special-character round-trip passed."
+      ],
+      "unverified": [
+        "AC-002: Interruption and partial-output behavior were not tested."
+      ]
+    },
+    "unfinished_impact": [
+      "The current QG is fix. Interruption behavior is open and can be checked within the existing scope."
+    ]
+  },
+  "preparation": {
+    "basis_catalog": [
+      {
+        "id": "finalizeA-basis",
+        "text": "finalize：全部必需标准及独审证据齐备时才收尾；未知不能当pass。",
+        "applies_to": [
+          "finalize"
+        ],
+        "material_refs": [
+          "verification_evidence"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "continueA-basis",
+        "text": "continue：补AC-002中断证据并复核，保留未完成事实。",
+        "applies_to": [
+          "continue"
+        ],
+        "material_refs": [
+          "verification_evidence"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "confirmA-basis",
+        "text": "user-confirm：仅对真实需用户决定且不能在原权限内取得的条件提具体问题。",
+        "applies_to": [
+          "user-confirm"
+        ],
+        "material_refs": [
+          "verification_evidence"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      }
+    ],
+    "prepared_at": "2026-11-08T10:00:00+00:00",
+    "model_context": {
+      "desc": [
+        "Deliver stable export of special characters.",
+        "The round trip passed in the fixture.",
+        "QG recorded fix because interruption and partial-output handling remain unverified."
+      ],
+      "review": {
+        "AC-001": {
+          "status": "met",
+          "evidence": "The fixture records a successful round trip."
+        },
+        "AC-002": {
+          "status": "unverified",
+          "evidence": "The interruption check has not run."
+        },
+        "VC-001": {
+          "status": "met",
+          "evidence": "The fixture records matching round-trip values."
+        }
+      },
+      "enum_meanings": {
+        "continue": "继续原授权范围内的工作或补证。",
+        "finalize": "交付具备收尾条件；仍须原签收写入者和业务检查。",
+        "fix": "有明确产物缺陷或证据缺口，需修复/补证后复核。",
+        "pass": "在当前检查/审核上下文满足要求；不能由局部检查扩大为整体验收。",
+        "unknown": "当前事实或验证结论未知。",
+        "user-confirm": "确有需要用户回答的外部条件或取舍。"
+      },
+      "terminology": {
+        "AC": "Acceptance Criterion / Acceptance Criteria: 验收标准：已确认的应达到的业务结果；具体编号的完整正文在references中。",
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "QG": "Quality Gate: 质量门禁/正式质量审核：按已确认验收标准、验证结果和独立审查形成pass/fix/reopen业务结论；不等于模型置信度。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "review": "independent review: 独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。",
+        "独审": "独立审查: 由与实现/准备角色独立的审查来源核对当前标准、实际证据和未覆盖面，不能以作者自评替代。",
+        "补证": "补充证据: 通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+      }
+    }
+  },
+  "meta": {
+    "record_version": 2,
+    "logical_id": "current-sign-continue",
+    "key": "key-1",
+    "task_key": null,
+    "initiator_role": "pm",
+    "retry_of": null
+  }
+}

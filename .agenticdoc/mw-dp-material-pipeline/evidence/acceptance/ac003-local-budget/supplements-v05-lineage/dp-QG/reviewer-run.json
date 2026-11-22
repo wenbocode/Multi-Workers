@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "task_key": "ap-key-1-l3-a1",
+  "owner_key": "key-1",
+  "run_id": "ap-key-1-l3-a1@2026-11-22T16:46:27.909Z",
+  "kind": "reviewer",
+  "status": "done",
+  "pid": 56524,
+  "started_at": "2026-11-22T16:46:27.909Z",
+  "artifacts": [
+    "output.md"
+  ],
+  "ended_at": "2026-11-22T16:46:28.095Z",
+  "exit": 0
+}

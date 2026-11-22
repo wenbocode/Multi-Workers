@@ -1,0 +1,119 @@
+{
+  "material": {
+    "gate_background": "Approve one frozen read-only replay under the existing gate.",
+    "current_state": "C1 read-only and C2 full diff preservation are configured. Estimated 10 minutes, 20 minutes available.",
+    "condition_evidence": [
+      "replay-plan.txt:1"
+    ],
+    "pm_note": {
+      "subject": "One frozen read-only replay",
+      "planned_action": "Read only and retain the full diff.",
+      "basis": {
+        "goal": "Obtain a reviewable diff for one sample",
+        "evidence": "replay-plan.txt:1",
+        "budget": "10 minutes estimated with 20 remaining",
+        "authority": "existing scoped replay authorization"
+      }
+    }
+  },
+  "preparation": {
+    "basis_catalog": [
+      {
+        "id": "approveA-basis",
+        "text": "approve：当前计划满足C1/C2且仍在原权限/预算内时批准该限定动作。",
+        "applies_to": [
+          "approve"
+        ],
+        "material_refs": [
+          "condition_evidence"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "steerA-basis",
+        "text": "steer：若问题在组织/执行安排，交PM重排，不扩大当前动作范围。",
+        "applies_to": [
+          "steer"
+        ],
+        "material_refs": [
+          "condition_evidence"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "needFixA-basis",
+        "text": "need_fix：若安排明确但存在技术/材料缺口，交PM形成具体修复。",
+        "applies_to": [
+          "need_fix"
+        ],
+        "material_refs": [
+          "condition_evidence"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      },
+      {
+        "id": "rejectA-basis",
+        "text": "reject：若计划不应推进则拒绝；仅允许原授权的证据整理。",
+        "applies_to": [
+          "reject"
+        ],
+        "material_refs": [
+          "condition_evidence"
+        ],
+        "finding_ids": [],
+        "remaining_ids": []
+      }
+    ],
+    "prepared_at": "2026-11-08T10:00:00+00:00",
+    "model_context": {
+      "enum_meanings": {
+        "approve": "既有准入条件允许当前限定动作。",
+        "known": "对应约束或条件已由本次来源确认。",
+        "need_fix": "推进安排明确，但存在具体技术或材料缺口。",
+        "pass": "在当前检查/审核上下文满足要求；不能由局部检查扩大为整体验收。",
+        "reject": "拒绝当前推进方案，不隐含额外清理/写权限。",
+        "steer": "组织安排需由管理Agent调整。"
+      },
+      "terminology": {
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "PM": "Project Manager agent: 管理当前项目事项、组织任务并回收证据的项目管理Agent；不能冒充实际执行者或独立审查者。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "gate": "execution gate: 已有执行准入门，核本次具体动作是否满足既有条件和权限。"
+      },
+      "references": {
+        "C1": {
+          "kind": "gate_condition",
+          "path": "v05-reference-C1.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        },
+        "C2": {
+          "kind": "gate_condition",
+          "path": "v05-reference-C2.txt",
+          "lines": {
+            "start": 1,
+            "end": 1
+          }
+        }
+      },
+      "desc": [
+        "Compare the gate conditions for one frozen replay.",
+        "The fixture records read-only mode and complete diff retention.",
+        "Verify actual remaining authorization and budget before any execution."
+      ]
+    }
+  },
+  "meta": {
+    "record_version": 2,
+    "logical_id": "v05-original-scope",
+    "key": "key-1",
+    "task_key": null,
+    "initiator_role": "pm",
+    "retry_of": null
+  }
+}

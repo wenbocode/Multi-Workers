@@ -1,0 +1,32 @@
+{
+  "dp": "dp-QG",
+  "decision_id": "dp-QG:v05-original-scope",
+  "call_id": "fa184c58ca1840f3a24fd08557e6333e",
+  "writer": "mw decide lifecycle",
+  "normalized": {
+    "choice": "fix",
+    "basis_id": "fixB-basis",
+    "finding_ids": [
+      "F1",
+      "F2"
+    ],
+    "remaining_ids": []
+  },
+  "desc_measurement": {
+    "local_budget": {
+      "rule": "desc-local-v1",
+      "count": 34,
+      "limit": 1000,
+      "passed": true
+    },
+    "estimated_tokens": 34,
+    "exact_count": null,
+    "exact_limit_passed": null
+  },
+  "choice": "fix",
+  "pm_reason": "The historical option set omitted reopen, so return that material for preparation. In the corrected fixture fixB covers F1 and F2. AC-002 and VC-002 remain unverified and not run. Recheck the scope, then independently verify the repair and the concurrency check. No repair, dispatch or formal quality pass in this case.",
+  "receipts": {
+    "consumed": "6c2c146612d5481a92bac6b4af2c2a3d",
+    "settled": "0e14e52d1612403e8928a30b1d23a918"
+  }
+}

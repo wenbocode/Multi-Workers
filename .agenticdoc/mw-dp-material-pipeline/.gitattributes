@@ -1,0 +1,6 @@
+# Preserve the original bytes referenced by the frozen contract and QG hashes.
+spec.md -text
+design.md -text
+achieved.md -text
+docs/** -text
+evidence/** -text

@@ -1,0 +1,36 @@
+{
+  "case_id": "dp-auto-original",
+  "dp": "dp-auto",
+  "preflight": {
+    "available": false,
+    "transport": "none",
+    "model": null,
+    "confidence_source": "unknown",
+    "attempts": 0,
+    "latency_ms": 0,
+    "answers": null,
+    "reason": "input-incomplete",
+    "decision_id": null,
+    "mode": null,
+    "acted": false,
+    "escalated_reason": "input-incomplete",
+    "state_digest": null,
+    "logical_id": "current-receipt-1",
+    "dp": "dp-auto",
+    "replayed": false,
+    "record_start": "not-recorded",
+    "business_decisions": 0,
+    "transport_attempts": 0,
+    "issues": [
+      {
+        "field": "preparation.model_context.auto_comparison",
+        "issue": "requires a sourced goal priority, remaining budget, bounded paths, and a decision test for each pair"
+      }
+    ],
+    "detail": "1 blocking material/preparation issue(s); no request sent",
+    "preparation_status": "needs-evidence",
+    "blocked_event_id": "ed25b1b1-0bcf-4fee-89ab-0b3e142fe880"
+  },
+  "receipts": {},
+  "pm_reason": "Return to preparation. The original case has two legal paths and no goal preference. Clarify priority, timeout stage, source freshness, the hard stop and successors in the original allowance. No retry or renewed budget."
+}

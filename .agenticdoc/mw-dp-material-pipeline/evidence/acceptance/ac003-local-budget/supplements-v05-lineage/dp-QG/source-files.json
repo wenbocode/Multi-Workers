@@ -1,0 +1,32 @@
+[
+  {
+    "source_id": "src-36cd9a9ce621aa1ece01",
+    "file": "evidence/acceptance/ac003-local-budget/supplements-v05-lineage/dp-QG/source-files/review-before.txt",
+    "sha256": "3dac8f5dc2b44ba99037ed46b2b753085f6dd6a16171067bdb810da3e6229dc6"
+  },
+  {
+    "source_id": "src-9c17d79fe0ce8a4091cb",
+    "file": null,
+    "sha256": "36e572082bb4e5847d5f3f604ecd172229638a9e2c2e2d6c92f64d6100fba778"
+  },
+  {
+    "source_id": "src-062d4a7972635173ba3a",
+    "file": null,
+    "sha256": "305e8d08401ccaea69d32f18127488d038c278ebb4997368a1e3df69a3bbaff8"
+  },
+  {
+    "source_id": "src-0083d4a2e85a3ae92258",
+    "file": "evidence/acceptance/ac003-local-budget/supplements-v05-lineage/dp-QG/source-files/review-before.txt",
+    "sha256": "3dac8f5dc2b44ba99037ed46b2b753085f6dd6a16171067bdb810da3e6229dc6"
+  },
+  {
+    "contract": "spec.md",
+    "file": "evidence/acceptance/ac003-local-budget/supplements-v05-lineage/dp-QG/source-files/.agenticdoc/key-1/spec.md",
+    "sha256": "70f033522b9ad756efebe3cbcc6575dbee2919c7cbc24cadeccfb76118659184"
+  },
+  {
+    "contract": "design.md",
+    "file": "evidence/acceptance/ac003-local-budget/supplements-v05-lineage/dp-QG/source-files/.agenticdoc/key-1/design.md",
+    "sha256": "80fe8b03c15e6f7b5927ce46485dc7e7735c7b156e70bb7e97a3b7d25631cf63"
+  }
+]

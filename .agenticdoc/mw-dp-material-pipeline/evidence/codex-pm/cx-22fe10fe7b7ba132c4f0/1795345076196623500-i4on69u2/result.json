@@ -1,0 +1,50 @@
+{
+  "key": "mw-dp-material-pipeline",
+  "task": "cx-22fe10fe7b7ba132c4f0",
+  "argv": [
+    "python",
+    ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/check_review.py",
+    "--report",
+    ".agenticdoc/mw-dp-material-pipeline/evidence/review/t09-focused-mw-review.md",
+    "--spec",
+    ".agenticdoc/mw-dp-material-pipeline/spec.md",
+    "--evidence-index",
+    ".agenticdoc/mw-dp-material-pipeline/evidence/acceptance/evidence-index.json",
+    "--reference-index",
+    ".agenticdoc/mw-dp-material-pipeline/docs/reference-records/index.json"
+  ],
+  "cwd": "E:\\gitlite\\Multi-Workers",
+  "binding": {
+    "task_sha256": "03cd290568a93f0979e0d7160af055deba5fd92f2c8fb167207958ed31a4cb15",
+    "output_sha256": "297ce9b336888310b1f4674ec515c28dfaf2dd0c612d4ae30c2f0692c5702fe8"
+  },
+  "started": "2026-11-22T10:57:56.198180+00:00",
+  "verdict": "failed",
+  "exit_code": 2,
+  "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\codex-pm\\cx-22fe10fe7b7ba132c4f0\\1795345076196623500-i4on69u2\\command.log",
+  "criteria": [
+    "AC-001",
+    "AC-002",
+    "AC-003",
+    "AC-004",
+    "AC-005",
+    "AC-006",
+    "AC-007",
+    "AC-008",
+    "AC-009",
+    "AC-010",
+    "AC-011",
+    "AC-012",
+    "AC-013",
+    "AC-014",
+    "AC-015",
+    "AC-016",
+    "AC-017",
+    "AC-018"
+  ],
+  "basis": {
+    "contract_sha256": "706c2902e544a72178bd6a5b68e3c5aa412235360ef2cb623329172510c30a96",
+    "source_sha256": "f3b0894303e59b598b064588d7e924045c7345ac75a56e1188cb03002c88e17c"
+  },
+  "finished": "2026-11-22T10:58:17.763795+00:00"
+}

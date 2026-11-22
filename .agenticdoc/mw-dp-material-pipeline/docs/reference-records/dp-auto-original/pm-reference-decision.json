@@ -1,0 +1,39 @@
+{
+  "record_kind": "current_session_pm_reference_adjudication",
+  "recorded_on": "2026-11-19",
+  "author": "Codex PM 当前设计整理会话",
+  "historical_runtime_pm_record": null,
+  "scope": "针对所列真实API回包的离线PM参考裁定；不是原生产窗口已采纳/执行的记录",
+  "model_wire_id": "retryA",
+  "decoded_choice": "retry",
+  "basis_id": "retryA-basis",
+  "finding_ids": [],
+  "remaining_ids": [],
+  "summary": "保留实际retryA回包；原材料缺优先级/完整路径，PM参考退回补材料。",
+  "disposition": "return-material-for-goal-and-path-clarity",
+  "reasoning": [
+    "旧desc明确说时延/诊断偏好未给；两方案均合法且可先后执行，不能替原主体编出优先级。",
+    "单次超时未证明服务离线；首步选项未给完整条件后继/停止，不能把低confidence本身当唯一退回原因。"
+  ],
+  "follow_up": [
+    "原主体在原预算内明确本次决策单位、已确认目标取舍、超时阶段及健康来源范围/新鲜度，再准备可比较路径。",
+    "若已有合法本地处置规则可按原continuity接回；不为提高confidence重复调用，不把优化版新增事实倒填旧请求。"
+  ],
+  "must_preserve": [
+    "两个合法候选和未给偏好的未知",
+    "实际confidence=0.16及原概率，不互换指标"
+  ],
+  "must_not_claim": [
+    "旧样例已证明必须先重试",
+    "优化版新增目标来自原旧事实"
+  ],
+  "pending_real_host_checks": [
+    "原真实owner/matter/run与对象版本",
+    "原权限/取消/停止和当前余额",
+    "该DP必要独审/业务writer前提"
+  ],
+  "runtime_business_acceptance": null,
+  "actual_dispatch_run_ids": [],
+  "actual_business_receipt": null,
+  "production_executed": false
+}

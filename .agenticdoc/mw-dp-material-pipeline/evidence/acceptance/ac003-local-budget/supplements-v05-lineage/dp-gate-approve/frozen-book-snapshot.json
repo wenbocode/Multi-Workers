@@ -1,0 +1,379 @@
+{
+  "candidates": {
+    "decision_selection": [
+      {
+        "id": "approveA",
+        "label": "结论 approve: 满足本 gate 条件，按 note 中的受限动作继续或收尾\n依据 gate-approve: note 的受限动作在现有授权与预算内，条件证据成立，可以批准。"
+      },
+      {
+        "id": "steerA",
+        "label": "结论 steer: 任务组织/主线/拆分/执行主体需调整，交 PM 发起 dp-pm-steer\n依据 gate-steer: 收尾顺序涉及任务组织，应交 PM 发起检查点编排而不是直接批准。"
+      },
+      {
+        "id": "need_fixA",
+        "label": "结论 need_fix: 推进方式基本明确但有具体技术/材料缺口，交 PM 发起 dp-auto\n依据 gate-need-fix: facets 接线缺口是具体技术缺口，应补材料后再谈批准。"
+      },
+      {
+        "id": "rejectA",
+        "label": "结论 reject: 拒绝本次推进方案；只有 note 另有明确获授权遗留方案才按其收尾\n依据 gate-reject: 当前证据不足以支撑本阶段收尾，本次推进方案应被拒绝。"
+      }
+    ]
+  },
+  "decision_id": "dp-gate-approve:run-h01",
+  "dp": "dp-gate-approve",
+  "field_trace": {
+    "fields": {
+      "/model": {
+        "sources": [
+          "transport:resolved_model"
+        ],
+        "transform": "resolve-config"
+      },
+      "/questions/decision_selection/criteria/approveA": {
+        "sources": [
+          "book:/preparation/basis_catalog/0",
+          "registry:dp-gate-approve/gate_decision/labels/approve"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/need_fixA": {
+        "sources": [
+          "book:/preparation/basis_catalog/2",
+          "registry:dp-gate-approve/gate_decision/labels/need_fix"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/rejectA": {
+        "sources": [
+          "book:/preparation/basis_catalog/3",
+          "registry:dp-gate-approve/gate_decision/labels/reject"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/steerA": {
+        "sources": [
+          "book:/preparation/basis_catalog/1",
+          "registry:dp-gate-approve/gate_decision/labels/steer"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/instructions": {
+        "sources": [
+          "registry:dp-gate-approve/instructions",
+          "registry:prepared_basis_instructions"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/questions/decision_selection/type": {
+        "sources": [
+          "registry:dp-gate-approve/protocol"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/state/desc/0": {
+        "sources": [
+          "book:/preparation/model_context/desc/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/1": {
+        "sources": [
+          "book:/preparation/model_context/desc/1"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/approve": {
+        "sources": [
+          "registry:dp-gate-approve/gate_decision/labels/approve"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/need_fix": {
+        "sources": [
+          "registry:dp-gate-approve/gate_decision/labels/need_fix"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/reject": {
+        "sources": [
+          "registry:dp-gate-approve/gate_decision/labels/reject"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/steer": {
+        "sources": [
+          "registry:dp-gate-approve/gate_decision/labels/steer"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/evidence_sources/0": {
+        "sources": [
+          "source:src-c30ea5d075ded80955cf",
+          "material.condition_evidence[0]"
+        ],
+        "transform": "excerpt"
+      },
+      "/state/material/condition_evidence/0": {
+        "sources": [
+          "book:/material/condition_evidence/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/condition_evidence/1": {
+        "sources": [
+          "book:/material/condition_evidence/1"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/current_state": {
+        "sources": [
+          "book:/material/current_state"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/gate_background": {
+        "sources": [
+          "book:/material/gate_background"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/pm_note/basis/authority": {
+        "sources": [
+          "book:/material/pm_note/basis/authority"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/pm_note/basis/budget": {
+        "sources": [
+          "book:/material/pm_note/basis/budget"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/pm_note/basis/evidence": {
+        "sources": [
+          "book:/material/pm_note/basis/evidence"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/pm_note/basis/goal": {
+        "sources": [
+          "book:/material/pm_note/basis/goal"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/pm_note/planned_action": {
+        "sources": [
+          "book:/material/pm_note/planned_action"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/pm_note/subject": {
+        "sources": [
+          "book:/material/pm_note/subject"
+        ],
+        "transform": "copy"
+      },
+      "/state/references": {
+        "sources": [
+          "book:/preparation/model_context/references"
+        ],
+        "transform": "no-cited-references"
+      },
+      "/state/terminology/DAG": {
+        "sources": [
+          "registry:terminology/DAG"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/PM": {
+        "sources": [
+          "registry:terminology/PM"
+        ],
+        "transform": "copy"
+      }
+    },
+    "local_only": [
+      "/meta",
+      "/notes",
+      "/preparation/prepared_at",
+      "/preparation/basis_catalog"
+    ]
+  },
+  "file_evidence": [
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_gate_actual_effect_and_re0\\h01\\project\\.agenticdoc\\target.yml",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_gate_actual_effect_and_re0\\h01\\project\\.agenticdoc\\target.yml",
+      "sha256": "5e48f12f562359b1a285d5d901fdb5e1852367f18c4e73d26d837cf638804c45"
+    },
+    {
+      "canonical_path": null,
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_gate_actual_effect_and_re0\\h01\\project\\.mw\\decision-evidence.yml",
+      "sha256": null,
+      "status": "missing"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_gate_actual_effect_and_re0\\h01\\project\\packages\\multi-workers\\decision_book.py",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_gate_actual_effect_and_re0\\h01\\project\\packages\\multi-workers\\decision_book.py",
+      "sha256": "ce47d1bd6cd27a7e28e6f2e90c6ae54e216b3b24ba781de2a5d83e1cd365bf06"
+    }
+  ],
+  "kind": "input-state",
+  "local_preparation": {
+    "basis_catalog": [
+      {
+        "applies_to": [
+          "approve"
+        ],
+        "id": "gate-approve",
+        "material_refs": [
+          "pm_note",
+          "condition_evidence"
+        ],
+        "text": "note 的受限动作在现有授权与预算内，条件证据成立，可以批准。"
+      },
+      {
+        "applies_to": [
+          "steer"
+        ],
+        "id": "gate-steer",
+        "material_refs": [
+          "gate_background"
+        ],
+        "text": "收尾顺序涉及任务组织，应交 PM 发起检查点编排而不是直接批准。"
+      },
+      {
+        "applies_to": [
+          "need_fix"
+        ],
+        "id": "gate-need-fix",
+        "material_refs": [
+          "current_state"
+        ],
+        "text": "facets 接线缺口是具体技术缺口，应补材料后再谈批准。"
+      },
+      {
+        "applies_to": [
+          "reject"
+        ],
+        "id": "gate-reject",
+        "material_refs": [
+          "current_state",
+          "condition_evidence"
+        ],
+        "text": "当前证据不足以支撑本阶段收尾，本次推进方案应被拒绝。"
+      }
+    ],
+    "model_context": {
+      "desc": [
+        "Review the requested gate change against the current authority and evidence.",
+        "A successful application must update the target and leave a gate receipt."
+      ]
+    },
+    "prepared_at": "2026-10-27T13:45:28+00:00"
+  },
+  "pair_map": {
+    "approveA": {
+      "basis_id": "gate-approve",
+      "basis_text": "note 的受限动作在现有授权与预算内，条件证据成立，可以批准。",
+      "choice": "approve",
+      "choice_label": "满足本 gate 条件，按 note 中的受限动作继续或收尾",
+      "choice_label_source": "registry:dp-gate-approve/gate_decision/labels/approve",
+      "finding_ids": [],
+      "label": "结论 approve: 满足本 gate 条件，按 note 中的受限动作继续或收尾\n依据 gate-approve: note 的受限动作在现有授权与预算内，条件证据成立，可以批准。",
+      "remaining_ids": []
+    },
+    "need_fixA": {
+      "basis_id": "gate-need-fix",
+      "basis_text": "facets 接线缺口是具体技术缺口，应补材料后再谈批准。",
+      "choice": "need_fix",
+      "choice_label": "推进方式基本明确但有具体技术/材料缺口，交 PM 发起 dp-auto",
+      "choice_label_source": "registry:dp-gate-approve/gate_decision/labels/need_fix",
+      "finding_ids": [],
+      "label": "结论 need_fix: 推进方式基本明确但有具体技术/材料缺口，交 PM 发起 dp-auto\n依据 gate-need-fix: facets 接线缺口是具体技术缺口，应补材料后再谈批准。",
+      "remaining_ids": []
+    },
+    "rejectA": {
+      "basis_id": "gate-reject",
+      "basis_text": "当前证据不足以支撑本阶段收尾，本次推进方案应被拒绝。",
+      "choice": "reject",
+      "choice_label": "拒绝本次推进方案；只有 note 另有明确获授权遗留方案才按其收尾",
+      "choice_label_source": "registry:dp-gate-approve/gate_decision/labels/reject",
+      "finding_ids": [],
+      "label": "结论 reject: 拒绝本次推进方案；只有 note 另有明确获授权遗留方案才按其收尾\n依据 gate-reject: 当前证据不足以支撑本阶段收尾，本次推进方案应被拒绝。",
+      "remaining_ids": []
+    },
+    "steerA": {
+      "basis_id": "gate-steer",
+      "basis_text": "收尾顺序涉及任务组织，应交 PM 发起检查点编排而不是直接批准。",
+      "choice": "steer",
+      "choice_label": "任务组织/主线/拆分/执行主体需调整，交 PM 发起 dp-pm-steer",
+      "choice_label_source": "registry:dp-gate-approve/gate_decision/labels/steer",
+      "finding_ids": [],
+      "label": "结论 steer: 任务组织/主线/拆分/执行主体需调整，交 PM 发起 dp-pm-steer\n依据 gate-steer: 收尾顺序涉及任务组织，应交 PM 发起检查点编排而不是直接批准。",
+      "remaining_ids": []
+    }
+  },
+  "policy": null,
+  "questions_version": "q-3ae2a3fb",
+  "state": {
+    "desc": [
+      "Review the requested gate change against the current authority and evidence.",
+      "A successful application must update the target and leave a gate receipt."
+    ],
+    "enum_meanings": {
+      "approve": "满足本 gate 条件，按 note 中的受限动作继续或收尾",
+      "need_fix": "推进方式基本明确但有具体技术/材料缺口，交 PM 发起 dp-auto",
+      "reject": "拒绝本次推进方案；只有 note 另有明确获授权遗留方案才按其收尾",
+      "steer": "任务组织/主线/拆分/执行主体需调整，交 PM 发起 dp-pm-steer"
+    },
+    "evidence_sources": [
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_gate_actual_effect_and_re0\\h01\\project\\packages\\multi-workers\\decision_book.py",
+        "references": [
+          "material.condition_evidence[0]"
+        ],
+        "representation": "excerpt",
+        "sha256": "ce47d1bd6cd27a7e28e6f2e90c6ae54e216b3b24ba781de2a5d83e1cd365bf06",
+        "source_bytes": 66505,
+        "source_id": "src-c30ea5d075ded80955cf",
+        "source_lines": 1730,
+        "text": "\"\"\"decision_book.py — 八入口决策本的准备、严格验收与档案（T09 / design D-002A）。\n"
+      }
+    ],
+    "material": {
+      "condition_evidence": [
+        "packages/multi-workers/decision_book.py:1",
+        "cmd: python -B -m pytest -p no:cacheprovider -q test_decision_context_workbench.py"
+      ],
+      "current_state": "表结构、四状态与十节点 DAG 弹窗已有用例；facets 接线未完成；发布、部署与活配置变更均未执行。",
+      "gate_background": "只读筛选已完成本地定向用例，PM 请求按获批范围在 stage 内收尾，需要 gate 判断是否批准这一受限推进。",
+      "pm_note": {
+        "basis": {
+          "authority": "现有 key 的 worker 写面与只读约束；本次请求不新增授权。",
+          "budget": "剩余预算 25 分钟，只够收尾与交接，不含新实现。",
+          "evidence": "本卡证据目录内的定向用例日志与 changed-files 清单。",
+          "goal": "验收要求是只读展示与既有失败不被弱化，未要求本轮补齐投影。"
+        },
+        "planned_action": "批准后仅标记本阶段收尾并交接未完成的 facets 接线，不部署、不改活配置。",
+        "subject": "只读筛选的表结构、四状态与 DAG 弹窗，按本卡 write face 收尾。"
+      }
+    },
+    "references": {},
+    "terminology": {
+      "DAG": "Directed acyclic graph.",
+      "PM": "Project manager: the current decision owner and result consumer."
+    }
+  },
+  "state_digest": "07cce7cc03981301"
+}

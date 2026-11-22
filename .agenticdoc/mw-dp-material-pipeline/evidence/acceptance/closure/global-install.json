@@ -1,0 +1,92 @@
+{
+  "base_commit": "8f73e160d97abe4cdfd7899e5660cdd19e513d2e",
+  "scope_sources": {
+    "packages/coding-agent/src/extensions/agent-team-loop/index.ts": "6104159e7bc676ae96298753a8bebcbcdf3d471d57c33aad8ed968e5c88b86ac",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/codex-pm-workflow.ts": "cf2304b9b3dd3a6e3363f6ff8895ad94ee0a27ebaa39f9be20fd92938a2c75a1",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts": "30b50b94e592e4e1ca57c53196c9d7726b6ac400eda1fd121a4b418314fd269a",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/file-evidence-cache.ts": "b0d017fce6200e242000abedd067e6b2475fa5543875bac3cb5346442e75c2a4",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/prepare-tool.ts": "614ab6e610e1d8dd11221a0337a20a201aa9d30ef953381020c0e6636f0ee1df",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts": "72d51cd0a191a7dd18bbc349d8a7dee7d836c5bd39642bcde000f5a8e9d35930",
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-policy.ts": "138137beb1c40d64ce4ab6eb6a1561eac0969a5aad683000f2ea64d3b5372e66",
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts": "00e00e1836c00819f2a693ca9b2aab01b4c724d0a1df33aa47a89347c9ff1816",
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/decision-handoff.ts": "547003d6eaa35508e8585e1d4dd8848b7b3c13496afd9c2ef350385d6521c3e5",
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/mw-runner.ts": "182334189502fac8f1bdfccc7d3a9a953b05b7cad43864bf020f9d2dedda9a26",
+    "packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts": "b6226b4fb69b4893f30a649e142951e8fcd7c92c0161d332ba8e44e200b7a56c",
+    "packages/coding-agent/test/extensions/codex-pm-workflow.test.ts": "a65a3f150078523d6e4b60a838751a4afda451ee9549a6f331ffdbb1e608ba6c",
+    "packages/multi-workers/autopilot/conductor.py": "a65621f3754c2defc9665e90cea265e14bc3fdd5df0e91f94d2700e28e89f668",
+    "packages/multi-workers/codex_dispatch.mjs": "8a6f553ad3121f8a8453666ec27fbcc7dc27133dfe48065f58e7c1246e91c61e",
+    "packages/multi-workers/codex_pm.py": "7d0aabf45826af85702158e5c1d0933d1e46b16435c6e72bfa4bed498b0af2e8",
+    "packages/multi-workers/decide_registry.json": "6b07c69519c62523a5c30712f5d5ef4c531b99be9dda7d2492585b1ec4549558",
+    "packages/multi-workers/decision.py": "ef78881f67732051e918eb28b45d11bacd42ac0471740b269be61f117da65d5c",
+    "packages/multi-workers/decision_backends.py": "3bf3c557933af986c1612e7dd40dd51b457aa03282d6d836b2856bb964a44502",
+    "packages/multi-workers/decision_book.py": "ce47d1bd6cd27a7e28e6f2e90c6ae54e216b3b24ba781de2a5d83e1cd365bf06",
+    "packages/multi-workers/decision_file_evidence.py": "c0541cdf1cb470b0b5fc9e92f9bc821b055007e8257b8f3e6286975f32c7a90e",
+    "packages/multi-workers/decision_lifecycle.py": "0ee691daf029846f67992f9f87c4097b7119cb02974c4c2560ae75a0141738cf",
+    "packages/multi-workers/decision_material_sources.py": "8b5565724580aa39c8612e1e3e6809c96b3ce1f263945b751cab9d0f6dde08db",
+    "packages/multi-workers/decision_model_context.py": "afa3c00fd09c651077a5bb45d1997227edce687663320ece794f8d39fc9fd7a2",
+    "packages/multi-workers/decision_playground.py": "c002f748a4297a18363bd27bbe729d23d4bf06053e018691f451264db72f1448",
+    "packages/multi-workers/decision_points.py": "bcdf745d352aac3a7b9586e00c2e424253ca0cced2e4798088eb366a9669439a",
+    "packages/multi-workers/decision_prepare.py": "2dfb542edbd00f687954a075f00f7c2f1411d10e53f456596cc8e5b11165c09f",
+    "packages/multi-workers/decision_signoff_result.py": "a1e025cb8a0047a7151a8336fbf09c829aa2a8b9f998dfe9972c769df76ff56f",
+    "packages/multi-workers/decision_source_scope.py": "d34f989209c46b0d9d2b1a7e03eb7ecec2b4c7949ba388d2ecd6134fe7f5b0df",
+    "packages/multi-workers/decision_wire.py": "c2f1d796c41987f66c064de1c4699c9bf9ca3902e40e414d6bc69e695d336f36",
+    "packages/multi-workers/mw.py": "06da530383ecb7f2be58be6a3a9482a4b011813ce479f85180f6b9b5b71a0186",
+    "packages/multi-workers/test_codex_pm_lite.py": "7dcb6f28ed09491ab1cdbe80e64bcd3e55ac8933f3adaed7a0a19fc274214574",
+    "packages/multi-workers/test_decision_material_sources.py": "81d482993b04a69c255cf0e5e39430c64d9824397f2c97df8f80b5010062932b",
+    "packages/multi-workers/test_dp_consolidation_cli.py": "e70ba0586ab7973e4209ae62c120cc6892dc286adbec1de676a5ec6cd921ca4c",
+    "packages/multi-workers/test_dp_consolidation_gate_effects.py": "0054f30e5b08636cdcbc44381ebb33aa9bf76ea245d3288a550ae1b03b6746bf",
+    "packages/multi-workers/test_dp_consolidation_signoff.py": "88d14a7acd46afc452fede27a905c538eedb0159205cca29ec45c1b4ee9c1d82",
+    "packages/multi-workers/test_prepared_cli_source_snapshot.py": "32ff306ef8d08481992a97688a7eb0f834e9926d48b4e3dec2d7d8d86f2b071e",
+    "packages/multi-workers/test_prepared_pair_selection.py": "6129b17cdc3bea529d5aad7862f8fe99ab5e41650163e7481fe09edbb8bd0c02",
+    "packages/multi-workers/test/fixtures/decision_signoff_transport.py": "e0a904a2bf9618cefa3a92bbf82af48668867e3d2a266e3047db8e85a5d56408",
+    "packages/multi-workers/test/fixtures/qg_chain_review.py": "4f56b0d87fdb20321ae90aff2258210ec73b082f2626f42ed84ce9e3d34faa59",
+    "packages/multi-workers/test/fixtures/qg_review_worker.mjs": "b8dc5b26c5972327a7a5eb6404aa61eefeabf84e44d1cda11c4ae529feec3408",
+    "packages/multi-workers/test/test_dp_material_pipeline_l2.py": "960c7a583f46bb5c30b839370b9e8fef73958240e19211c1ff7d53de9c7dcada",
+    "packages/multi-workers/test/test_dp_prepare_profile_v1.py": "e8c104676be8ac352103bbd280b9462922abf8f3da012d2af5f11263f57f5ad3",
+    "packages/multi-workers/decide_cases/dp-QG.json": "91cabaa74f2d2da1187e09110fcf525d1f0e76a7aa8be040d46e84cba23ee904",
+    "packages/multi-workers/decide_cases/dp-auto.json": "d122caec2cd39d2d7002b7052cd65ec2925a76f21d4236a0a50bb1736bd56f65",
+    "packages/multi-workers/decide_cases/dp-sign-key.json": "90d5921a8c61cd4f9af1057cf2e7efdd73614f047786726b98d4b61140c6c8d9",
+    "packages/multi-workers/scripts/build_decide_cases.py": "80a27a66d391005de7a4049b9d2e4dddc08a103f19062a4ae600bf8a11ff0b92",
+    "packages/multi-workers/scripts/gen_decide_registry_ts.py": "e678f81433321f39c6d51d39510f1141c814a0b61828ec7b1fb7ab5c1d278384"
+  },
+  "dependency_lock_sha256": "be2a414a80e2d774c534c5fa5f3f4ef1d64468288f8cf3d71f4bb28b6da4afa9",
+  "workspace": "E:\\gitlite\\Multi-Workers\\.mw\\releases\\dpm-1123",
+  "phase": "user-global-installed-and-verified",
+  "check_only_baseline_test_fix": "packages/coding-agent/test/extensions/agent-team-loop-pm-state.test.ts",
+  "installed_root": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-dp-material-pipeline-20261123",
+  "installed_at_utc": "2026-11-22T17:08:31.141908+00:00",
+  "launchers": {
+    "mw": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\bin\\mw.cmd",
+    "pi": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\bin\\pi.cmd"
+  },
+  "global_extension_sha256": "05c1dd78a05e1d843fb840a10aa05bc537da5ca2b3fb03a79accb5e46173498e",
+  "runtime_artifact_sha256": {
+    "packages/multi-workers/dist/extensions/agent-team-loop.js": "05c1dd78a05e1d843fb840a10aa05bc537da5ca2b3fb03a79accb5e46173498e",
+    "packages/multi-workers/mw.py": "06da530383ecb7f2be58be6a3a9482a4b011813ce479f85180f6b9b5b71a0186",
+    "packages/multi-workers/pm_state.py": "fedc121f76198e6747f5cac4b67a334415190d0c8d3c3ae03488a5b934e33d39",
+    "packages/coding-agent/dist/cli.js": "71cad79c13de14f1eea0d122356ce7b9fa562d4ebc9faff8a04ad1e950cde84f"
+  },
+  "backup": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-dp-material-pipeline-20261123\\deployment-backup",
+  "verification": {
+    "pi_version": "0.83.0",
+    "mw_capabilities": {
+      "evidence_refs": 1,
+      "input_diagnostics": 1
+    },
+    "shipped_prepared_cases": 8,
+    "local_budget_smoke": [
+      {
+        "rule": "desc-local-v1",
+        "count": 1000,
+        "limit": 1000,
+        "passed": true
+      },
+      {
+        "rule": "desc-local-v1",
+        "count": 1001,
+        "limit": 1000,
+        "passed": false
+      }
+    ]
+  }
+}

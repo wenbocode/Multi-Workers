@@ -1,0 +1,29 @@
+{
+  "dp": "dp-gate-approve",
+  "decision_id": "dp-gate-approve:v05-original-scope",
+  "call_id": "8f8b5bc2672b49959aef9d4e3ee968ae",
+  "writer": "mw decide lifecycle",
+  "normalized": {
+    "choice": "approve",
+    "basis_id": "approveA-basis",
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  "desc_measurement": {
+    "local_budget": {
+      "rule": "desc-local-v1",
+      "count": 47,
+      "limit": 1000,
+      "passed": true
+    },
+    "estimated_tokens": 47,
+    "exact_count": null,
+    "exact_limit_passed": null
+  },
+  "choice": "approve",
+  "pm_reason": "Accept one read-only replay of the frozen sample after checking the original authorization and remaining budget. Preserve the full diff and keep the coverage limited to this sample. No new permission and no execution.",
+  "receipts": {
+    "consumed": "fa51804eebf544078d94ebde9bc35d0c",
+    "settled": "18da429991534e91890e012c94b4602f"
+  }
+}

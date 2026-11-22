@@ -134,7 +134,7 @@ NOTES: dict[str, str] = {
     ),
     "dp-QG": (
         "合成 case：按审核要求、已审证据、发现与未覆盖面整理，当前缺口仅支持 fix；"
-        "完整业务菜单不变；reopen 需要 basis_issue，本材料不预置该字段。"
+        "三项条件一并比较；实际采纳 reopen 须有实质质量依据问题。"
     ),
     "dp-gate-approve": (
         "合成 case：PM 送审前写好 subject、planned_action 与四段依据，"
@@ -423,18 +423,23 @@ BASIS_CATALOG: dict[str, list[dict[str, object]]] = {
         },
     ],
     "dp-QG": [
-        # This scenario has concrete remediation gaps, not a pass basis.
-
-
-
-
-
-
         {
             "id": "qg-fix",
             "text": "要求本身清楚，但 facets 与正文投影有具体整改缺口，应判整改。",
             "material_refs": ["review_findings", "uncovered_scope"],
             "applies_to": ["fix"],
+        },
+        {
+            "id": "qg-pass-criterion",
+            "text": "仅当全部适用质量要求满足、必要证据齐备且没有阻断时才通过。",
+            "material_refs": ["review_requirements", "review_evidence", "uncovered_scope"],
+            "applies_to": ["pass"],
+        },
+        {
+            "id": "qg-reopen-criterion",
+            "text": "仅当当前复核查到要求、设计或验收依据有实质矛盾时才重新打开标准。",
+            "material_refs": ["review_requirements", "review_findings"],
+            "applies_to": ["reopen"],
         },
     ],
     "dp-gate-approve": [
@@ -482,6 +487,12 @@ BASIS_CATALOG: dict[str, list[dict[str, object]]] = {
             "text": "真实浏览器与真实模型的验收未做，需要用户确认是否接受当前证据。",
             "material_refs": ["verification_evidence", "unfinished_impact"],
             "applies_to": ["user-confirm"],
+        },
+        {
+            "id": "sign-finalize-criterion",
+            "text": "仅在未完成影响已清零且全部验证证据满足同范围交付标准时签收。",
+            "material_refs": ["verification_evidence", "unfinished_impact"],
+            "applies_to": ["finalize"],
         },
     ],
     "dp-auto": [
@@ -641,10 +652,51 @@ def _preparation(dp: str) -> dict[str, object]:
     catalog = BASIS_CATALOG.get(dp)
     if not catalog:
         raise SystemExit(f"build_decide_cases: no prepared basis for {dp!r}")
-    return {
+    result = {
         "basis_catalog": json.loads(json.dumps(catalog, ensure_ascii=False)),
         "prepared_at": CASE_PREPARED_AT,
     }
+    if dp == "dp-auto":
+        result["model_context"] = {
+            "desc": ["目标是让工作台旧记录的状态可核对。", "已有四状态和 DAG 用例，列表与正文的投影还缺字段。"],
+            "terminology": {"DAG": "有向无环图，用来显示工作台流程中各节点的依赖。"},
+            "auto_comparison": {
+                "priority": {"source": "background.constraints", "rule": "先取得能核对的只读证据，保持现有授权和范围。"},
+                "budget": {"remaining_seconds": 1500, "reserve_seconds": 60},
+                "paths": {
+                    "wire-facets-now": {
+                        "max_seconds": 240, "observation": "当前列表是否已有可用的筛选字段。",
+                        "stop": "核对一个当前列表投影后结束。",
+                        "successor": "若字段可用，记录接线前提并交 PM 核准，否则保留未记录状态。",
+                        "steps": [{"id": "check-facets", "max_seconds": 240, "on_success": None, "on_failure": None}],
+                    },
+                    "split-projection-task": {
+                        "max_seconds": 300, "observation": "缺失的正文投影能否独立验收。",
+                        "stop": "确认必要字段和依赖后结束。",
+                        "successor": "若边界明确，提交拆分建议，否则保留原任务并列出依赖。",
+                        "steps": [{"id": "check-detail", "max_seconds": 300, "on_success": None, "on_failure": None}],
+                    },
+                    "escalate-to-human": {
+                        "max_seconds": 60, "observation": "是否已有明确的筛选与正文优先级。",
+                        "stop": "核对当前目标与现有决定后结束。",
+                        "successor": "若仍缺取舍，交 PM 请求确认，维持原只读范围。",
+                        "steps": [{"id": "check-goal", "max_seconds": 60, "on_success": None, "on_failure": None}],
+                    },
+                },
+                "pairs": [
+                    {"candidates": ["wire-facets-now", "split-projection-task"],
+                     "criterion": "列表已有完整字段时，先验证筛选可用性。",
+                     "reversal": "关键字段需跨投影补齐时，先确认可独立验收的写面。"},
+                    {"candidates": ["wire-facets-now", "escalate-to-human"],
+                     "criterion": "已授权且列表已有字段时，先核对实际值。",
+                     "reversal": "若当前目标无法确定优先级，先查已有决定。"},
+                    {"candidates": ["split-projection-task", "escalate-to-human"],
+                     "criterion": "可以由证据界定依赖时，先核查拆分前提。",
+                     "reversal": "若依赖取决于未定目标，先确认已有取舍。"},
+                ],
+            },
+        }
+    return result
 
 
 def _business_material(dp: str) -> dict[str, object]:
@@ -727,7 +779,9 @@ def _check_case(dp: str, material: Mapping[str, object], preparation: Mapping[st
         detail = "; ".join(f"{path}: {issue}" for path, issue in role_issues)
         raise SystemExit(f"build_decide_cases: {dp} role is not legal ({detail})")
 
-    preparation_issues = decision_points.preparation_issues(dp, preparation, material)
+    preparation_issues = decision_points.prepared_request_issues(
+        dp, material, preparation, actor_role=_meta(dp)["actor_role"],
+    )
     if preparation_issues:
         detail = "; ".join(f"{path}: {issue}" for path, issue in preparation_issues)
         raise SystemExit(f"build_decide_cases: {dp} preparation is not legal ({detail})")
@@ -738,11 +792,10 @@ def _check_case(dp: str, material: Mapping[str, object], preparation: Mapping[st
         for item in preparation["basis_catalog"]  # type: ignore[index]
         for choice in item["applies_to"]  # type: ignore[index]
     }
-    # Structural eligibility is not factual support for a prepared reason.
-    if not covered or not covered <= supported:
+    # Every conditional criterion is present and at least one branch can be used.
+    if not covered & supported:
         raise SystemExit(
-            f"build_decide_cases: {dp} basis covers {sorted(covered)} but the material "
-            f"permits {sorted(supported)}; prepare only actually supported reasons"
+            f"build_decide_cases: {dp} has no currently supported prepared choice"
         )
     for item in preparation["basis_catalog"]:  # type: ignore[index]
         for choice in item["applies_to"]:  # type: ignore[index]

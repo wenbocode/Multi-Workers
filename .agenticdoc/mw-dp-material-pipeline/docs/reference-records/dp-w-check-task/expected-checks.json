@@ -1,0 +1,21 @@
+{
+  "record_scope": "reference-check-vectors-not-production-receipt",
+  "expected_wire": "investigateA",
+  "expected_business_choice": "investigate",
+  "expected_basis_id": "investigateA-basis",
+  "expected_finding_ids": [],
+  "expected_remaining_ids": [],
+  "expected_pm_disposition": "accept-worker-direction-as-reference",
+  "required_pm_facts": [
+    "实际Worker责任身份",
+    "一次read/1024字节/原8分钟约束"
+  ],
+  "forbidden_pm_claims": [
+    "PM已替Worker读过说明",
+    "非ASCII验证已通过"
+  ],
+  "original_request_bytes_must_remain_identical": true,
+  "historical_response_must_not_be_applied_to_changed_payload": true,
+  "known_material_failures": [],
+  "must_not_assume_actual_execution": true
+}

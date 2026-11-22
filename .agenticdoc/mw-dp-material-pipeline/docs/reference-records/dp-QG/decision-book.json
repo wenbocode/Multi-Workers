@@ -1,0 +1,188 @@
+{
+  "schema": "dp-reference-v0.5-draft",
+  "sample_kind": "synthetic-reference",
+  "dp": "dp-QG",
+  "role_scope": "pm",
+  "binding": {
+    "owner_ref": null,
+    "matter_ref": null,
+    "budget_ref": null,
+    "status": "合成参考，无生产身份"
+  },
+  "sources": [
+    {
+      "id": "S1",
+      "label": "当前质量标准",
+      "path": "sources/S1.txt",
+      "sha256": "019f057aaef838b7437a893f356a9ac05fe4e35e8076e55b2cda390610fd8ce3",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    },
+    {
+      "id": "S2",
+      "label": "独立审查与复现实测",
+      "path": "sources/S2.txt",
+      "sha256": "b4335424644f449c28c788b0a2370d09f254363d3e198ab5e63643a816c23a16",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    }
+  ],
+  "field_trace": {
+    "file": "field-trace.json",
+    "note": "真实原件与字段变换留本地；本例源正文见sources/。"
+  },
+  "preparation": {
+    "prepared_at": "由实际准备者/host落盘",
+    "basis_catalog": "见pair-map.json",
+    "material_refs": "每个选项关联本次材料",
+    "applies_to": "本地校验，不能据此裁剪固定候选",
+    "producer": "原PM/实际Worker，或受托prepare Worker起草后由原主体工具吸收"
+  },
+  "pair_map": {
+    "file": "pair-map.json"
+  },
+  "host_exclusions": [
+    {
+      "choice": "reopen",
+      "rule_ref": "decision_points.entry_choice_issues:dp-QG/reopen",
+      "source_ids": [
+        "S1"
+      ],
+      "reason": "合成S1明确无实质标准争议；依现有规则推演排除，不伪造争议。"
+    }
+  ],
+  "execution_plan": {
+    "status": "未制定；选择方向后由原主体按授权准备",
+    "send": false
+  },
+  "expected": {
+    "choices": [
+      "fix"
+    ],
+    "status": "作者参考预期，禁止发给模型"
+  },
+  "actual_capture": {
+    "request": "not-sent-v0.5",
+    "response": "not-observed-v0.5"
+  },
+  "post_checks": "核适用标准完整、真实独审及来源版本；pass须必要证据齐备，fix保留全部已知原因和剩余面，reopen须实质标准问题；不直接写QG产品。",
+  "freeze": {
+    "file": "payload.json",
+    "sha256": "3384f2220388912607c490868eefc7758989f372906ba64d7b2576d6a83e09ae",
+    "bytes": 5288
+  },
+  "desc_preparation": {
+    "sentences": [
+      "本次审核导入事务适配器是否满足重复键无写入和并发顺序两项验收标准。",
+      "本合成示例的独立review已完成对全部AC和关联VC的核对，这不表示AC通过。",
+      "AC-001未满足：VC-001复现了拒绝重复键后仍发生一条写入，对应F1。",
+      "AC-002未验证：VC-002并发检查尚未执行，对应F2。",
+      "依据是同一冻结版本的review矩阵和观测；标准无实质争议，当前问题是质量结论及需处理的范围。"
+    ],
+    "sentence_count": 5,
+    "max_sentences": 10,
+    "max_tokens": 1000,
+    "estimated_tokens": 154,
+    "token_count": null,
+    "meter": "existing-estimator-precheck; target-model exact count not available",
+    "source_note": "从v0.3合成来源归纳；QG/sign增加显式同范围fixture，非当前业务事实",
+    "source_pointers": [
+      "review-fixture.json"
+    ],
+    "sentence_sources": [
+      {
+        "sentence": 1,
+        "sources": [
+          "review-fixture.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 2,
+        "sources": [
+          "review-fixture.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 3,
+        "sources": [
+          "review-fixture.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 4,
+        "sources": [
+          "review-fixture.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 5,
+        "sources": [
+          "review-fixture.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      }
+    ],
+    "claims": "目标/偏差/事件/证据与未知，不写推荐答案"
+  },
+  "review_fixture": {
+    "sample_kind": "synthetic-review-fixture-not-actual-review",
+    "artifact": "导入事务适配器",
+    "version": "demo-import-v04",
+    "reviewer_role": "independent-reviewer-fixture",
+    "review_status": "completed",
+    "covered_ac_ids": [
+      "AC-001",
+      "AC-002"
+    ],
+    "ac_completion": [
+      {
+        "ac_id": "AC-001",
+        "requirement": "拒绝重复键且失败时不写入",
+        "status": "not-met",
+        "vc_results": [
+          {
+            "vc_id": "VC-001",
+            "verification": "重复键拒绝后检查写入数",
+            "status": "fail",
+            "observation": "仍有一条写入",
+            "evidence": "同版本review记录的复现实测"
+          }
+        ],
+        "deviation": "无副作用要求未满足",
+        "finding_ids": [
+          "F1"
+        ]
+      },
+      {
+        "ac_id": "AC-002",
+        "requirement": "并发导入保持规定顺序",
+        "status": "unverified",
+        "vc_results": [
+          {
+            "vc_id": "VC-002",
+            "verification": "并发顺序检查",
+            "status": "not-run",
+            "observation": "尚未执行，review已明确核对这一缺口",
+            "evidence": "同版本review的覆盖说明"
+          }
+        ],
+        "deviation": "尚无并发顺序证据",
+        "finding_ids": [
+          "F2"
+        ]
+      }
+    ],
+    "criteria_dispute": "已核无实质标准争议",
+    "note": "AC/VC为示例逻辑映射，不是新完成的生产review或测试"
+  },
+  "definition_sources": {
+    "AC": "已确认验收正文；本例来自v0.4合成scope",
+    "VC": "项目设计Verification Contract；本例来自v0.4合成review矩阵",
+    "other_refs": "本次来源中的发现/剩余工作/入口职责",
+    "registry": "仅使用当前请求出现的术语，未知项拒绝准备"
+  }
+}

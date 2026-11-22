@@ -175,7 +175,7 @@ def test_urls_commands_and_future_outputs_do_not_trigger_reads(tmp_path: Path, m
         "task_deliverables": "new-report.md",
         "handling_options": [{"description": "new-source.py", "consequence": "new-report.md"}],
     }, "preparation": {}}
-    assert sources.prepare_source_state(original, tmp_path) == original
+    assert sources.prepare_source_state(original, tmp_path) == {"material": original["material"]}
 
 
 def test_explicit_citations_in_future_fields_still_require_evidence(tmp_path: Path) -> None:
@@ -184,7 +184,10 @@ def test_explicit_citations_in_future_fields_still_require_evidence(tmp_path: Pa
 
 
 def test_no_project_root_refuses_only_file_references() -> None:
-    assert sources.prepare_source_state(state("a review finding"), None) == state("a review finding")
+    original = state("a review finding")
+    assert sources.prepare_source_state(original, None) == {
+        "material": original["material"], "context": original["context"],
+    }
     with pytest.raises(sources.SourceMaterialError, match="project root"):
         sources.prepare_source_state(state("report.md"), None)
 

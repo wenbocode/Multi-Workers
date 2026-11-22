@@ -1,0 +1,498 @@
+{
+  "candidates": {
+    "decision_selection": [
+      {
+        "id": "narrowA",
+        "label": "结论 narrow: 收窄到剩余预算内能完成的一小块\n依据 narrowA-basis: narrow：先处理原目标内的一块可完成工作，明确保留其它未完成项；不缩减原验收目标。\nremaining_ids: W2"
+      },
+      {
+        "id": "splitA",
+        "label": "结论 split: 拆成多个任务重派\n依据 splitA-basis: split：将可独立且写面协调的剩余工作拆分，保留整体回收和复核。"
+      },
+      {
+        "id": "direct-execA",
+        "label": "结论 direct-exec: PM 自己直接做完\n依据 directA-basis: direct-exec：PM在当前权限与预算内直接完成剩余工作，并保留必要独立复核。"
+      },
+      {
+        "id": "escalateA",
+        "label": "结论 escalate: 风险高到必须问人\n依据 escalateA-basis: escalate：仅针对真实且不可自取的外部条件介入；普通未测/服务失败不等于缺授权。"
+      }
+    ]
+  },
+  "decision_id": "dp-pm-steer:current-receipt-1",
+  "dp": "dp-pm-steer",
+  "field_trace": {
+    "fields": {
+      "/model": {
+        "sources": [
+          "transport:resolved_model"
+        ],
+        "transform": "resolve-config"
+      },
+      "/questions/decision_selection/criteria/direct-execA": {
+        "sources": [
+          "book:/preparation/basis_catalog/2",
+          "registry:dp-pm-steer/checkpoint_action/labels/direct-exec"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/escalateA": {
+        "sources": [
+          "book:/preparation/basis_catalog/3",
+          "registry:dp-pm-steer/checkpoint_action/labels/escalate"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/narrowA": {
+        "sources": [
+          "book:/preparation/basis_catalog/0",
+          "registry:dp-pm-steer/checkpoint_action/labels/narrow"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/criteria/splitA": {
+        "sources": [
+          "book:/preparation/basis_catalog/1",
+          "registry:dp-pm-steer/checkpoint_action/labels/split"
+        ],
+        "transform": "legal-pair"
+      },
+      "/questions/decision_selection/instructions": {
+        "sources": [
+          "registry:dp-pm-steer/instructions",
+          "registry:prepared_basis_instructions"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/questions/decision_selection/type": {
+        "sources": [
+          "registry:dp-pm-steer/protocol"
+        ],
+        "transform": "prepared-single-choice"
+      },
+      "/state/desc/0": {
+        "sources": [
+          "book:/preparation/model_context/desc/0"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/1": {
+        "sources": [
+          "book:/preparation/model_context/desc/1"
+        ],
+        "transform": "copy"
+      },
+      "/state/desc/2": {
+        "sources": [
+          "book:/preparation/model_context/desc/2"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/available_executors": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/available_executors"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/direct-exec": {
+        "sources": [
+          "registry:dp-pm-steer/checkpoint_action/labels/direct-exec"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/escalate": {
+        "sources": [
+          "registry:dp-pm-steer/checkpoint_action/labels/escalate"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/known": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/known"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/narrow": {
+        "sources": [
+          "registry:dp-pm-steer/checkpoint_action/labels/narrow"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/observed": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/observed"
+        ],
+        "transform": "copy"
+      },
+      "/state/enum_meanings/split": {
+        "sources": [
+          "registry:dp-pm-steer/checkpoint_action/labels/split"
+        ],
+        "transform": "active-choice-label"
+      },
+      "/state/enum_meanings/worker_minutes": {
+        "sources": [
+          "book:/preparation/model_context/enum_meanings/worker_minutes"
+        ],
+        "transform": "copy"
+      },
+      "/state/evidence_sources/0": {
+        "sources": [
+          "source:src-bd81c2f61ab885991ac3",
+          "preparation.model_context.references.W1.path"
+        ],
+        "transform": "full"
+      },
+      "/state/evidence_sources/1": {
+        "sources": [
+          "source:src-08bc6bae43a999b66e00",
+          "preparation.model_context.references.W2.path"
+        ],
+        "transform": "full"
+      },
+      "/state/material/pm_decision_background": {
+        "sources": [
+          "book:/material/pm_decision_background"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/task_deliverables": {
+        "sources": [
+          "book:/material/task_deliverables"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/task_goal": {
+        "sources": [
+          "book:/material/task_goal"
+        ],
+        "transform": "copy"
+      },
+      "/state/material/task_requirements": {
+        "sources": [
+          "book:/material/task_requirements"
+        ],
+        "transform": "copy"
+      },
+      "/state/reasons/W2": {
+        "sources": [
+          "book:/preparation/model_context/reasons/W2"
+        ],
+        "transform": "copy"
+      },
+      "/state/references/W1": {
+        "sources": [
+          "book:/preparation/model_context/references/W1",
+          "source:src-bd81c2f61ab885991ac3"
+        ],
+        "transform": "file-reference"
+      },
+      "/state/references/W2": {
+        "sources": [
+          "book:/preparation/model_context/references/W2",
+          "source:src-08bc6bae43a999b66e00"
+        ],
+        "transform": "file-reference"
+      },
+      "/state/terminology/ID": {
+        "sources": [
+          "book:/preparation/model_context/terminology/ID"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/PM": {
+        "sources": [
+          "book:/preparation/model_context/terminology/PM"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/desc": {
+        "sources": [
+          "book:/preparation/model_context/terminology/desc"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/未测": {
+        "sources": [
+          "book:/preparation/model_context/terminology/未测"
+        ],
+        "transform": "copy"
+      },
+      "/state/terminology/直执": {
+        "sources": [
+          "book:/preparation/model_context/terminology/直执"
+        ],
+        "transform": "copy"
+      }
+    },
+    "local_only": [
+      "/meta",
+      "/notes",
+      "/preparation/prepared_at",
+      "/preparation/basis_catalog"
+    ]
+  },
+  "file_evidence": [
+    {
+      "canonical_path": null,
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer1\\.agenticdoc\\target.yml",
+      "sha256": null,
+      "status": "missing"
+    },
+    {
+      "canonical_path": null,
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer1\\.mw\\decision-evidence.yml",
+      "sha256": null,
+      "status": "missing"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer1\\v05-reference-W1.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer1\\v05-reference-W1.txt",
+      "sha256": "cf121c7a1434fedfe71b4418c6b09c8b97efca6b3431ee2b82a8632d3606f2d8"
+    },
+    {
+      "canonical_path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer1\\v05-reference-W2.txt",
+      "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer1\\v05-reference-W2.txt",
+      "sha256": "ece3e1df1682f5f42a6ab84a5c9ceb928af6919ee32f7fed4ce6db380c832aa4"
+    }
+  ],
+  "kind": "input-state",
+  "local_preparation": {
+    "basis_catalog": [
+      {
+        "applies_to": [
+          "narrow"
+        ],
+        "finding_ids": [],
+        "id": "narrowA-basis",
+        "material_refs": [
+          "pm_decision_background"
+        ],
+        "remaining_ids": [
+          "W2"
+        ],
+        "text": "narrow：先处理原目标内的一块可完成工作，明确保留其它未完成项；不缩减原验收目标。"
+      },
+      {
+        "applies_to": [
+          "split"
+        ],
+        "finding_ids": [],
+        "id": "splitA-basis",
+        "material_refs": [
+          "pm_decision_background"
+        ],
+        "remaining_ids": [],
+        "text": "split：将可独立且写面协调的剩余工作拆分，保留整体回收和复核。"
+      },
+      {
+        "applies_to": [
+          "direct-exec"
+        ],
+        "finding_ids": [],
+        "id": "directA-basis",
+        "material_refs": [
+          "pm_decision_background"
+        ],
+        "remaining_ids": [],
+        "text": "direct-exec：PM在当前权限与预算内直接完成剩余工作，并保留必要独立复核。"
+      },
+      {
+        "applies_to": [
+          "escalate"
+        ],
+        "finding_ids": [],
+        "id": "escalateA-basis",
+        "material_refs": [
+          "pm_decision_background"
+        ],
+        "remaining_ids": [],
+        "text": "escalate：仅针对真实且不可自取的外部条件介入；普通未测/服务失败不等于缺授权。"
+      }
+    ],
+    "model_context": {
+      "desc": [
+        "Cover both negative cases.",
+        "The remaining cases are independent and each is estimated at 18 minutes.",
+        "There are 50 worker minutes left and independent review is additional."
+      ],
+      "enum_meanings": {
+        "available_executors": "当前可用执行者数量。",
+        "direct-exec": "管理Agent在现有权限预算内直接执行。",
+        "escalate": "仅对真实外部条件寻求介入。",
+        "known": "对应约束或条件已由本次来源确认。",
+        "narrow": "先收窄本轮执行范围，仍保留原整体目标。",
+        "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+        "split": "将可独立并协调写面的剩余工作拆分。",
+        "worker_minutes": "总工时分钟：并行执行者工时相加，区别于墙钟耗时。"
+      },
+      "reasons": {
+        "W2": "证明过期版本冲突无副作用"
+      },
+      "references": {
+        "W1": {
+          "kind": "remaining_work",
+          "lines": {
+            "end": 1,
+            "start": 1
+          },
+          "path": "v05-reference-W1.txt"
+        },
+        "W2": {
+          "kind": "remaining_work",
+          "lines": {
+            "end": 1,
+            "start": 1
+          },
+          "path": "v05-reference-W2.txt"
+        }
+      },
+      "terminology": {
+        "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+        "PM": "Project Manager agent: 管理当前项目事项、组织任务并回收证据的项目管理Agent；不能冒充实际执行者或独立审查者。",
+        "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+        "未测": "尚未执行验证: 对应验证尚未运行，不表示通过。",
+        "直执": "直接执行: 由当前项目管理者在原权限与剩余预算内直接完成工作，必要独立复核仍保留。"
+      }
+    },
+    "prepared_at": "2026-11-08T10:00:00+00:00"
+  },
+  "pair_map": {
+    "direct-execA": {
+      "basis_id": "directA-basis",
+      "basis_text": "direct-exec：PM在当前权限与预算内直接完成剩余工作，并保留必要独立复核。",
+      "choice": "direct-exec",
+      "choice_label": "PM 自己直接做完",
+      "choice_label_source": "registry:dp-pm-steer/checkpoint_action/labels/direct-exec",
+      "finding_ids": [],
+      "label": "结论 direct-exec: PM 自己直接做完\n依据 directA-basis: direct-exec：PM在当前权限与预算内直接完成剩余工作，并保留必要独立复核。",
+      "remaining_ids": []
+    },
+    "escalateA": {
+      "basis_id": "escalateA-basis",
+      "basis_text": "escalate：仅针对真实且不可自取的外部条件介入；普通未测/服务失败不等于缺授权。",
+      "choice": "escalate",
+      "choice_label": "风险高到必须问人",
+      "choice_label_source": "registry:dp-pm-steer/checkpoint_action/labels/escalate",
+      "finding_ids": [],
+      "label": "结论 escalate: 风险高到必须问人\n依据 escalateA-basis: escalate：仅针对真实且不可自取的外部条件介入；普通未测/服务失败不等于缺授权。",
+      "remaining_ids": []
+    },
+    "narrowA": {
+      "basis_id": "narrowA-basis",
+      "basis_text": "narrow：先处理原目标内的一块可完成工作，明确保留其它未完成项；不缩减原验收目标。",
+      "choice": "narrow",
+      "choice_label": "收窄到剩余预算内能完成的一小块",
+      "choice_label_source": "registry:dp-pm-steer/checkpoint_action/labels/narrow",
+      "finding_ids": [],
+      "label": "结论 narrow: 收窄到剩余预算内能完成的一小块\n依据 narrowA-basis: narrow：先处理原目标内的一块可完成工作，明确保留其它未完成项；不缩减原验收目标。\nremaining_ids: W2",
+      "remaining_ids": [
+        "W2"
+      ]
+    },
+    "splitA": {
+      "basis_id": "splitA-basis",
+      "basis_text": "split：将可独立且写面协调的剩余工作拆分，保留整体回收和复核。",
+      "choice": "split",
+      "choice_label": "拆成多个任务重派",
+      "choice_label_source": "registry:dp-pm-steer/checkpoint_action/labels/split",
+      "finding_ids": [],
+      "label": "结论 split: 拆成多个任务重派\n依据 splitA-basis: split：将可独立且写面协调的剩余工作拆分，保留整体回收和复核。",
+      "remaining_ids": []
+    }
+  },
+  "policy": null,
+  "questions_version": "q-c2d79bf6",
+  "state": {
+    "desc": [
+      "Cover both negative cases.",
+      "The remaining cases are independent and each is estimated at 18 minutes.",
+      "There are 50 worker minutes left and independent review is additional."
+    ],
+    "enum_meanings": {
+      "available_executors": "当前可用执行者数量。",
+      "direct-exec": "PM 自己直接做完",
+      "escalate": "风险高到必须问人",
+      "known": "对应约束或条件已由本次来源确认。",
+      "narrow": "收窄到剩余预算内能完成的一小块",
+      "observed": "来源报告的实际观测；本例整体仍是合成案例。",
+      "split": "拆成多个任务重派",
+      "worker_minutes": "总工时分钟：并行执行者工时相加，区别于墙钟耗时。"
+    },
+    "evidence_sources": [
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer1\\v05-reference-W1.txt",
+        "references": [
+          "preparation.model_context.references.W1.path"
+        ],
+        "representation": "full",
+        "sha256": "cf121c7a1434fedfe71b4418c6b09c8b97efca6b3431ee2b82a8632d3606f2d8",
+        "source_bytes": 32,
+        "source_id": "src-bd81c2f61ab885991ac3",
+        "source_lines": 1,
+        "text": "证明权限拒绝无副作用\r\n"
+      },
+      {
+        "included_lines": [
+          [
+            1,
+            1
+          ]
+        ],
+        "line_range": [
+          1,
+          1
+        ],
+        "omitted_lines": [],
+        "path": "E:\\gitlite\\Multi-Workers\\.tmp\\ac003-t08\\test_current_decision_consumer1\\v05-reference-W2.txt",
+        "references": [
+          "preparation.model_context.references.W2.path"
+        ],
+        "representation": "full",
+        "sha256": "ece3e1df1682f5f42a6ab84a5c9ceb928af6919ee32f7fed4ce6db380c832aa4",
+        "source_bytes": 38,
+        "source_id": "src-08bc6bae43a999b66e00",
+        "source_lines": 1,
+        "text": "证明过期版本冲突无副作用\r\n"
+      }
+    ],
+    "material": {
+      "pm_decision_background": "Both remain unfinished. They target different test files with a shared interface and no ordering dependency. 18 worker minutes each, 50 remaining and independent review additional.",
+      "task_deliverables": "W1 unauthorized request regression and W2 stale version conflict regression.",
+      "task_goal": "Cover two independent rejection cases without side effects.",
+      "task_requirements": "keep the goal"
+    },
+    "reasons": {
+      "W2": "证明过期版本冲突无副作用"
+    },
+    "references": {
+      "W1": {
+        "kind": "remaining_work",
+        "source_id": "src-bd81c2f61ab885991ac3"
+      },
+      "W2": {
+        "kind": "remaining_work",
+        "source_id": "src-08bc6bae43a999b66e00"
+      }
+    },
+    "terminology": {
+      "ID": "Identifier: 标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。",
+      "PM": "Project Manager agent: 管理当前项目事项、组织任务并回收证据的项目管理Agent；不能冒充实际执行者或独立审查者。",
+      "desc": "description: 本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。",
+      "未测": "尚未执行验证: 对应验证尚未运行，不表示通过。",
+      "直执": "直接执行: 由当前项目管理者在原权限与剩余预算内直接完成工作，必要独立复核仍保留。"
+    }
+  },
+  "state_digest": "0e8e68c926a6eab5"
+}

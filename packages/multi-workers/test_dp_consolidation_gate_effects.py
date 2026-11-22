@@ -3027,6 +3027,11 @@ def _h11_preparation(choice="approve"):
             "text": "the original signal is gone and the policy allows one observing step",
             "material_refs": ["condition_evidence"],
             "applies_to": [choice],
+        }, {
+            "id": "b-other-conditions",
+            "text": "Use the corresponding branch if the original signal or policy no longer supports the selected step.",
+            "material_refs": ["condition_evidence"],
+            "applies_to": [option for option in ("approve", "steer", "need_fix", "reject") if option != choice],
         }],
     }
 
@@ -3946,6 +3951,17 @@ def test_h09_real_passing_verification_only_releases_releasable_dispositions(tmp
     assert any(row.get("kind") == "failure" for row in advance._rows(root, "owner"))
 
 
+def _qg_review_criteria(pass_id, pass_text):
+    return {"prepared_at": "2026-11-10T00:00:00Z", "basis_catalog": [
+        {"id": pass_id, "text": pass_text, "material_refs": ["review_evidence", "review_findings"],
+         "applies_to": ["pass"]},
+        {"id": "repair-product", "text": "If evidence shows a defect against the current contract, repair the product.",
+         "material_refs": ["review_requirements", "review_findings"], "applies_to": ["fix"]},
+        {"id": "reopen-contract", "text": "If the accepted requirement itself is inconsistent, reopen its standard.",
+         "material_refs": ["review_requirements"], "applies_to": ["reopen"]},
+    ]}
+
+
 def test_h08_old_actual_pass_cannot_reach_done_after_approved_contract_change(
         tmp_path, monkeypatch, capsys):
     root, owner, _claim, st, _target = _conductor_h_fixture(tmp_path)
@@ -3969,9 +3985,7 @@ def test_h08_old_actual_pass_cannot_reach_done_after_approved_contract_change(
         "review_findings": json.dumps(old_run),
         "uncovered_scope": "isolated contract fixture; no product deployment claim",
     }
-    preparation = {"prepared_at": "2026-11-10T00:00:00Z", "basis_catalog": [{
-        "id": "actual-old-command", "text": "The submitted original-contract check actually exited0.",
-        "material_refs": ["review_evidence", "review_findings"], "applies_to": ["pass"]}]}
+    preparation = _qg_review_criteria("actual-old-command", "The submitted original-contract check actually exited0.")
     qg_client = decision.DecisionClient(decision.DecisionConfig(enabled=True, project_root=root),
         decision.FakeBackend([decision.BackendOutcome(True, None, False, {"decision_selection": {"value": str("pass") + "A", "confidence": 0.95}}, 0)]))
     answer = qg_client.request_prepared("dp-QG", material, preparation,
@@ -4131,9 +4145,9 @@ def _actual_reverification_qg(root, owner, receipt, logical_id):
             pathlib.Path(receipt["result"]["stdout_path"]).relative_to(root).as_posix() + ":1"],
         "review_findings": json.dumps({"receipt_sha256": receipt_sha, "actual_result": receipt["result"]}),
         "uncovered_scope": "isolated original AC-001; no production deployment claim"}
-    preparation = {"prepared_at": "2026-11-10T00:00:00Z", "basis_catalog": [{
-        "id": "actual-current-execution", "text": "The original dispatched command exited0 against current AC-001.",
-        "material_refs": ["review_evidence", "review_findings"], "applies_to": ["pass"]}]}
+    preparation = _qg_review_criteria(
+        "actual-current-execution", "The original dispatched command exited0 against current AC-001.",
+    )
     client = decision.DecisionClient(decision.DecisionConfig(enabled=True, project_root=root),
         decision.FakeBackend([decision.BackendOutcome(True, None, False, {"decision_selection": {"value": str("pass") + "A", "confidence": 0.95}}, 0)]))
     answer = client.request_prepared("dp-QG", material, preparation,
@@ -4182,8 +4196,10 @@ def test_h08_original_dispatched_reverification_actual_red_green_and_done_consum
     assert passed["result"]["red_counts"]["returncode"] == 0
     assert "actual_current_contract=true" in pathlib.Path(passed["result"]["stdout_path"]).read_text(encoding="utf-8")
     report = _actual_reverification_qg(root, owner, passed, "actual-current-l3")
-    state, _reason = conductor._done_transaction(root, st, owner, report)
-    assert state == "gated" and phase_calls == [(owner, "done")]
+    state, reason = conductor._done_transaction(root, st, owner, report)
+    assert state == "gated" and "required approval is unresolved" in reason
+    assert phase_calls == []
+    assert conductor.current_contract_done_problems(key_dir) == []
     qg_files = list((key_dir / "evidence").glob("quality-gate-report-*.md"))
     assert len(qg_files) == 1 and "PASS" in (key_dir / "pm-state.md").read_text(encoding="utf-8")
     retained = {path: path.read_bytes() for path in qg_files}
@@ -4237,8 +4253,10 @@ def test_h08_formatting_only_current_contract_reuses_actual_reverification(
     path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
     phase_calls = []
     monkeypatch.setattr(advance, "advance", lambda *args, **kwargs: phase_calls.append(args) or (1, "", "stop"))
-    assert conductor._done_transaction(root, st, owner, report)[0] == "gated"
-    assert len(phase_calls) == 1
+    state, reason = conductor._done_transaction(root, st, owner, report)
+    assert state == "gated" and "required approval is unresolved" in reason
+    assert phase_calls == []
+    assert conductor.current_contract_done_problems(key_dir) == []
     assert len(list((key_dir / "evidence").glob("quality-gate-report-*.md"))) == 1
 
 

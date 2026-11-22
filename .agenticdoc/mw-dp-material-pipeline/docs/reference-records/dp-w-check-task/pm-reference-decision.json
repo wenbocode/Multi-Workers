@@ -1,0 +1,39 @@
+{
+  "record_kind": "current_session_pm_reference_adjudication",
+  "recorded_on": "2026-11-19",
+  "author": "Codex PM 当前设计整理会话",
+  "historical_runtime_pm_record": null,
+  "scope": "针对所列真实API回包的离线PM参考裁定；不是原生产窗口已采纳/执行的记录",
+  "model_wire_id": "investigateA",
+  "decoded_choice": "investigate",
+  "basis_id": "investigateA-basis",
+  "finding_ids": [],
+  "remaining_ids": [],
+  "summary": "接回investigate：由实际Worker按probe读编码说明后重评；PM不代其自评。",
+  "disposition": "accept-worker-direction-as-reference",
+  "reasoning": [
+    "ASCII样本通过不能证明非ASCII正确，当前编码约定未知。",
+    "样例给出一次合法read、至多1024字节、原8分钟边界，可做有界补取。"
+  ],
+  "follow_up": [
+    "由原实际Worker读取encoding-note；说明缺失仍保留未知，读取结束或原停止/预算到界即重评。",
+    "PM接回应检查实际读结果、剩余任务与交付，不把investigate直接标为完成。"
+  ],
+  "must_preserve": [
+    "实际Worker责任身份",
+    "一次read/1024字节/原8分钟约束"
+  ],
+  "must_not_claim": [
+    "PM已替Worker读过说明",
+    "非ASCII验证已通过"
+  ],
+  "pending_real_host_checks": [
+    "原真实owner/matter/run与对象版本",
+    "原权限/取消/停止和当前余额",
+    "该DP必要独审/业务writer前提"
+  ],
+  "runtime_business_acceptance": null,
+  "actual_dispatch_run_ids": [],
+  "actual_business_receipt": null,
+  "production_executed": false
+}
