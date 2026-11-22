@@ -23,7 +23,7 @@ import * as path from "node:path";
 import { DECIDE_REGISTRY, DECIDE_REGISTRY_RETIRED, type DecideRegistryField } from "./decide-registry.generated.ts";
 
 import { currentClaimId } from "./implementation-gate.ts";
-import { IndexAuthorityError, type IndexEntry, IndexStore, keyNameRefusal, normalizeKey } from "./index-store.ts";
+import { type IndexEntry, IndexStore, keyNameRefusal, normalizeKey } from "./index-store.ts";
 import { agenticdocRoot } from "./paths.ts";
 
 /** The three knobs of AC-016. Order is frozen (parity with Python). */
@@ -63,30 +63,6 @@ export interface ResolvedDecidePolicy {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-/** P0 defaults off. The framework handler still owns the policy verdict. */
-export function gateApprovalRow(projectDir: string): "on" | "off" | "unreadable" {
-	const file = path.join(projectDir, ".mw", "decide-points.json");
-	let config: unknown;
-	try {
-		config = JSON.parse(fs.readFileSync(file, "utf8"));
-	} catch (err) {
-		return (err as NodeJS.ErrnoException).code === "ENOENT" ? "off" : "unreadable";
-	}
-	if (!isRecord(config) || !isRecord(config.points)) return "unreadable";
-	const row = config.points["dp-gate-approve"];
-	if (row === undefined) return "off";
-	if (
-		!isRecord(row) ||
-		(Object.hasOwn(row, "enabled") && typeof row.enabled !== "boolean") ||
-		(Object.hasOwn(row, "mode") && row.mode !== "auto" && row.mode !== "suggest") ||
-		(Object.hasOwn(row, "note") && typeof row.note !== "string") ||
-		(Object.hasOwn(row, "tier") && typeof row.tier !== "string")
-	) {
-		return "unreadable";
-	}
-	return row.enabled === true ? "on" : "off";
 }
 
 function readJsonRecord(file: string): Record<string, unknown> | undefined {
@@ -195,6 +171,103 @@ export function resolveDecidePolicy(dpId: string, projectDir: string): ResolvedD
 		problems,
 		pointsPath,
 		decidePath,
+	};
+}
+
+/** Read-only pre-transport availability facts from the SAME two config files
+ *  `resolveDecidePolicy` already owns. Only EXPLICIT declarations become known
+ *  facts; an absent/ambiguous/unreadable value stays `unknown` so Python keeps
+ *  the authorization verdict (D-036). This is not a new config source and never
+ *  writes a live switch. `unconfigured` means the transport file is missing
+ *  (`decision.py:DecisionConfig.from_project`); a corrupt file is `unknown`.
+ *  `signoffDisabled` is a business exemption, never a service fault. */
+/** Current effective per-dp mode fact from the SAME points row. Python's
+ *  `_parse_row` starts at the registry default (`default_mode`, "auto" for
+ *  every active entry), accepts only `auto|suggest` as a declared value and
+ *  force-disables the row on an illegal declaration (L3). A missing table is
+ *  that default; a corrupt/unreadable table or a non-object row stays `unknown`
+ *  under the existing reader-error contract (Python keeps the verdict). This
+ *  is a cache-invalidation fact, never a permission or budget grant. */
+export type DecideModeFact = "auto" | "suggest" | "invalid" | "unknown";
+
+export interface DecideConfigFacts {
+	transport: "on" | "off" | "unconfigured" | "unknown";
+	dpDisabled: boolean;
+	signoffDisabled: boolean;
+	/** Current effective per-dp mode from the real row reader. */
+	mode: DecideModeFact;
+	/** Relative config paths actually consulted (L0 evidence refs). */
+	configRefs: string[];
+}
+
+export const DECIDE_CONFIG_REFS = {
+	points: ".mw/decide-points.json",
+	decide: ".mw/decide.json",
+} as const;
+
+/** Real per-dp row validity from the SAME points row reader. Mirrors Python
+ *  `_parse_row` force_off (`decision_points.py`): an illegally declared
+ *  enabled (non-bool), mode (not auto|suggest) or note/tier (non-string)
+ *  closes the row. Policy numbers are deliberately NOT here: an illegal
+ *  value only falls back through `resolveDecidePolicy` and never closes the
+ *  dp. A missing table / non-object row is owned by the caller's reader-error
+ *  contract, never turned into a trusted auto or a known off fact here. */
+function rowForcesOff(row: Record<string, unknown>): boolean {
+	if (Object.hasOwn(row, "enabled") && typeof row.enabled !== "boolean") return true;
+	if (Object.hasOwn(row, "mode") && row.mode !== "auto" && row.mode !== "suggest") return true;
+	if (Object.hasOwn(row, "note") && typeof row.note !== "string") return true;
+	if (Object.hasOwn(row, "tier") && typeof row.tier !== "string") return true;
+	return false;
+}
+
+/** This P0 entry defaults off. Only an explicit, valid enabled row can route
+ * a pending gate to automated handling. The handler owns the policy verdict. */
+export function gateApprovalRow(projectDir: string): "on" | "off" | "unreadable" {
+	const file = path.join(projectDir, DECIDE_CONFIG_REFS.points);
+	let config: unknown;
+	try {
+		config = JSON.parse(fs.readFileSync(file, "utf8"));
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code === "ENOENT" ? "off" : "unreadable";
+	}
+	if (!isRecord(config) || !isRecord(config.points)) return "unreadable";
+	const row = config.points["dp-gate-approve"];
+	if (row === undefined) return "off";
+	if (!isRecord(row) || rowForcesOff(row)) return "unreadable";
+	return row.enabled === true ? "on" : "off";
+}
+
+export function readDecideConfigFacts(dpId: string, projectDir: string): DecideConfigFacts {
+	const pointsPath = path.join(projectDir, DECIDE_CONFIG_REFS.points);
+	const decidePath = path.join(projectDir, DECIDE_CONFIG_REFS.decide);
+	const points = readJsonRecord(pointsPath);
+	const rawPoints = points?.points;
+	const row =
+		!decisionIdRefusal(dpId) && isRecord(rawPoints) && Object.hasOwn(rawPoints, dpId) ? rawPoints[dpId] : undefined;
+	// A non-object row is NOT a known off fact here: Python's layered row
+	// validation owns it, so the child keeps its say. The effective off fact
+	// also covers the SAME row's force_off declarations (illegal enabled/mode/
+	// note/tier), so a non-bool enabled invalidates the matter cache and closes
+	// the dp instead of replaying a cached success.
+	const dpDisabled = isRecord(row) && (row.enabled === false || rowForcesOff(row));
+	let mode: DecideModeFact = "auto";
+	if (points === undefined && fs.existsSync(pointsPath)) mode = "unknown";
+	else if (isRecord(rawPoints) && Object.hasOwn(rawPoints, dpId) && !isRecord(row)) mode = "unknown";
+	else if (isRecord(row) && Object.hasOwn(row, "mode")) {
+		const declared = row.mode;
+		mode = declared === "auto" || declared === "suggest" ? declared : "invalid";
+	}
+	const decide = readJsonRecord(decidePath);
+	let transport: DecideConfigFacts["transport"] = "unknown";
+	if (decide === undefined) transport = fs.existsSync(decidePath) ? "unknown" : "unconfigured";
+	else if (decide.enabled === false) transport = "off";
+	else if (decide.enabled === true) transport = "on";
+	return {
+		transport,
+		dpDisabled,
+		signoffDisabled: decide?.signoff === "disable",
+		mode,
+		configRefs: [DECIDE_CONFIG_REFS.points, DECIDE_CONFIG_REFS.decide],
 	};
 }
 
@@ -524,11 +597,12 @@ export function selectedDecisionBasis(
 
 /** Stable machine reason for one PM claim inspection. `ok` means a unique,
  *  valid, self-owned active claim resolved; every other value is the exact
- *  failing observation from the SAME single readAuthorityRows/evaluate pass that produced
+ *  failing observation from the SAME single readAll/evaluate pass that produced
  *  `key === undefined`. The two index-level reasons deliberately do NOT claim a
- *  precision the reader cannot have: missing or empty authority yields no rows,
- *  and an unsupported row refuses the entire snapshot. Both are reported as
- *  index-empty-or-unparseable; other read errors are reported as unreadable. */
+ *  precision the reader cannot have: readAll drops malformed lines and maps a
+ *  missing file to `[]`, so missing / empty / all-lines-malformed are
+ *  indistinguishable (index-empty-or-unparseable, explicitly unknown) and a
+ *  thrown read can only be reported as unreadable, never as "no claim". */
 export type PmClaimReason =
 	| "ok"
 	| "index-unreadable"
@@ -568,7 +642,7 @@ function classifyIneligibleClaim(
 	return "no-active-claim";
 }
 
-/** Resolve the live claim AND its reason from ONE IndexStore.readAuthorityRows snapshot.
+/** Resolve the live claim AND its reason from ONE IndexStore.readAll snapshot.
  *  This is the single authority: claimedPmKey delegates to it (value-equal),
  *  and the PM decision tool reads `.reason` for the refusal diagnosis. The
  *  filter, normalizeKey, exact `===` claimId comparison, keyNameRefusal and the
@@ -577,7 +651,7 @@ function classifyIneligibleClaim(
 export function inspectPmClaim(projectDir: string, requested?: string): PmClaimInspection {
 	try {
 		const self = currentClaimId();
-		const rows = new IndexStore(agenticdocRoot(projectDir)).readAuthorityRows();
+		const rows = new IndexStore(agenticdocRoot(projectDir)).readAll();
 		const eligible = rows.filter(
 			(row) =>
 				row.status === "active" &&
@@ -591,12 +665,8 @@ export function inspectPmClaim(projectDir: string, requested?: string): PmClaimI
 		if (rows.filter((row) => normalizeKey(row.key) === normalizeKey(key)).length !== 1)
 			return { key: undefined, reason: "ambiguous-claim" };
 		return { key, reason: "ok" };
-	} catch (error) {
-		const reason =
-			error instanceof IndexAuthorityError && error.code === "unsupported-authority-row"
-				? "index-empty-or-unparseable"
-				: "index-unreadable";
-		return { key: undefined, reason };
+	} catch {
+		return { key: undefined, reason: "index-unreadable" };
 	}
 }
 

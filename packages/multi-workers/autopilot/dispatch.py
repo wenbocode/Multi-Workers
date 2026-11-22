@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import datetime
 import json
 import math
 import os
@@ -64,6 +65,7 @@ from autopilot import config as autopilot_config  # noqa: E402
 from autopilot import effective_config  # noqa: E402
 from autopilot import timeline as timeline_mod  # noqa: E402
 from autopilot import write_face as write_face_mod  # noqa: E402
+from autopilot.ue_runtime_paths import external_write_root, is_engine_project_output  # noqa: E402
 
 # ── Typed registry (D-107) ────────────────────────────────────────────────────
 
@@ -1177,9 +1179,11 @@ def dispatch_card(project_root: pathlib.Path, owner: str, stem: str) -> dict | N
     timeout = mw_common.read_task_header_scalar(prologue, "timeout")
     decimal_minutes = r"[+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
     minutes = float(timeout) if timeout and re.fullmatch(decimal_minutes, timeout) else 0
+    parent_worker_run = mw_common.read_task_header_scalar(text, "parent_worker_run")
     return {
         "path": card_path,
         "sha256": digest,
+        **({"parent_worker_run": parent_worker_run} if parent_worker_run is not None else {}),
         "timeout": timeout if math.isfinite(minutes) and minutes > 0 else None,
         "supersedes": mw_common.read_task_header_scalar(prologue, "supersedes"),
         "worker_dir": f".agenticdoc/{owner}/workers/{task_key_for(owner, stem)}",
@@ -1190,6 +1194,82 @@ def dispatch_card(project_root: pathlib.Path, owner: str, stem: str) -> dict | N
         "claim_errors": claims_block["errors"],
         **sections,
     }
+
+
+def dispatch_parent_refusal(
+    project: pathlib.Path, owner: str, child: str, envelope: str, *,
+    allocation: dict | None = None, launching: bool = False,
+) -> str | None:
+    """Check the exact parent run named by a pinned card before queue publication."""
+    parent = mw_common.read_task_header_scalar(envelope, "parent_worker_run")
+    relative = mw_common.read_task_header_scalar(envelope, "card_path") or ""
+    fixed = False
+    if re.fullmatch(r"tasks/(?:[\w.-]+/)*[\w.-]+\.md", relative) and ".." not in relative.split("/") and re.fullmatch(r"[\w.-]+", owner) and owner not in {".", ".."}:
+        candidate = project.resolve() / ".agenticdoc" / owner / relative
+        pin = mw_common.read_task_header_scalar(envelope, "card_sha256")
+        if pin and (not candidate.is_file() or candidate.resolve() != candidate or card_digest(candidate) != pin):
+            return "resource-limited: pinned dispatch card unavailable or changed"
+        if candidate.is_file() and candidate.resolve() == candidate:
+            fixed = bool(re.search(r"^\s*-\s*.*`parent_matter_ref`\s*[:：]",
+                                   candidate.read_text(encoding="utf-8"), re.M))
+    fixed_refusal = "resource-limited: fixed child requires original budgeted PM dispatch"
+    if parent is None:
+        return fixed_refusal if fixed and not launching else None
+    invalid = f"parent-run-unavailable: {parent or 'empty binding'}"
+    task, sep, started = parent.partition("@")
+    if (not sep or not started or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", task)
+            or task == child or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", owner)):
+        return invalid
+    relative_card = mw_common.read_task_header_scalar(envelope, "card_path") or ""
+    if (not re.fullmatch(r"tasks/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md", relative_card)
+            or any(part in {".", ".."} for part in relative_card.split("/"))):
+        return invalid
+    key_dir = project.resolve() / ".agenticdoc" / owner
+    card = key_dir / relative_card
+    run_file = key_dir / "workers" / task / "run.json"
+    try:
+        if datetime.datetime.fromisoformat(started).tzinfo is None:
+            return invalid
+        if any(file.resolve(strict=True) != file for file in (card, run_file)):
+            return invalid
+        if (card_digest(card) != mw_common.read_task_header_scalar(envelope, "card_sha256")
+                or mw_common.read_task_header_scalar(card.read_text(encoding="utf-8"), "parent_worker_run") != parent):
+            return invalid
+        if run_file.stat().st_size > 1024 * 1024:
+            return invalid
+        run = json.loads(run_file.read_text(encoding="utf-8"))
+        if (not isinstance(run, dict) or run.get("run_id") != parent or run.get("task_key") != task
+                or run.get("owner_key") != owner):
+            return invalid
+        begun = run.get("started_at")
+        if not isinstance(begun, str) or datetime.datetime.fromisoformat(begun).tzinfo is None:
+            return invalid
+        status = run.get("status")
+        if status in ("canceled", "stopped", "failed-by-stop") or (status == "failed" and run.get("aborted") is True):
+            return f"parent-cancel: {parent}"
+        if status == "failed" and run.get("stop_kind") == "worker-deadline":
+            if not fixed:
+                return f"worker-deadline: {parent}"
+            try:
+                pin = card_digest(card)
+                approval = replan_tasks.deadline_successor(project.resolve(), owner, child, relative_card, pin, parent)
+                budget = replan_tasks.deadline_budget(project.resolve(), owner, child, relative_card, pin, approval, envelope)
+                if allocation is not None:
+                    allocation.update(budget)
+                elif (mw_common.read_task_header_scalar(envelope, "deadline_successor") != "yes"
+                      or mw_common.read_task_header_scalar(envelope, "fixed_child_steps") != str(budget["steps"])
+                      or mw_common.read_task_header_scalar(envelope, "fixed_child_deadline") != budget["deadline"]):
+                    return "resource-limited: deadline successor envelope allocation mismatch"
+            except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
+                return f"worker-deadline: {parent}: {exc}"
+            return None
+        if mw_common.read_task_header_scalar(envelope, "deadline_successor") == "yes":
+            return "resource-limited: deadline successor source is no longer a timed-out run"
+        if fixed and not launching:
+            return fixed_refusal
+        return None if isinstance(status, str) and (status == "running" or status in mw_common.RUN_TERMINAL_STATUSES) else invalid
+    except (OSError, ValueError, RuntimeError):
+        return invalid
 
 
 # ── S2 recovery-contract checklist (mw-worker-output-contract T-06, AC-003) ───
@@ -1549,6 +1629,8 @@ def render_task_md(
             lines.append(f"card_path: {card_path}")
         if card_sha256:
             lines.append(f"card_sha256: {card_sha256}")
+        if card.get("parent_worker_run") is not None:
+            lines.append(f"parent_worker_run: {card['parent_worker_run']}")
     if phase:
         lines.append(f"phase: {phase}")
     if images:   # None / "" -> zero bytes (AC-009); declared -> images: yes|no
@@ -1734,20 +1816,28 @@ def canonical_write_face_path(absolute_path: str) -> str:
 
 
 def write_face_read_only_allowed_roots(config: dict) -> list[str]:
-    """Build-artifact exceptions inside the read-only Engine root.
-
-    Derived only from the production dual/`engine_writable=false` workspace
-    config (mw-dual-build-artifacts design §4): the frozen three literal UBT
-    artifact directories under the configured Engine root.  Every other mode
-    (single/partition) and an explicit Engine write grant yield no exception,
-    so the read-only rule stays all-or-nothing there.
-    """
+    """Generated output directories inside a read-only Dual Engine root."""
     if config["mode"] != "dual" or config.get("engine_writable") is True:
         return []
     engine_root = config.get("engine_root")
     if not engine_root:
         return []
     return mw_common.engine_build_artifact_roots(engine_root)
+
+
+def parse_workspace_write_face(project_root: pathlib.Path, text: str, config: dict | None = None):
+    if config is None:
+        config = mw_common.load_target_config(project_root)
+    roots = write_face_roots(project_root, config)
+    engine = config.get("engine_root") if config["mode"] == "dual" else None
+    return write_face_mod.parse_write_face(
+        text, base=write_face_base(project_root), case_insensitive=write_face_case_insensitive(), roots=roots,
+        canonicalize=canonical_write_face_path if roots is not None else None,
+        external_root=external_write_root if engine and os.name == "nt" else None,
+        read_only_roots=[engine] if engine and config.get("engine_writable") is not True else [],
+        read_only_allowed_roots=write_face_read_only_allowed_roots(config),
+        read_only_allows=is_engine_project_output,
+    )
 
 
 def _card_write_face_entries(card: dict | None) -> list[str] | None:
@@ -1826,7 +1916,7 @@ def _write_face_audit(
 
 
 def _parse_inflight_write_face(
-    row: dict[str, str], *, base: str, case_insensitive: bool, roots: Sequence[str] | None = None
+    row: dict[str, str], project_root: pathlib.Path, config: dict,
 ) -> write_face_mod.ParseResult | write_face_mod.WriteFace:
     """The in-flight worker's own task.md `write_face:` head.
 
@@ -1841,10 +1931,7 @@ def _parse_inflight_write_face(
         text = pathlib.Path(path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return write_face_mod.Undeclared()
-    return write_face_mod.parse_write_face(
-        text, base=base, case_insensitive=case_insensitive, roots=roots,
-        canonicalize=canonical_write_face_path if roots is not None else None,
-    )
+    return parse_workspace_write_face(project_root, text, config)
 
 
 def _write_face_verdict(
@@ -1875,21 +1962,9 @@ def _write_face_verdict(
     would manufacture a permanent failure. A card-backed dispatch stays
     author-fixable, so its undeclared face is held serial-only.
     """
-    base = write_face_base(project_root)
     if target_config is None:
         target_config = mw_common.load_target_config(project_root)
-    roots = write_face_roots(project_root, target_config)
-    case_insensitive = write_face_case_insensitive()
-    parsed = write_face_mod.parse_write_face(
-        content, base=base, case_insensitive=case_insensitive, roots=roots,
-        canonicalize=canonical_write_face_path if roots is not None else None,
-        read_only_roots=(
-            [target_config["engine_root"]]
-            if target_config["mode"] == "dual" and target_config["engine_root"] is not None
-            and target_config.get("engine_writable") is not True else []
-        ),
-        read_only_allowed_roots=write_face_read_only_allowed_roots(target_config),
-    )
+    parsed = parse_workspace_write_face(project_root, content, target_config)
     rows = mw_common.parse_workers_file(mw_common.workers_path(project_root))
     in_flight = [
         row for row in rows
@@ -1944,7 +2019,7 @@ def _write_face_verdict(
     for row in in_flight:
         other_key = str(row.get("task_key", ""))
         other_face = _parse_inflight_write_face(
-            row, base=base, case_insensitive=case_insensitive, roots=roots
+            row, project_root, target_config
         )
         if not isinstance(other_face, write_face_mod.WriteFace):
             continue  # a side that did not declare cannot prove an overlap (D-003)
@@ -2337,6 +2412,17 @@ def dispatch(
                 task_md=None,
                 row_verified=False,
             )
+
+        deadline_allocation: dict = {}
+        parent_refusal = dispatch_parent_refusal(project_root, owner, task_key, content, allocation=deadline_allocation)
+        if parent_refusal is not None:
+            return reject(parent_refusal, parent_refusal, ev="skip")
+        if deadline_allocation:
+            if row["cli"] != "pi" or not content.startswith("---\n"):
+                return reject("resource-limited", "deadline successor requires a pi task envelope", ev="skip")
+            content = ("---\ndeadline_successor: yes\n"
+                       f"fixed_child_steps: {deadline_allocation['steps']}\n"
+                       f"fixed_child_deadline: {deadline_allocation['deadline']}\n" + content[4:])
 
         # 1a. task.md (before the queue row — the crash gap is the orphan
         #     shape that reconciliation heals; see module docstring / D-102).

@@ -6,10 +6,13 @@ import type { ModelRegistry } from "../../../core/model-registry.ts";
 import { TERMINAL_WORKER_STATUSES } from "../autopilot/status-model.ts";
 import { RAG_MARKER_V1, type RagTaskMeta, renderRagBlock } from "../rag/block.ts";
 import { loadRagConfig } from "../rag/config.ts";
+import { sha256EolNormalizedBytes } from "../shared/card-digest.ts";
 import { LOCAL_CODEX_PROVIDER } from "../shared/codex-proxy.ts";
 import { PREFIX_TO_PROVIDER_ID, parseModelValue } from "../shared/dispatch-models.ts";
 import { dualEnginePolicyLines } from "../shared/engine-policy.ts";
 import { acquireLock } from "../shared/file-lock.ts";
+import { allocationFile, deadlineAllocationFile, FIXED_PARENT_FIELD } from "../shared/fixed-child-budget.ts";
+import { atomicWriteJson } from "../shared/local-selection-store.ts";
 import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
 import {
@@ -28,7 +31,12 @@ import {
 	type WriteFaceRejectCode,
 	writeFacesOverlap,
 } from "../shared/write-face.ts";
-import { replanAdmission } from "./replan.ts";
+import { replanAdmission, requestReplan } from "./replan.ts";
+import {
+	buildMatterBudgetFromCard,
+	dispatchParentRunRefusal,
+	type ProductionRuntimeHost,
+} from "./runtime-host-adapter.ts";
 
 /** Sentinel opening the legacy (dual/single) profile block — makes
  * re-dispatch idempotent (the block is appended at most once per task.md).
@@ -340,11 +348,90 @@ export interface ImageCapabilityFacts {
 export type ImageCapabilityLookup = (facts: ImageCapabilityFacts) => ImageCapability;
 
 export interface DispatchTaskOptions {
-	card?: { headerPath: string; sha256: string; resolvedPath: string };
+	budgetHost?: ProductionRuntimeHost;
+	card?: { headerPath: string; sha256: string; resolvedPath: string; sections?: { parentWorkerRun?: string } };
 	publishCard?: () => void;
+	signal?: AbortSignal;
 	imageCapability?: ImageCapabilityLookup;
 	/** Runtime catalog supplied by the PM window. UI wiring is owned by T30. */
 	modelRegistry?: ModelRegistry;
+}
+
+export function deadlineOrphanEnvelope(taskPath: string): string | undefined {
+	try {
+		const dir = path.dirname(taskPath);
+		if (
+			fs.realpathSync(dir) !== path.resolve(dir) ||
+			fs.readdirSync(dir).some((name) => name !== "task.md") ||
+			!fs.lstatSync(taskPath).isFile()
+		)
+			return undefined;
+		const text = fs.readFileSync(taskPath, "utf8");
+		return readTaskHeaderScalar(text, "parent_worker_run") && readTaskHeaderScalar(text, "card_sha256")
+			? text
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function parentRunRefusal(
+	root: string,
+	owner: string,
+	task: string,
+	envelope: string,
+	card: DispatchTaskOptions["card"],
+): DispatchRefusal | undefined {
+	const relative = card?.headerPath ?? readTaskHeaderScalar(envelope, "card_path");
+	const pin = card?.sha256 ?? readTaskHeaderScalar(envelope, "card_sha256");
+	const envelopeRef = card?.sections?.parentWorkerRun ?? readTaskHeaderScalar(envelope, "parent_worker_run");
+	let reason: string | undefined;
+	let cardRef: string | undefined;
+	if (
+		relative?.startsWith("tasks/") &&
+		relative.split("/").every((part) => /^[A-Za-z0-9._-]+$/.test(part) && part !== "." && part !== "..")
+	) {
+		const cardPath = card?.resolvedPath ?? path.join(root, owner, relative);
+		try {
+			const bytes = fs.readFileSync(cardPath);
+			if (!card && pin && sha256EolNormalizedBytes(bytes) !== pin)
+				return {
+					ok: false,
+					code: "resource-limited",
+					reason: "dispatch-card-drift",
+					detail: "Pinned recovery card changed",
+				};
+			if (!card && FIXED_PARENT_FIELD.test(bytes.toString("utf8")))
+				return {
+					ok: false,
+					code: "resource-limited",
+					reason: "fixed-child-recovery",
+					detail: "Fixed child requires original budgeted dispatch",
+				};
+			cardRef = readTaskHeaderScalar(bytes.toString("utf8"), "parent_worker_run");
+			if ((cardRef !== undefined || envelopeRef !== undefined) && sha256EolNormalizedBytes(bytes) !== pin)
+				reason = "parent-run-unavailable: dispatch card pin changed";
+		} catch {
+			if (!card && pin)
+				return {
+					ok: false,
+					code: "resource-limited",
+					reason: "dispatch-card-unavailable",
+					detail: "Pinned recovery card unavailable",
+				};
+			// A declared envelope binding requires the pinned card below.
+		}
+	}
+	if (reason === undefined && envelopeRef !== undefined && envelopeRef !== cardRef)
+		reason = "parent-run-unavailable: dispatch envelope and card differ";
+	if (reason === undefined && cardRef !== undefined) reason = dispatchParentRunRefusal(root, owner, task, cardRef);
+	if (reason === undefined) return undefined;
+	const code = reason.startsWith("parent-cancel:")
+		? "parent-cancel"
+		: reason.startsWith("worker-deadline:")
+			? "worker-deadline"
+			: "parent-run-unavailable";
+	return { ok: false, code, reason, detail: reason };
 }
 
 // Use the installed launcher's read-only resolver. It owns task.md, YAML
@@ -417,6 +504,13 @@ export async function dispatchTask(
 	store: WorkerStore,
 	dispatchOptions: DispatchTaskOptions = {},
 ): Promise<DispatchOutcome> {
+	const userStop: DispatchRefusal = {
+		ok: false,
+		code: "user-stop",
+		reason: "user-stop",
+		detail: "Worker dispatch cancelled before queue publication.",
+	};
+	if (dispatchOptions.signal?.aborted) return userStop;
 	const now = new Date().toISOString();
 	const full: WorkerEntry = {
 		...entry,
@@ -432,6 +526,7 @@ export async function dispatchTask(
 	// entry point (D-114: one writer implementation, no byte-mirror).
 	const release = await acquireLock(store.lockFilePath);
 	try {
+		if (dispatchOptions.signal?.aborted) return userStop;
 		const controlRoot = writeFaceBase(path.dirname(store.queuePath));
 		const config = resolveDispatchWorkspaceConfig(controlRoot);
 		const options = workspaceWriteFaceOptions(controlRoot, config);
@@ -443,7 +538,46 @@ export async function dispatchTask(
 		const owner = workerOwnerKey(full);
 		const oldCard = dispatchOptions.card;
 		const inputPath = oldCard?.resolvedPath ?? entry.taskPath;
-		const prior = fs.existsSync(inputPath) ? fs.readFileSync(inputPath, "utf8") : "";
+		const pinnedBytes = fs.existsSync(inputPath) ? fs.readFileSync(inputPath) : Buffer.alloc(0);
+		const prior = pinnedBytes.toString("utf8");
+		let deadlineRequest:
+			| { operation: string; key: string; task: string; card: string; card_hash: string; parent: string }
+			| undefined;
+		let ownedDeadlineGrant: string | undefined;
+		const checkStop = () => {
+			if (dispatchOptions.signal?.aborted) {
+				if (ownedDeadlineGrant) atomicWriteJson(`${ownedDeadlineGrant}.cancelled`, { reason: "user-stop" });
+				return userStop;
+			}
+			const refusal = parentRunRefusal(path.dirname(store.queuePath), owner, entry.taskKey, prior, oldCard);
+			return deadlineRequest && refusal?.code === "worker-deadline" ? undefined : refusal;
+		};
+		const stopped = checkStop();
+		let approval: Record<string, unknown> | undefined;
+		if (stopped) {
+			const parent = oldCard?.sections?.parentWorkerRun ?? readTaskHeaderScalar(prior, "parent_worker_run");
+			if (stopped.code !== "worker-deadline" || !oldCard || !parent || !FIXED_PARENT_FIELD.test(prior))
+				return stopped;
+			deadlineRequest = {
+				operation: "deadline-successor",
+				key: owner,
+				task: entry.taskKey,
+				card: oldCard.headerPath,
+				card_hash: oldCard.sha256,
+				parent,
+			};
+			const result = requestReplan(controlRoot, deadlineRequest);
+			if (
+				result.ok !== true ||
+				typeof result.approval !== "object" ||
+				result.approval === null ||
+				!("claim" in result.approval) ||
+				typeof result.approval.claim !== "string"
+			) {
+				return { ...stopped, detail: String(result.reason ?? stopped.detail) };
+			}
+			approval = { ...result.approval };
+		}
 		const reason = replanAdmission(
 			controlRoot,
 			owner,
@@ -458,7 +592,27 @@ export async function dispatchTask(
 			readTaskHeaderScalar(prior, "supersedes") ?? undefined,
 		);
 		if (reason) return { ok: false, code: "replan-required", reason, detail: reason };
-		dispatchOptions.publishCard?.();
+		const beforePublish = checkStop();
+		if (beforePublish) return beforePublish;
+		if (dispatchOptions.publishCard && fs.existsSync(path.dirname(entry.taskPath))) {
+			const orphan = deadlineRequest && deadlineOrphanEnvelope(entry.taskPath);
+			if (
+				!deadlineRequest ||
+				!orphan ||
+				readTaskHeaderScalar(orphan, "card_path") !== deadlineRequest.card ||
+				readTaskHeaderScalar(orphan, "card_sha256") !== deadlineRequest.card_hash ||
+				readTaskHeaderScalar(orphan, "parent_worker_run") !== deadlineRequest.parent
+			) {
+				return {
+					ok: false,
+					code: "resource-limited",
+					reason: "dispatch-task-exists",
+					detail: "Existing task cannot be recovered.",
+				};
+			}
+		} else {
+			dispatchOptions.publishCard?.();
+		}
 		let content = "";
 		try {
 			content = fs.readFileSync(entry.taskPath, "utf8");
@@ -502,7 +656,128 @@ export async function dispatchTask(
 			vision = { checked: content, model };
 		}
 
+		const beforeProfile = checkStop();
+		if (beforeProfile) return beforeProfile;
 		injectWorkspaceProfile(entry.taskPath, taskConfig, vision);
+		const beforeEnqueue = checkStop();
+		if (beforeEnqueue) return beforeEnqueue;
+		if (
+			oldCard &&
+			(sha256EolNormalizedBytes(pinnedBytes) !== oldCard.sha256 ||
+				sha256EolNormalizedBytes(fs.readFileSync(inputPath)) !== oldCard.sha256)
+		)
+			return {
+				ok: false,
+				code: "resource-limited",
+				reason: "dispatch-card-drift",
+				detail: "Dispatch card changed before queue publication",
+			};
+		if (oldCard && FIXED_PARENT_FIELD.test(prior)) {
+			const bytes = fs.readFileSync(inputPath);
+			const budget = buildMatterBudgetFromCard(bytes.toString("utf8"), {
+				cardRef: oldCard.headerPath,
+				cardSha256: oldCard.sha256,
+				runStartedAt: now,
+				runRef: entry.taskKey,
+				indexRef: "_index.parallel",
+			});
+			const parent = budget.ok && budget.value.budget.parent_matter_ref;
+			if (entry.cli !== "pi")
+				return {
+					ok: false,
+					code: "resource-limited",
+					reason: "unsupported-worker-budget",
+					detail: "Worker cannot enforce fixed allocation",
+				};
+			const refuseBudget = (reason: string): DispatchRefusal => ({
+				ok: false,
+				code: "resource-limited",
+				reason,
+				detail: reason,
+			});
+			if (sha256EolNormalizedBytes(bytes) !== oldCard.sha256 || !budget.ok || !parent) {
+				return refuseBudget("invalid-child-budget");
+			}
+			const allocation = budget.value.budget;
+			if (
+				deadlineRequest &&
+				(!budget.value.declaration.deadline_iso ||
+					allocation.steps_consumed !== 0 ||
+					allocation.cost_consumed !== 0 ||
+					allocation.no_progress_count !== 0)
+			) {
+				return refuseBudget("deadline successor requires a fresh budget with an absolute deadline");
+			}
+			const steps = Math.min(
+				allocation.max_steps - allocation.steps_consumed,
+				Math.floor(allocation.remaining_cost),
+			);
+			const envelope = fs.readFileSync(entry.taskPath, "utf8");
+			const taskDir = path.dirname(entry.taskPath);
+			const grantFile = deadlineRequest ? deadlineAllocationFile(taskDir, oldCard.sha256) : allocationFile(taskDir);
+			const grant = {
+				task: entry.taskKey,
+				card: oldCard.headerPath,
+				pin: oldCard.sha256,
+				steps,
+				deadline: allocation.deadline,
+			};
+			fs.mkdirSync(path.dirname(grantFile), { recursive: true });
+			if (deadlineRequest) {
+				if (typeof approval?.claim !== "string") return refuseBudget("deadline successor PM claim unavailable");
+				if (!fs.existsSync(grantFile)) {
+					const reserved = dispatchOptions.budgetHost?.reserveDeadlineSuccessor(
+						owner,
+						entry.taskKey,
+						oldCard.sha256,
+						parent,
+						allocation,
+						approval.claim,
+						envelope,
+					);
+					if (!reserved?.ok) return refuseBudget(reserved?.reason ?? "parent-budget-unavailable");
+					atomicWriteJson(grantFile, {
+						...grant,
+						cost: allocation.remaining_cost,
+						approval,
+						authority: reserved.authority,
+					});
+					ownedDeadlineGrant = grantFile;
+				}
+				const verified = requestReplan(controlRoot, { ...deadlineRequest, budget: true, envelope });
+				const afterValidation = checkStop();
+				if (afterValidation) return afterValidation;
+				if (verified.ok !== true)
+					return refuseBudget(String(verified.reason ?? "deadline successor budget unavailable"));
+				ownedDeadlineGrant = grantFile;
+			} else {
+				const reason =
+					dispatchOptions.budgetHost?.reserveDispatchedChild(
+						owner,
+						entry.taskKey,
+						oldCard.sha256,
+						parent,
+						allocation,
+					) ?? "parent-budget-unavailable";
+				if (reason) return refuseBudget(reason);
+				fs.writeFileSync(grantFile, JSON.stringify(grant), { flag: "wx" });
+			}
+			if (!deadlineRequest || readTaskHeaderScalar(envelope, "deadline_successor") !== "yes") {
+				fs.writeFileSync(
+					entry.taskPath,
+					`${deadlineRequest ? "deadline_successor: yes\n" : ""}fixed_child_steps: ${steps}\nfixed_child_deadline: ${allocation.deadline}\n${envelope}`,
+				);
+			} else if (
+				readTaskHeaderScalar(envelope, "fixed_child_steps") !== String(steps) ||
+				readTaskHeaderScalar(envelope, "fixed_child_deadline") !== allocation.deadline
+			) {
+				return refuseBudget("deadline successor orphan envelope allocation mismatch");
+			}
+		}
+		if (deadlineRequest) {
+			const stop = checkStop();
+			if (stop) return stop;
+		}
 		store.upsertWithinLock(full);
 	} finally {
 		release();
@@ -517,7 +792,12 @@ export async function dispatchTask(
  * values are the parse-time codes the shared operator emits, which the
  * conductor refuses with the same code (`dispatch.py:1164`). */
 export type DispatchRefusalCode =
+	| "resource-limited"
 	| "replan-required"
+	| "user-stop"
+	| "parent-cancel"
+	| "worker-deadline"
+	| "parent-run-unavailable"
 	| "write-face-overlap"
 	| "write-face-undeclared"
 	| "image-capability-unproven"

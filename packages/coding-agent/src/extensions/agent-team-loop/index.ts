@@ -1,7 +1,9 @@
 import * as path from "node:path";
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { initiatorRoleFromWorkerTask, registerAskDecisionTool } from "./pm/decision-tool.ts";
+import { registerSubmitDecisionHandoffTool, type SubmitDecisionHostHandle } from "./pm/host-submit.ts";
 import { pmActivate } from "./pm/pm-orchestrator.ts";
+import { ProductionRuntimeHost, registerProductionRuntimeEvents } from "./pm/runtime-host-adapter.ts";
 import { registerLocalCodex } from "./shared/codex-local.ts";
 import { registerContextPolicy } from "./shared/context-extension.ts";
 import { configureDeepSeek } from "./shared/deepseek-provider.ts";
@@ -32,17 +34,14 @@ import { workerModeActivate } from "./worker/worker-mode.ts";
 // one pass, no shutdown in between) while letting replacements re-activate.
 const ACTIVATION_FLAG = "__agentTeamLoopActivated";
 
-export async function activate(pi: ExtensionAPI): Promise<void> {
-	const g = globalThis as Record<string, unknown>;
-	// Registered before the guard check so even a blocked second copy re-arms
-	// teardown (the delete is idempotent).
-	pi.on("session_shutdown", () => {
-		delete g[ACTIVATION_FLAG];
-	});
-	if (g[ACTIVATION_FLAG]) {
-		return;
-	}
-	g[ACTIVATION_FLAG] = true;
+export interface AgentTeamLoopComposition {
+	/** The SAME handle shared into ask, PM and worker lifecycle. */
+	submitHandle: SubmitDecisionHostHandle;
+	/** ONE host object / store / C / D per activated window. */
+	host: ProductionRuntimeHost;
+}
+
+async function compose(pi: ExtensionAPI): Promise<AgentTeamLoopComposition> {
 	configureDeepSeek(pi);
 	registerToa(pi);
 	registerZhient(pi);
@@ -95,10 +94,24 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 	registerWorktreeJunctionGuard(pi);
 
 	const taskPath = process.env.PI_WORKER_TASK;
-	registerWorkspaceEngineGuard(pi, taskPath ? controlRootFromTaskPath(path.resolve(taskPath)) : process.cwd());
-
-	if (process.env.PI_WORKER_TASK) {
-		await workerModeActivate(pi);
+	const projectDir = taskPath ? controlRootFromTaskPath(path.resolve(taskPath)) : process.cwd();
+	registerWorkspaceEngineGuard(pi, projectDir);
+	const host = new ProductionRuntimeHost(projectDir);
+	// A PM window can admit a REAL typed channel stage at session_start. A worker
+	// window never receives this adapter, so it cannot impersonate a PM stage.
+	registerProductionRuntimeEvents(pi, host, taskPath ? undefined : { pmStage: { projectDir } });
+	let submitHandle: SubmitDecisionHostHandle;
+	if (taskPath) {
+		await workerModeActivate(pi, {
+			submitHandle: () => submitHandle,
+			runtimeHost: host,
+			readLocalContinuationFacts: (input) => host.readContinuationFacts(input),
+		});
+		submitHandle = registerSubmitDecisionHandoffTool(pi, {
+			projectDir,
+			hostRuntime: host,
+			runtimeHost: host.adapterHooks(),
+		});
 		// `ask_decision` + `decision_receipt` (mw-decision-substitution T-05, design
 		// D-017/Q1 §1.3; mw-decision-context T04): ONE shared material entry for
 		// both asking roles. Registered AFTER workerModeActivate so this module's
@@ -108,17 +121,49 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 		// own card type — a worker can never claim to be the PM and therefore can
 		// never reach dp2/dp25 (AC-006/AC-010).
 		registerAskDecisionTool(pi, {
-			initiatorRole: initiatorRoleFromWorkerTask(process.env.PI_WORKER_TASK),
+			initiatorRole: initiatorRoleFromWorkerTask(taskPath),
+			submitHandle,
 		});
 	} else {
-		pmActivate(pi);
+		submitHandle = registerSubmitDecisionHandoffTool(pi, {
+			projectDir,
+			hostRuntime: host,
+			runtimeHost: host.adapterHooks(),
+		});
+		pmActivate(pi, projectDir, host, submitHandle);
 		// PM branch: the SAME entry, with the structural `pm` role. The PM is the
 		// only initiator of dp2 (主动 checkpoint) and of the dp25 sign-off material
 		// (design D003/§4.4); a worker window is refused with zero spawn. The PM
 		// passes its own `key` (and a `task_key` only when the decision is about a
 		// real task) — this call site never guesses either.
-		registerAskDecisionTool(pi, { initiatorRole: "pm" });
+		registerAskDecisionTool(pi, {
+			initiatorRole: "pm",
+			submitHandle,
+			stageSource: () => host.stageIdentity(),
+		});
 	}
+	return { submitHandle, host };
+}
+
+/** Host/test composition entry; returns the exact per-window host object. */
+export async function activateWithRuntimeHost(pi: ExtensionAPI): Promise<AgentTeamLoopComposition> {
+	const g = globalThis as Record<string, unknown>;
+	pi.on("session_shutdown", () => {
+		delete g[ACTIVATION_FLAG];
+	});
+	if (g[ACTIVATION_FLAG]) throw new Error("agent-team-loop activated twice in one window");
+	g[ACTIVATION_FLAG] = true;
+	return compose(pi);
+}
+
+export async function activate(pi: ExtensionAPI): Promise<void> {
+	const g = globalThis as Record<string, unknown>;
+	pi.on("session_shutdown", () => {
+		delete g[ACTIVATION_FLAG];
+	});
+	if (g[ACTIVATION_FLAG]) return;
+	g[ACTIVATION_FLAG] = true;
+	await compose(pi);
 }
 
 export default activate;

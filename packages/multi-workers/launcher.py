@@ -50,6 +50,7 @@ import os
 import pathlib
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -59,9 +60,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import mw_common
 import replan_tasks
+import review_observation
 import tree_watch
 import usage
 from autopilot import config as autopilot_config
+from autopilot import dispatch as autopilot_dispatch
+from autopilot import state as autopilot_state
 from mw_common import (
     acquire_lock as _acquire_lock,
     load_providers as _load_providers,
@@ -76,6 +80,25 @@ from mw_common import (
 from worker_thinking import resolve_worker_thinking, THINKING_LEVELS
 
 DEFAULT_POLL_INTERVAL: int = 5  # seconds — AC-001: must be <= 5
+
+_review_relays: dict[pathlib.Path, review_observation.NativeReviewRelay] = {}
+_running_reviews: dict[subprocess.Popen[bytes], review_observation.NativeReviewLaunch] = {}
+
+
+def _native_review_claim(project: pathlib.Path, key: str, *, terminal_proof: bool = False) -> str | None:
+    rows = [row for row in autopilot_state.read_index(project) if row["key"].casefold() == key.casefold()]
+    if len(rows) != 1:
+        return None
+    row = rows[0]
+    if row["key"] != key or row["status"] != "active" or (
+        row["phase"] != "EXECUTE" and not (terminal_proof and row["phase"] == "VERIFY")
+    ):
+        return None
+    claim = row["claim_id"]
+    host, _, pid = claim.rpartition(":")
+    if host.casefold() != socket.gethostname().casefold() or not pid.isdecimal():
+        return None
+    return claim if mw_common.process_alive_state(int(pid)) == "alive" else None
 
 # ── Worker log helper ─────────────────────────────────────────────────────────
 
@@ -2635,6 +2658,9 @@ def _poll_once(
     for key in finished:
         proc = running_procs.pop(key)
         code = proc.returncode if proc.returncode is not None else 1
+        review = _running_reviews.pop(proc, None) if _running_reviews else None
+        if review is not None:
+            _review_relays[review.project].reap(review, proc.pid, code)
         # mw-usage-monitor T-02: close this run's ledger row the moment the exit
         # code is known. It must happen BEFORE the exit-3 re-dispatch below can
         # start the next run of the same task, otherwise this `end` would carry
@@ -2919,6 +2945,7 @@ def _spawn(
     task.md/config resolution chain while keeping every other spawn property
     (credential isolation, worktree cwd, watchdog env) unchanged.
     """
+    review = None
     try:
         # Spawn gate (mw-target-partition D-007): the target config decides
         # both the tear check (AC-020) and the cwd — loaded once, before any
@@ -2967,9 +2994,41 @@ def _spawn(
         override_note = _model_override_note(entry, project_dir, model_value, model_source)
         if override_note:
             print(override_note, flush=True)
+        task_envelope = pathlib.Path(entry["task_path"]).read_text(encoding="utf-8", errors="replace")
+        if (mw_common.read_task_header_scalar(task_envelope, "parent_worker_run")
+                or mw_common.read_task_header_scalar(task_envelope, "deadline_successor") == "yes"):
+            reason = autopilot_dispatch.dispatch_parent_refusal(
+                project_dir, mw_common.worker_owner_key(entry), entry["task_key"], task_envelope, launching=True)
+            if reason is not None:
+                raise ValueError(reason)
         # Resolve the CLI binary to a full path so Windows npm `.cmd` shims are
         # found (CreateProcess only appends `.exe`). See _resolve_cli.
         cmd[0] = _resolve_cli(cmd[0])
+        env.pop(review_observation.ENV_SPEC, None)
+        env.pop(review_observation.ENV_DISPATCH, None)
+        if is_pi and sys.platform == "win32" and _read_task_md_fields(entry["task_path"])[0] == "review":
+            direct = review_observation.native_review_command(cmd)
+            if direct is not None:
+                project = project_dir.resolve()
+                review = review_observation.prepare_native_review(
+                    project, pathlib.Path(entry["task_path"]), entry["task_key"],
+                    mw_common.read_task_header_scalar, lambda owner: _native_review_claim(project, owner),
+                )
+                if review is not None:
+                    try:
+                        if project not in _review_relays:
+                            _review_relays[project] = review_observation.NativeReviewRelay(
+                                project, lambda owner: _native_review_claim(project, owner),
+                                read_current_claim=lambda owner: _native_review_claim(
+                                    project, owner, terminal_proof=True,
+                                ),
+                            )
+                    except OSError:
+                        review.channel.close()
+                        review = None
+                    if review is not None:
+                        cmd = direct
+                        env.update(review.child_env)
         # Capture worker stdout+stderr into a per-task worker.log for diagnosability
         log_file = None
         try:
@@ -2987,7 +3046,13 @@ def _spawn(
         }
         if sys.platform == "win32":
             spawn_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+        if review is not None:
+            spawn_kwargs["stdin"] = subprocess.DEVNULL
         proc = subprocess.Popen(cmd, **spawn_kwargs)  # noqa: S603
+        if review is not None:
+            review.channel.start(proc.pid)
+            _running_reviews[proc] = review
+            review = None
         # mw-usage-monitor T-02: the ledger `start` row is written the moment the
         # process exists (its pid is what the session log is joined against).
         # Fail-soft: the hook never raises, so it cannot fail the spawn.
@@ -3010,6 +3075,8 @@ def _spawn(
                 log_file.close()
         _update_status(project_dir, entry["task_key"], "running")
     except Exception as exc:  # noqa: BLE001 — per-task isolation (design D-001)
+        if review is not None:
+            review.channel.close()
         msg = str(exc)
         print(f"[launcher] spawn failed for {entry['task_key']!r}: {msg}", file=sys.stderr, flush=True)
         _record_spawn_failure(entry, msg, project_dir)

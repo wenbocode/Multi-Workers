@@ -2074,13 +2074,7 @@ def _declared_write_face(
     entries = extract(card)
     if not entries:
         return None  # no section, or present-but-empty -> undeclared
-    parsed = write_face.parse_write_face(
-        dispatch.render_write_face_line(entries),
-        base=dispatch.write_face_base(pathlib.Path(project_root)),
-        case_insensitive=dispatch.write_face_case_insensitive(),
-        roots=dispatch.write_face_roots(pathlib.Path(project_root)),
-        canonicalize=dispatch.canonical_write_face_path,
-    )
+    parsed = dispatch.parse_workspace_write_face(pathlib.Path(project_root), dispatch.render_write_face_line(entries))
     return parsed if isinstance(parsed, write_face.WriteFace) else None
 
 
@@ -3146,9 +3140,7 @@ def _contract_reverification_source(
             or not run["run_id"].startswith(task_key + "@")):
         raise gate_effects.GateBlocked(
             "needs-rerun: original completed run identity unavailable or mismatched")
-    face = write_face.parse_write_face(
-        text, base=dispatch.write_face_base(project),
-        case_insensitive=dispatch.write_face_case_insensitive())
+    face = dispatch.parse_workspace_write_face(project, text)
     if binding is None or role not in ("coding", "research") or not isinstance(
             face, write_face.WriteFace):
         raise gate_effects.GateBlocked(
@@ -3164,10 +3156,7 @@ def _contract_reverification_source(
     card_path = codex_pm.child(project, ".agenticdoc", key, *pathlib.PurePosixPath(card_ref).parts)
     card_text = card_path.read_text(encoding="utf-8")
     entries = dispatch._card_write_face_entries({"extras": dispatch.extract_card_extras(card_text)})
-    card_face = write_face.parse_write_face(
-        dispatch.render_write_face_line(entries or []),
-        base=dispatch.write_face_base(project),
-        case_insensitive=dispatch.write_face_case_insensitive())
+    card_face = dispatch.parse_workspace_write_face(project, dispatch.render_write_face_line(entries or []))
     if (dispatch.card_digest(card_path) != card_sha
             or codex_pm.acceptance_argv(card_text) != argv
             or mw_common.read_task_header_scalar(card_text, "type") != role
@@ -9275,6 +9264,15 @@ def reconcile_orphans(project_root: pathlib.Path, st: ConductorState) -> None:
         now = mw_common.iso_now()
         for orphan in orphans:
             if orphan.task_key in existing:
+                continue
+            try:
+                envelope = (orphan.task_dir / "task.md").read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
+            refusal = dispatch.dispatch_parent_refusal(project_root, orphan.owner, orphan.task_key, envelope)
+            if refusal is not None:
+                if mw_common.read_task_header_scalar(envelope, "deadline_successor") == "yes":
+                    st.timeline.append("skip", key=orphan.owner, detail=f"orphan {orphan.task_key}: {refusal}")
                 continue
             wpath.parent.mkdir(parents=True, exist_ok=True)
             with wpath.open("a", encoding="utf-8", newline="\n") as fh:

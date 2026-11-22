@@ -1,10 +1,12 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import * as path from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../../core/extensions/types.ts";
 import { type IndexStore, keyNameRefusal, normalizeKey } from "../shared/index-store.ts";
-import { pmStateMw } from "../shared/mw-runner.ts";
+import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.ts";
 import { requestReplan } from "./replan.ts";
 
 type TaskBasis = { task: string; issue: string; snapshot: string; status: string };
@@ -22,6 +24,44 @@ type TrimRequest = {
 
 const taskName = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,159}$/;
 const summaryLimitBytes = 8 * 1024;
+
+function compactPmState(project: string, key: string, claim: string, sha: string, summary: string) {
+	const pointer = path.join(
+		process.env.PI_CODING_AGENT_DIR || path.join(homedir(), ".pi", "agent"),
+		"extensions",
+		".mw-pm-state-path",
+	);
+	let script: string | undefined;
+	try {
+		script = readFileSync(pointer, "utf8").trim();
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		const mw = findMwPy();
+		if (mw) script = path.join(path.dirname(mw), "pm_state.py");
+	}
+	if (!script || !path.isAbsolute(script)) throw new Error("找不到已安装的 PM 状态压缩器。");
+	return spawnSync(
+		PYTHON_EXE,
+		[
+			"-B",
+			"-X",
+			"utf8",
+			script,
+			"compact",
+			"--project",
+			project,
+			"--key",
+			key,
+			"--summary",
+			"-",
+			"--apply",
+			sha,
+			"--window-claim-id",
+			claim,
+		],
+		{ input: summary, encoding: "utf8", windowsHide: true, timeout: 30_000 },
+	);
+}
 
 export function registerTrim(
 	pi: ExtensionAPI,
@@ -165,17 +205,18 @@ export function registerTrim(
 							`摘要是 ${bytes} 字节，超过 ${summaryLimitBytes} 字节。保留四个必需段落，删去重复背景和长证据原文后直接重试。`,
 						);
 					}
-					const compact = pmStateMw(
-						project,
-						["compact", "--key", req.key, "--summary", "-", "--apply", basis.sha, "--window-claim-id", req.claim],
-						params.summary,
-					);
-					if (!compact.ok && !compact.error.includes("Compaction must reduce pm-state.md and fit within 16 KiB")) {
-						throw new Error(compact.error);
+					const compact = compactPmState(project, req.key, req.claim, basis.sha, params.summary);
+					const error = compact.error?.message ?? compact.stderr.trim();
+					if (
+						compact.status !== 0 &&
+						!error.includes("Compaction must reduce pm-state.md and fit within 16 KiB")
+					) {
+						throw new Error(error || "PM 状态压缩器未完成。");
 					}
-					result = compact.ok
-						? { state: "compacted", output: compact.output, transcript: "queued" }
-						: { state: "pm-state-kept", reason: compact.error, transcript: "queued" };
+					result =
+						compact.status === 0
+							? { state: "compacted", output: compact.stdout.trim(), transcript: "queued" }
+							: { state: "pm-state-kept", reason: error, transcript: "queued" };
 					req.contextApplied = true;
 					ctx.requestCompaction({
 						onError: (error) => ctx.ui.notify(`pi 上下文压缩未完成：${error.message}`, "warning"),

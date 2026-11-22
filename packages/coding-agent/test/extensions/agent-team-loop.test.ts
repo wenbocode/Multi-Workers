@@ -448,7 +448,7 @@ describe("WorkerStore", () => {
 		const cols = line.split(" | ");
 		expect(/^\d{4}-\d{2}-\d{2}T/.test(cols[5]?.trim() ?? "")).toBe(true);
 		expect(/^\d{4}-\d{2}-\d{2}T/.test(cols[6]?.trim() ?? "")).toBe(true);
-		fs.rmSync(root, { recursive: true, force: true });
+		fs.rmSync(project, { recursive: true, force: true });
 	});
 });
 
@@ -899,6 +899,7 @@ describe("agentic-scripts", () => {
 		expect(r.output).toContain("gate-warn");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
+
 	it("requires upgraded AgenticTask scripts for PLAN → TASKS", () => {
 		const root = mkdtemp();
 		try {
@@ -2171,7 +2172,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 			// AC-015: the terminal result is the finish call — it must trigger a PM
 			// turn so an idle PM processes the result and continues the loop.
 			expect(options[0]?.triggerTurn).toBe(true);
-			expect(messages[0]).toContain("PM 循环");
+			expect(messages[0]).toContain("验收本次交付，按现有计划推进就绪工作");
 			clearInterval(handle);
 		} finally {
 			vi.useRealTimers();
@@ -2541,7 +2542,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 			// Below the 2-heartbeat bar and no queue timestamps: no stats suffix,
 			// but the AC-015 continuation hint is always appended.
 			expect(withoutStats).toContain("[t-low] done:\n\n## Summary\n\ndid the thing");
-			expect(withoutStats).toContain("PM 循环");
+			expect(withoutStats).toContain("验收本次交付，按现有计划推进就绪工作");
 			clearInterval(handle);
 		} finally {
 			vi.useRealTimers();
@@ -2616,7 +2617,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 			expect(messages).toHaveLength(1);
 			expect(messages[0]).toContain("[t-fail] failed");
 			expect(options[0]?.triggerTurn).toBe(true);
-			expect(messages[0]).toContain("PM 循环");
+			expect(messages[0]).toContain("先看该任务的终态证据");
 			clearInterval(handle);
 		} finally {
 			vi.useRealTimers();
@@ -4605,6 +4606,7 @@ describe("watchdog integration (workerModeActivate)", () => {
 		const handlers = new Map<string, Array<(e: unknown) => void>>();
 		const sent: Array<{ text: string; options?: { deliverAs?: string } }> = [];
 		const pi = {
+			registerTool() {},
 			on: (name: string, cb: (e: unknown) => void) => {
 				const list = handlers.get(name) ?? [];
 				list.push(cb);
@@ -5484,6 +5486,7 @@ describe("dispatch model config", () => {
 		timi: "timi",
 		anthropic: "claude",
 		"openai-codex": "codex",
+		openai: "openai",
 		deepseek: "deepseek",
 		toa: "toa",
 		zhient: "zhient",
@@ -5942,10 +5945,10 @@ describe("dispatch role + model override gate (mw-dispatch-role-escape)", () => 
 		// mw-vision-role T-03 (AC-004/VC-004): before this case only the Python
 		// TASK_TYPE_TO_ROLE table was asserted, so roleForTaskType("vision") could
 		// fall back to "coding" with every suite green. The mirror is asserted
-		// here against the frozen Python map (mw_common.py:139, 10 keys, `vision`
-		// appended last by T-01) — not a mere "exists" check.
+		// here against the dispatch role map in mw_common.py.
 		const pyMirror: Record<string, string> = {
 			coding: "coding",
+			decide_prepare: "decide_prepare",
 			"phase-writer": "coding",
 			repair: "coding",
 			"roadmap-writer": "coding",
@@ -6325,6 +6328,7 @@ describe("AC-005 single-source type resolution (T-07)", () => {
 	} {
 		const handlers = new Map<string, Array<(e: unknown) => void>>();
 		const pi = {
+			registerTool() {},
 			on: (name: string, cb: (e: unknown) => void) => {
 				const list = handlers.get(name) ?? [];
 				list.push(cb);

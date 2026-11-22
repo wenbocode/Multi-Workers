@@ -5,13 +5,14 @@
  * describe subsequent actions. Signing uses its single dedicated writer. */
 
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { type TLiteral, Type } from "typebox";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import {
+	type DecideConfigFacts,
 	type DecisionPreparation,
 	decisionActorAllowed,
 	decisionChoices,
@@ -22,10 +23,24 @@ import {
 	type PmClaimReason,
 	type PreparedBasis,
 	preparationProblems,
+	readDecideConfigFacts,
+	resolveDecidePolicy,
 	selectedDecisionBasis,
 	validateDecisionMaterial,
 } from "../shared/decide-policy.ts";
 import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.ts";
+import {
+	classifyDecisionFeedback,
+	DECISION_HANDOFF_SCHEMA_ID,
+	type DecisionFeedback,
+	type ExemptionFact,
+	type HostBinding,
+	type HostFacts,
+	isJsonValue,
+	type StopSignal,
+} from "../shared/decision-handoff.ts";
+import { currentClaimId } from "../shared/implementation-gate.ts";
+import { readRunState } from "../shared/run-store.ts";
 export { validateDecisionMaterial };
 export type { MaterialIssue, MaterialValidation } from "../shared/decide-policy.ts";
 
@@ -43,12 +58,17 @@ import {
 	isTaskStateSnapshot,
 	type TaskStateSnapshot,
 } from "./decision-task-state.ts";
-import { checkFileEvidence, parseFileEvidence } from "./file-evidence-cache.ts";
+import { checkFileEvidence, type FileEvidenceDependency, parseFileEvidence } from "./file-evidence-cache.ts";
 import { PM_GATE_ROUTING_RULE, resolvePmGateRoute } from "./gate-route.ts";
+// T04B: the host offer/submit handle is shared in from the registering window.
+// Type-only import: host-submit.ts never imports this module at runtime, so the
+// composition stays acyclic and no ask/receipt/sign path changes.
+import type { PrepareOfferInput, SubmitDecisionHostHandle, SubmitOfferMetadata } from "./host-submit.ts";
 import {
 	canonicalStateBytes,
 	MAX_STRUCTURED_STATE_BYTES,
 	prepareDecisionEnvelope,
+	readDecidePolicy,
 	validateStructuredState,
 } from "./triage-client.ts";
 import { canPmSelectType, PM_TYPE_FALLBACK_DIRECTIVE } from "./type-fallback.ts";
@@ -139,7 +159,9 @@ export interface ClaimDiagnosis {
 /** Structured result of one boundKey call: the gate value plus the diagnosis
  *  produced by the SAME single read. Diagnosis is present exactly when the
  *  binding was refused (key === undefined); success carries no diagnosis leak. */
-export type BoundKeyResult = { key: string; diagnosis?: undefined } | { key: undefined; diagnosis: ClaimDiagnosis };
+export type BoundKeyResult =
+	| { key: string; owner?: string; diagnosis?: undefined }
+	| { key: undefined; owner?: undefined; diagnosis: ClaimDiagnosis };
 
 /** Common safety constraints reused by every reason-specific diagnosis: no
  *  foreign owner/key list, no absolute path, no raw exception, no extra
@@ -175,10 +197,10 @@ const CLAIM_DIAGNOSIS_EXPLANATIONS: Readonly<Record<ClaimDiagnosisReason, string
 	ok: "认领校验未通过：未取得唯一有效绑定。",
 	"index-unreadable":
 		"PM 认领校验未通过：本次索引读取抛出异常，底层原因 unknown；" +
-		"该状态不等同于索引缺失、空文件或含无法解析的数据行，也不输出异常内容。",
+		"该状态不等同于索引缺失、空文件或全部数据行损坏，也不输出异常内容。",
 	"index-empty-or-unparseable":
-		"PM 认领校验未通过：本次索引读取未取得可用数据；" +
-		"索引缺失、空文件或含无法解析的数据行，仅据本次结果无法区分，具体状态 unknown，不得据空结果猜测具体原因。",
+		"PM 认领校验未通过：本次索引读取返回 0 行；" +
+		"索引缺失、空文件或全部数据行损坏在既有读取器下无法区分，具体状态 unknown，不得据空结果猜测具体原因。",
 	"invalid-key": "PM 认领校验未通过：解析到的 key 名称不符合现有注册约束。",
 	"ambiguous-claim": "PM 认领校验未通过：满足本次判定的 active 认领或同名 key 行不唯一，无法解析出唯一绑定。",
 	"key-not-found": "PM 认领校验未通过：请求 key 在已解析索引行中不存在。",
@@ -283,6 +305,13 @@ export interface AskDecisionAvailable {
 	/** Set on the dp25 path: the sign CLI's own receipt (one judgment, real
 	 * sign-off write or a concrete PM/user handoff). */
 	signoff?: DecisionSignoffResult;
+	/** T04A: the frozen T01 classification of THIS result. Independent of the
+	 * typed `feedback` lifecycle result above; never overwrites consumed/executed/
+	 * settled facts. Present on every public ask result. */
+	decision_feedback?: DecisionFeedback;
+	/** True only when an identical matter was already answered/failed and the
+	 * cached frozen feedback is replayed instead of sending a new DP request. */
+	matter_suppressed?: true;
 }
 
 /** The dp25 sign CLI's receipt, mapped 1:1 (no derived success).
@@ -310,9 +339,6 @@ export interface DecisionSignoffResult {
 }
 
 export interface AskDecisionUnavailable {
-	/** Independent diagnosis for a LOCAL claim/key-binding refusal only. Never
-	 * present on the default unavailable payload or the pm-select-type path. */
-	claim_diagnosis?: ClaimDiagnosis;
 	available: false;
 	unavailable: string;
 	action: typeof ASK_DECISION_BLOCKED_ACTION | "pm-select-type";
@@ -324,7 +350,17 @@ export interface AskDecisionUnavailable {
 	/** State fields the registry requires and this call site could not supply
 	 * (names only, L0). Only present on a zero-spawn `input-incomplete` refusal. */
 	missing_fields?: string[];
+	/** Registry-owned validation rules/counts for locally refused material.
+	 * Present-but-invalid values are not reported as missing fields. */
 	material_issues?: MaterialIssue[];
+	/** Independent diagnosis for a LOCAL claim/key-binding refusal only. Never
+	 * present on the default unavailable payload or the pm-select-type path. */
+	claim_diagnosis?: ClaimDiagnosis;
+	/** T04A: the frozen T01 classification of THIS result, including verbatim
+	 * `raw_reason` captured before frozen-transport normalisation. */
+	decision_feedback?: DecisionFeedback;
+	/** True only on a same-matter replay (no new DP request was sent). */
+	matter_suppressed?: true;
 	input_diagnostics?: DecisionInputDiagnostics;
 	original_blocked_event_id?: string;
 }
@@ -333,8 +369,6 @@ export type AskDecisionPayload = AskDecisionAvailable | AskDecisionUnavailable;
 
 /** Result of one tool attempt: the payload plus the exact text handed back. */
 export interface AskDecisionOutcome {
-	blockedEventId?: unknown;
-	pmTypeFallbackRefused?: boolean;
 	payload: AskDecisionPayload;
 	/** Single-line JSON, plus the fixed directive line when unavailable. */
 	text: string;
@@ -344,6 +378,204 @@ export interface AskDecisionOutcome {
 	/** The local envelope meta this call minted (material path only). It is the
 	 * join key of every feedback row and is NEVER handed to the model. */
 	meta?: DecisionToolMeta;
+	/** INTERNAL ONLY. The verbatim untrusted observation captured BEFORE
+	 * `unavailable()` normalises a child reason into the frozen transport
+	 * vocabulary. Never serialised into the payload or the model text. */
+	observation?: DecisionFeedbackObservation;
+	/** T04A: the frozen T01 classification of this result. It lives on the
+	 * outcome (NOT inside the legacy `payload`), so the frozen D-036 payload
+	 * shape, its exact-key tests and the DP receipt join stay byte-identical.
+	 * The registered tool exposes it in `details` and as the second text line. */
+	decision_feedback?: DecisionFeedback;
+}
+
+/** One real host-observed feedback source/stage. `raw` is verbatim data
+ *  (child JSON, child stdout text or a local refusal fact), never model text
+ *  promoted to an authority/stop fact. */
+export interface DecisionFeedbackObservation {
+	origin: string;
+	stage: string;
+	raw: unknown;
+	evidenceRefs?: string[];
+	/** A real host business exemption (signoff=disable), never a service fault. */
+	exemption?: ExemptionFact;
+	/** Set only when a structured service reply carried a missing, empty,
+	 *  non-string or unknown reason and was folded to `upstream-error`. The
+	 *  verbatim reply stays in `raw` for diagnosis; this flag stops the folded
+	 *  value from buying the legacy PM type-handoff permission. Internal only. */
+	reasonFolded?: boolean;
+}
+
+/** Trusted host context for one public ask. `binding` is built ONLY from this
+ *  window's live claim or its worker task/run record; model-supplied owner/p0/
+ *  stop text can never enter `host`. `host.stop_signals`/`budget_facts` is a
+ *  typed T06 connection point for real cancellation/budget signals; T04A
+ *  leaves it absent by default and never invents a stop or a budget. */
+/** Host-only typed PM stage coordinates. A model parameter can never mint one. */
+export interface DecisionStageIdentity {
+	key: string;
+	claimId: string;
+	stageId: string;
+	scopeRef: string;
+	matterRef: string;
+	grantDigest: string;
+}
+
+export interface DecisionHostContext {
+	host: HostFacts;
+	binding: HostBinding;
+	/** Stable matter identity: real binding coordinates + substantive request
+	 * facts + the frozen contract/mode version. Never includes trigger or turn. */
+	matterRef: string;
+	origin: string;
+	stage: string;
+	/** Verified PM stage source, when this window owns a real admitted stage. */
+	stageSource?: DecisionStageIdentity;
+}
+
+/** Config facts reader (unit-injectable). Production uses the real reader. */
+export type DecideConfigReader = (dp: string, projectDir: string) => DecideConfigFacts;
+
+/** Real production reader: `readDecidePolicy` (the dispatch path's existing
+ *  `.mw/decide.json` switch) plus the read-only per-dp/signoff facts from
+ *  decide-policy's own `readJsonRecord` chain. A disagreement can only make a
+ *  transport fact more conservative, never silently "on". */
+export const readRealDecideConfigFacts: DecideConfigReader = (dp, projectDir) => {
+	const facts = readDecideConfigFacts(dp, projectDir);
+	if (readDecidePolicy(projectDir).enabled) return facts;
+	return { ...facts, transport: facts.transport === "on" ? "off" : facts.transport };
+};
+
+/** Canonical JSON with sorted object keys: stable across turns/serialisers. */
+function stableJson(value: unknown): string {
+	if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+	const record = value as Record<string, unknown>;
+	return `{${Object.keys(record)
+		.sort()
+		.map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+		.join(",")}}`;
+}
+
+/** Matter digest: the dedup key AND `matter_ref`. `trigger` and turn are
+ *  deliberately absent, so neither can buy another DP request or more scope
+ *  budget. A genuinely changed material/preparation/context re-prepares. */
+export function decisionMatterRef(parts: Record<string, unknown>): string {
+	return createHash("sha256").update(stableJson(parts)).digest("hex").slice(0, 32);
+}
+
+/** Observation timestamps are NOT substantive matter facts. Re-stamping only
+ *  `prepared_at` or `task_before.observed_at` must not mint a new matter or a
+ *  second DP request, while every substantive preparation, material, binding,
+ *  deadline, budget and stop fact keeps distinguishing matters. The excluded
+ *  fields are still really validated on every call (shape/freshness), so a
+ *  timestamp cannot buy a suppressed safety refusal. */
+function matterIdentityParts(value: unknown, observationFields: readonly string[]): unknown {
+	if (!isRecord(value)) return value;
+	const parts: Record<string, unknown> = {};
+	for (const [key, item] of Object.entries(value)) {
+		if (!observationFields.includes(key)) parts[key] = item;
+	}
+	return parts;
+}
+
+/** The frozen contract/mode version of this public entry (T01 schema + the
+ *  local envelope record version). It is part of every matter identity. */
+export function decisionMatterVersion(): string {
+	return `${DECISION_HANDOFF_SCHEMA_ID}:record-v${DECISION_RECORD_VERSION}`;
+}
+
+/** Mint a real host binding snapshot. Unknown coordinates stay absent (the T01
+ *  classifier records them as gaps); `binding_version` is the frozen contract
+ *  id, NOT a fabricated live claim version. */
+function hostBinding(input: {
+	role: DecisionInitiatorRole;
+	key?: string;
+	taskKey?: string | null;
+	claimId?: string;
+	runId?: string;
+	owner?: string;
+}): HostBinding {
+	return {
+		role: input.role,
+		...(input.owner === undefined ? {} : { owner: input.owner }),
+		...(input.claimId === undefined ? {} : { claim_id: input.claimId }),
+		...(input.key === undefined ? {} : { key: input.key }),
+		...(input.taskKey === undefined || input.taskKey === null ? {} : { task_key: input.taskKey }),
+		...(input.runId === undefined ? {} : { run_id: input.runId }),
+		binding_version: DECISION_HANDOFF_SCHEMA_ID,
+		observed_at: new Date().toISOString(),
+	};
+}
+
+/** Attach the frozen T01 classification to a public ask result. `raw` is the
+ *  verbatim pre-normalisation observation when one exists; otherwise the local
+ *  payload itself is the honest raw fact (nothing was lost upstream). The text
+ *  suffix (directives/diagnosis) is preserved byte-for-byte. */
+export function attachDecisionFeedback(
+	outcome: AskDecisionOutcome,
+	context: DecisionHostContext,
+	observation?: DecisionFeedbackObservation,
+): AskDecisionOutcome {
+	const payload = outcome.payload;
+	const obs = observation ?? outcome.observation;
+	// A malformed SUCCESS reply that LOCAL business validation refused keeps its
+	// verbatim child JSON (raw_payload) and mw-decide-run / service-reply
+	// origin/stage, but the frozen classifier must classify the LOCAL
+	// bad-response fact: handing it an available:true child reply would promote
+	// a wrong id / illegal mode / bad basis / acted / answers to answer|advisory.
+	// The verbatim reply is preserved as evidence, never rewritten to classify.
+	const localBadResponse =
+		!payload.available &&
+		payload.unavailable === "bad-response" &&
+		obs !== undefined &&
+		isRecord(obs.raw) &&
+		obs.raw.available === true;
+	const verbatimRaw = localBadResponse && obs !== undefined ? obs.raw : undefined;
+	// R6 (RV3-F1): a child `effect_state`/`side_effect` = "unknown" is ONLY
+	// conservative uncertainty, never a trusted host authority or an
+	// ExecutionProof. Carry just those two markers into the synthetic local
+	// bad-response classification raw so the frozen classifier keeps
+	// effect_state=unknown / category=effect-unknown from its own signal read.
+	// No available:true / answers / mode / acted / id is carried, so a malformed
+	// success can never be promoted to answer|advisory or any authority. The
+	// verbatim child JSON is still re-attached as raw_payload below; a child with
+	// no unknown marker keeps the structured "none".
+	const localUnknownMarkers: Record<string, "unknown"> = {};
+	if (isRecord(verbatimRaw)) {
+		if (verbatimRaw.effect_state === "unknown") localUnknownMarkers.effect_state = "unknown";
+		if (verbatimRaw.side_effect === "unknown") localUnknownMarkers.side_effect = "unknown";
+	}
+	const raw: unknown = localBadResponse
+		? { unavailable: "bad-response", raw_reason: "bad-response", ...localUnknownMarkers }
+		: obs !== undefined
+			? obs.raw
+			: payload.available
+				? { available: true, decision_id: payload.decision_id, answers: payload.answers, mode: payload.mode }
+				: {
+						unavailable: payload.unavailable,
+						raw_reason: payload.unavailable,
+						...(payload.escalated_reason === undefined ? {} : { escalated_reason: payload.escalated_reason }),
+						...(payload.missing_fields === undefined ? {} : { missing_fields: payload.missing_fields }),
+						...(payload.material_issues === undefined ? {} : { material_issues: payload.material_issues }),
+						...(payload.claim_diagnosis === undefined ? {} : { claim_reason: payload.claim_diagnosis.reason }),
+					};
+	const host: HostFacts = obs?.exemption === undefined ? context.host : { ...context.host, exemption: obs.exemption };
+	outcome.decision_feedback = classifyDecisionFeedback({
+		envelope: {
+			feedback_ref: randomUUID(),
+			matter_ref: context.matterRef,
+			origin: obs?.origin ?? context.origin,
+			stage: obs?.stage ?? context.stage,
+			...(obs?.evidenceRefs === undefined ? {} : { evidence_refs: obs.evidenceRefs }),
+		},
+		host,
+		raw,
+	});
+	if (verbatimRaw !== undefined && isJsonValue(verbatimRaw)) {
+		outcome.decision_feedback.raw_payload = verbatimRaw;
+	}
+	return outcome;
 }
 
 // ── Structured state: per-dp required fields (single source: triage-client) ──
@@ -1069,15 +1301,23 @@ export function parseDecisionJson(stdout: string): Record<string, unknown> | und
 	return undefined;
 }
 
-/** The fixed no-guessing line appended to every unavailable payload. */
+/** The fixed no-guessing line appended to every unavailable payload.
+ *  r2: a DP failure is matter-scoped, never an unconditional human wait for
+ *  the whole PM. `decision_feedback` carries the concrete category/gaps; only
+ *  a REAL host stop/authority/budget fact stops wider work. */
 export function unavailableDirective(reason: string, dp: string): string {
-	const base =
+	const common =
 		`UNAVAILABLE(${reason}) — ${ASK_DECISION_GUESS_DIRECTIVE}，不要执行被门控的动作，` +
-		`不要用别的工具绕过，也不要重复问同一个问题。上报 "blocked on decision ${dp}" 并等待人工裁决。`;
+		`不要用别的工具绕过。上报 "blocked on decision ${dp}" 与本条 decision_feedback 的具体缺口；` +
+		`同一事项同一事实不要重发（返回已有反馈），在现有权限/角色/写面内可继续其他独立合法工具；` +
+		`只有真实用户停止、父取消、权限/预算或角色事实才停止更大范围工作。`;
 	if (reason === "disabled") {
-		return `${base} disabled ≠ approval：决策点未开启不等于放行，被门控的动作仍受其常规工具权限约束。`;
+		return `${common} disabled ≠ approval：决策点未开启不等于放行，被门控的动作仍受其常规工具权限约束。`;
 	}
-	return base;
+	if (reason === "unconfigured" || reason === "signoff-disabled") {
+		return `${common} 该结论来自真实配置读取，零 DP 网络；这不是服务故障，不要按故障重试或等待人工放行。`;
+	}
+	return common;
 }
 
 /** Terminal directive emitted once a dp hits the per-turn block cap. */
@@ -1121,6 +1361,16 @@ export interface AskDecisionInput {
 	signRunner?: SignRunner;
 	timeoutMs?: number;
 	signal?: AbortSignal;
+	/** Trusted host context minted by the registering window (real claim /
+	 * worker task/run). A direct caller without a registered window gets an
+	 * owner-absent `unknown` binding, never a fabricated PM claim. */
+	hostContext?: DecisionHostContext;
+	/** Real typed host stop/budget/authority facts (T06 connection point).
+	 * T04A supplies none by default and never derives them from model text. */
+	hostFacts?: HostFacts;
+	/** Config-facts injection for isolated unit runs. Omitted production calls
+	 * always use `readRealDecideConfigFacts` (the existing readers). */
+	configReader?: DecideConfigReader;
 }
 
 function jsonText(payload: unknown): string {
@@ -1165,6 +1415,7 @@ function unavailable(
 		missing_fields?: string[];
 		material_issues?: MaterialIssue[];
 		material_ref_issues?: MaterialReferenceIssue[];
+		observation?: DecisionFeedbackObservation;
 		input_diagnostics?: DecisionInputDiagnostics;
 		original_blocked_event_id?: string;
 	} = {},
@@ -1185,9 +1436,12 @@ function unavailable(
 		payload,
 		text:
 			`${jsonText(payload)}\n${unavailableDirective(reason, dp)}` +
-			(extra.input_diagnostics ? `\n${formatInputDiagnostics(extra.input_diagnostics)}` : "") +
-			(extra.material_ref_issues?.length ? `\nMATERIAL_REFS_DIAGNOSIS: ${jsonText(extra.material_ref_issues)}` : ""),
+			(extra.material_ref_issues?.length
+				? `\nMATERIAL_REFS_DIAGNOSIS: ${jsonText(extra.material_ref_issues)}`
+				: "") +
+			(extra.input_diagnostics ? `\n${formatInputDiagnostics(extra.input_diagnostics)}` : ""),
 		spawned,
+		...(extra.observation === undefined ? {} : { observation: extra.observation }),
 	};
 }
 
@@ -1203,6 +1457,81 @@ function unavailable(
  * child said.
  */
 export async function runAskDecision(input: AskDecisionInput): Promise<AskDecisionOutcome> {
+	const context = input.hostContext ?? fallbackHostContext(input);
+	const outcome = await runAskDecisionCore(input);
+	return attachDecisionFeedback(outcome, context);
+}
+
+/** Honest host context for a direct `runAskDecision` call: no live claim is
+ *  known here, so owner/claim/run stay absent and the T01 classifier reports
+ *  them as gaps. `hostFacts` (real host signals) can only come from the caller,
+ *  never from model material. */
+function fallbackHostContext(input: AskDecisionInput): DecisionHostContext {
+	const binding = hostBinding({
+		role: input.initiatorRole ?? "unknown",
+		key: input.key,
+		taskKey: input.taskKey,
+	});
+	return {
+		binding,
+		host: { ...(input.hostFacts ?? {}), binding },
+		matterRef: decisionMatterRef({
+			version: decisionMatterVersion(),
+			owner: binding.owner ?? null,
+			role: binding.role,
+			key: binding.key ?? null,
+			task_key: binding.task_key ?? null,
+			run_id: binding.run_id ?? null,
+			claim_id: binding.claim_id ?? null,
+			dp: input.dp,
+			question: input.question ?? null,
+			note: input.note ?? null,
+			material: input.material ?? null,
+			...(input.evidenceRefs === undefined ? {} : { evidence_refs: input.evidenceRefs }),
+			preparation: matterIdentityParts(input.preparation, ["prepared_at"]) ?? null,
+			context: input.context ?? null,
+			task_before: matterIdentityParts(input.taskBefore, ["observed_at"]) ?? null,
+			parent_decision_ref: input.parentDecisionRef ?? null,
+		}),
+		origin: "ask_decision",
+		stage: "public-ask",
+	};
+}
+
+/** The one legal PM type handoff applies to ANY unavailable outcome of a real
+ *  dp-w-type call — including a zero-network config refusal — through the SAME
+ *  claim/role/material/preparation gate. No other dp, reason or identity gains
+ *  dispatch authority, and no DP success is fabricated. */
+function withPmTypeFallback(input: AskDecisionInput, outcome: AskDecisionOutcome): AskDecisionOutcome {
+	// An untrusted SERVICE reply reason (missing/empty/non-string/unknown) was
+	// folded into a frozen transport value. That value must never be handed to
+	// the legacy PM type gate: the verbatim reply stays in decision_feedback for
+	// diagnosis, but no dispatch authority is derived from it. Known reasons,
+	// zero-network off/unconfigured facts and real host-observed transport
+	// faults keep the existing gate.
+	if (outcome.observation?.reasonFolded === true) return outcome;
+	if (
+		outcome.payload.available ||
+		!canPmSelectType({
+			projectDir: input.projectDir,
+			dp: input.dp,
+			key: input.key,
+			role: input.initiatorRole ?? "unknown",
+			reason: outcome.payload.unavailable,
+			material: input.material,
+			preparation: input.preparation,
+			context: input.context,
+		})
+	)
+		return outcome;
+	outcome.payload.action = "pm-select-type";
+	outcome.text = `${jsonText(outcome.payload)}\n${PM_TYPE_FALLBACK_DIRECTIVE}`;
+	return outcome;
+}
+
+/** The decision call itself. Every return is classified once by the wrapper,
+ *  with the verbatim pre-normalisation observation when one exists. */
+async function runAskDecisionCore(input: AskDecisionInput): Promise<AskDecisionOutcome> {
 	const started = Date.now();
 	const dp = input.dp;
 	// Zero-spawn refusal for an id the registry cannot resolve. The enum in the
@@ -1219,6 +1548,45 @@ export async function runAskDecision(input: AskDecisionInput): Promise<AskDecisi
 		(!(input.taskKey ?? "").trim() || !isTaskStateSnapshot(input.taskBefore) || !isMaterialDp(dp))
 	)
 		return unavailable(ASK_DECISION_REASON_INPUT_INCOMPLETE, dp, false, { missing_fields: ["meta.task_before"] });
+	// r2 pre-transport facts: known single-DP off / transport off / unconfigured
+	// / signoff=disable produce a real feedback with ZERO DP network. Production
+	// (no runner override) always reads the real config readers; a unit run that
+	// replaces the child with a fake runner SKIPS this preflight unless it also
+	// injects config facts explicitly (never a fabricated zero-POST claim).
+	const isolatedChild = input.runner !== undefined || input.signRunner !== undefined;
+	const reader = input.configReader ?? (isolatedChild ? undefined : readRealDecideConfigFacts);
+	if (reader !== undefined) {
+		const facts = reader(dp, input.projectDir);
+		const signoffExempt = dp === SIGN_KEY_ID && facts.signoffDisabled;
+		const transportOff = facts.transport === "off" || facts.transport === "unconfigured";
+		// An illegal declared mode is an explicit L3 force-off behind the same
+		// reader: close the DP, never promote it to the default auto. An unknown
+		// table/row keeps the reader-error contract (the child keeps its say).
+		const modeInvalid = facts.mode === "invalid";
+		if (signoffExempt || facts.dpDisabled || transportOff || modeInvalid) {
+			const reason = signoffExempt
+				? "signoff-disabled"
+				: facts.dpDisabled || facts.transport === "off" || modeInvalid
+					? "disabled"
+					: "unconfigured";
+			const observation: DecisionFeedbackObservation = {
+				origin: "decide-config-reader",
+				stage: "pre-transport",
+				raw: {
+					unavailable: reason,
+					raw_reason: reason,
+					disable_scope: facts.dpDisabled || modeInvalid ? dp : "transport",
+					config_refs: facts.configRefs,
+					mode: facts.mode,
+				},
+				evidenceRefs: facts.configRefs,
+				...(signoffExempt
+					? { exemption: { config_ref: ".mw/decide.json", kind: "signoff-disabled" } as ExemptionFact }
+					: {}),
+			};
+			return withPmTypeFallback(input, unavailable(reason, dp, false, { observation }));
+		}
+	}
 	// dp-sign-key is the ONE judgment that really signs (T05 `decide sign --stdin`): the
 	// sign CLI calls the model itself and writes `sign-final.md` (or hands a
 	// concrete next step back). Routing it through `decide run` would need a
@@ -1259,29 +1627,22 @@ export async function runAskDecision(input: AskDecisionInput): Promise<AskDecisi
 	const outcome = await (dp === SIGN_KEY_ID
 		? runSignoffAskDecision(input, dp, envelope, started)
 		: runMaterialAskDecision(input, dp, envelope, started));
-	if (
-		!outcome.payload.available &&
-		outcome.pmTypeFallbackRefused !== true &&
-		canPmSelectType({
-			projectDir: input.projectDir,
-			dp,
-			key: input.key,
-			role,
-			reason: outcome.payload.unavailable,
-			material: input.material,
-			preparation: input.preparation,
-			context: input.context,
-		})
-	) {
-		outcome.payload.action = "pm-select-type";
-		outcome.text = `${jsonText(outcome.payload)}\n${PM_TYPE_FALLBACK_DIRECTIVE}`;
-	}
-	return outcome;
+	return withPmTypeFallback(input, outcome);
 }
 
 /** Diagnostic for a locally refused call (no child ran). */
-export function refusalOutcome(reason: string, dp: string, missing?: string[]): AskDecisionOutcome {
-	return unavailable(reason, dp, false, { missing_fields: missing });
+export function refusalOutcome(
+	reason: string,
+	dp: string,
+	missing?: string[],
+	materialRefIssues?: MaterialReferenceIssue[],
+	materialIssues?: MaterialIssue[],
+): AskDecisionOutcome {
+	return unavailable(reason, dp, false, {
+		missing_fields: missing,
+		material_issues: materialIssues,
+		material_ref_issues: materialRefIssues,
+	});
 }
 
 /** Build one reason-specific diagnosis from the stable reason union. Worker
@@ -1326,46 +1687,122 @@ async function callDecideChild(
 	request: DecideRunRequest,
 	runner: DecideRunner,
 	signal: AbortSignal | undefined,
-): Promise<{ ok: true; response: Record<string, unknown> } | ChildCallFailure> {
+): Promise<
+	{ ok: true; response: Record<string, unknown>; observation: DecisionFeedbackObservation } | ChildCallFailure
+> {
+	// The verbatim child fact is captured HERE, before any frozen-reason
+	// normalisation. It is the only raw the T01 classifier ever sees.
+	const childFact = (stage: string, rawValue: unknown): DecisionFeedbackObservation => ({
+		origin: "mw-decide-run",
+		stage,
+		raw: rawValue,
+	});
 	let raw: RawDecideResult;
 	try {
 		raw = await runner(request, signal);
 	} catch {
-		return { ok: false, outcome: unavailable("upstream-error", dp, true) };
+		return {
+			ok: false,
+			outcome: unavailable("upstream-error", dp, true, {
+				observation: childFact("runner-threw", {
+					unavailable: "upstream-error",
+					raw_reason: "runner-threw",
+				}),
+			}),
+		};
 	}
-	if (raw.timedOut) return { ok: false, outcome: unavailable("timeout", dp, true) };
-	if (raw.error !== undefined) return { ok: false, outcome: unavailable("upstream-error", dp, true) };
+	if (raw.timedOut)
+		return {
+			ok: false,
+			outcome: unavailable("timeout", dp, true, {
+				observation: childFact("child-timeout", { unavailable: "timeout", raw_reason: "timeout" }),
+			}),
+		};
+	if (raw.error !== undefined)
+		return {
+			ok: false,
+			outcome: unavailable("upstream-error", dp, true, {
+				observation: childFact("spawn-error", {
+					unavailable: "upstream-error",
+					raw_reason: raw.error,
+				}),
+			}),
+		};
 	const response = parseDecisionJson(raw.stdout);
 	if (raw.status !== 0 && response?.available !== false)
-		return { ok: false, outcome: unavailable("upstream-error", dp, true) };
-	if (response === undefined) return { ok: false, outcome: unavailable("bad-response", dp, true) };
+		return {
+			ok: false,
+			outcome: unavailable("upstream-error", dp, true, {
+				observation: childFact("child-exit", {
+					unavailable: "upstream-error",
+					raw_reason: raw.stdout.trim() === "" ? `exit=${String(raw.status)}` : raw.stdout,
+				}),
+			}),
+		};
+	if (response === undefined)
+		return {
+			ok: false,
+			outcome: unavailable("bad-response", dp, true, {
+				observation: childFact("unparsable-reply", {
+					unavailable: "bad-response",
+					raw_reason: raw.stdout,
+				}),
+			}),
+		};
+	const { input_diagnostics: rawInputDiagnostics, ...serviceReply } = response;
+	const inputDiagnostics = readInputDiagnostics(rawInputDiagnostics);
+	if (response.available === true && response.low_confidence === true) {
+		return {
+			ok: false,
+			outcome: unavailable("low-confidence", dp, true, {
+				observation: childFact("service-reply", serviceReply),
+				input_diagnostics: inputDiagnostics,
+			}),
+		};
+	}
 	if (response.available !== true) {
-		const rawReason = typeof response.reason === "string" ? response.reason : "";
-		const reason = ASK_DECISION_PYTHON_REASONS.has(rawReason) ? rawReason : "upstream-error";
+		const rawReason = response.reason;
+		const knownReason =
+			typeof rawReason === "string" && ASK_DECISION_PYTHON_REASONS.has(rawReason) ? rawReason : undefined;
+		const reason = knownReason ?? "upstream-error";
+		// A missing, empty, non-string or unknown reason is an UNTRUSTED service
+		// reply, not a known transport failure. Normalising it for the frozen
+		// payload must not become a legacy PM type-handoff license.
+		const folded = knownReason === undefined;
 		// The child's own 7-value escalation verdict travels beside (never instead
 		// of) the frozen legacy reason (D-021 / D-030).
 		const escalated =
 			typeof response.escalated_reason === "string" && response.escalated_reason !== ""
 				? response.escalated_reason
 				: undefined;
+		const observation = childFact("service-reply", {
+			...serviceReply,
+			...(inputDiagnostics === undefined ? {} : { input_diagnostics: inputDiagnostics }),
+			// Classification key is the VERBATIM reason, so an unknown or
+			// malformed reason stays diagnostic instead of being folded into a
+			// known service fault; the tool payload keeps the frozen reason.
+			...(rawReason === undefined ? {} : { unavailable: rawReason, raw_reason: rawReason }),
+		});
+		if (folded) observation.reasonFolded = true;
 		return {
 			ok: false,
-			outcome: {
-				...unavailable(reason, dp, true, {
-					escalated_reason: escalated,
-					input_diagnostics: readInputDiagnostics(response.input_diagnostics),
-					original_blocked_event_id:
-						typeof response.original_blocked_event_id === "string" &&
-						/^[0-9a-f-]{36}$/.test(response.original_blocked_event_id)
-							? response.original_blocked_event_id
-							: undefined,
-				}),
-				blockedEventId: response.blocked_event_id,
-				pmTypeFallbackRefused: !ASK_DECISION_PYTHON_REASONS.has(rawReason),
-			},
+			outcome: unavailable(reason, dp, true, {
+				escalated_reason: escalated,
+				input_diagnostics: inputDiagnostics,
+				original_blocked_event_id:
+					typeof response.original_blocked_event_id === "string" &&
+					/^[0-9a-f-]{36}$/.test(response.original_blocked_event_id)
+						? response.original_blocked_event_id
+						: undefined,
+				observation,
+			}),
 		};
 	}
-	return { ok: true, response };
+	return {
+		ok: true,
+		response,
+		observation: childFact("service-reply", { ...serviceReply, available: true }),
+	};
 }
 
 /** Submit the prepared envelope and correlate its selected rationale.
@@ -1395,33 +1832,35 @@ async function runMaterialAskDecision(
 	const called = await callDecideChild(dp, request, input.runner ?? runDecideMw, input.signal);
 	if (!called.ok) return called.outcome;
 	const response = called.response;
+	// Each LOCAL business-validation refusal keeps the child's verbatim service
+	// observation (raw JSON + mw-decide-run/service-reply origin) for feedback;
+	// attachDecisionFeedback classifies the bad-response fact, never the reply.
+	const refused = (): AskDecisionOutcome => unavailable("bad-response", dp, true, { observation: called.observation });
+	// Only framework-prepared dependency metadata can prove file freshness.
+	// An explicit empty array means this request did not cite file evidence.
+	if (parseFileEvidence(response) === null || parseFileEvidence(response) === undefined) return refused();
 
-	const dependencies = parseFileEvidence(response);
-	if (dependencies === null) return unavailable("bad-response", dp, true);
-	if (dependencies && checkFileEvidence(dependencies).changed) {
-		return unavailable("input-incomplete", dp, true, { escalated_reason: "stale-file-evidence" });
-	}
 	if (
 		response.decision_id !== `${dp}:${meta.logical_id}` ||
 		(response.dp !== undefined && response.dp !== dp) ||
 		(response.logical_id !== undefined && response.logical_id !== meta.logical_id)
 	)
-		return unavailable("bad-response", dp, true);
+		return refused();
 	const answers = asAnswers(response.answers);
-	if (answers === undefined) return unavailable("bad-response", dp, true);
+	if (answers === undefined) return refused();
 	// The four authority keys are the child's verdict, taken verbatim (D-036).
 	const decisionId = typeof response.decision_id === "string" ? response.decision_id : "";
 	const mode = response.mode;
 	const acted = response.acted;
 	if (decisionId === "" || (mode !== "auto" && mode !== "suggest") || acted !== false) {
-		return unavailable("bad-response", dp, true);
+		return refused();
 	}
 	const selection = buildSelection(dp, answers, material);
 	const basis = selectedDecisionBasis(dp, material, preparation, selection?.id, answers.basis_id?.value);
 	if (selection === undefined || basis === undefined) {
 		// A mismatched business answer or basis is never
 		// mapped onto a candidate: that would invent the receipt (AC-006).
-		return unavailable("bad-response", dp, true);
+		return refused();
 	}
 	const latency = typeof response.latency_ms === "number" ? response.latency_ms : Date.now() - started;
 	const payload: AskDecisionAvailable = {
@@ -1452,7 +1891,7 @@ async function runMaterialAskDecision(
 		},
 		input.lifecycleRunner ?? runLifecycleMw,
 	);
-	return { payload, text: jsonText(payload), spawned: true, meta };
+	return { payload, text: jsonText(payload), spawned: true, meta, observation: called.observation };
 }
 
 /** The dp-sign-key path: ONE judgment, the CLI signs or hands over.
@@ -1490,6 +1929,17 @@ async function runSignoffAskDecision(
 	if (raw.error !== undefined) return unavailable("upstream-error", dp, true);
 	const receipt = parseDecisionJson(raw.stdout);
 	if (receipt === undefined) return unavailable("bad-response", dp, true);
+	const { input_diagnostics: rawInputDiagnostics, ...signReply } = receipt;
+	const inputDiagnostics = readInputDiagnostics(rawInputDiagnostics);
+	const receiptObservation: DecisionFeedbackObservation = {
+		origin: "mw-decide-sign",
+		stage: "sign-receipt",
+		raw: { ...signReply, ...(inputDiagnostics === undefined ? {} : { input_diagnostics: inputDiagnostics }) },
+	};
+	const receiptEvidence = parseFileEvidence(receipt);
+	if (receiptEvidence === null || (raw.status === 0 && receiptEvidence === undefined)) {
+		return unavailable("bad-response", dp, true, { observation: receiptObservation });
+	}
 	const conclusion = typeof receipt.conclusion === "string" ? receipt.conclusion : "";
 	const rawStatus = typeof receipt.signoff_status === "string" ? receipt.signoff_status : "";
 	const signoffStatus: DecisionSignoffResult["status"] =
@@ -1510,20 +1960,24 @@ async function runSignoffAskDecision(
 		// caller can tell an over-budget refusal from a transport failure.
 		const refusedOversize = problems.some((item) => item.includes(ASK_DECISION_REASON_INPUT_OVERSIZE));
 		const refusedIncomplete = problems.some((item) => item.includes(ASK_DECISION_REASON_INPUT_INCOMPLETE));
-		const signoffRefusal = (reason: string, escalated_reason?: string): AskDecisionOutcome => ({
-			...unavailable(reason, dp, true, {
-				escalated_reason,
-				input_diagnostics: readInputDiagnostics(receipt.input_diagnostics),
-			}),
-			blockedEventId: receipt.blocked_event_id,
-		});
 		if (refusedOversize) {
-			return signoffRefusal(ASK_DECISION_REASON_INPUT_OVERSIZE, ASK_DECISION_REASON_INPUT_OVERSIZE);
+			return unavailable(ASK_DECISION_REASON_INPUT_OVERSIZE, dp, true, {
+				escalated_reason: ASK_DECISION_REASON_INPUT_OVERSIZE,
+				input_diagnostics: inputDiagnostics,
+				observation: receiptObservation,
+			});
 		}
 		if (refusedIncomplete) {
-			return signoffRefusal(ASK_DECISION_REASON_INPUT_INCOMPLETE, ASK_DECISION_REASON_INPUT_INCOMPLETE);
+			return unavailable(ASK_DECISION_REASON_INPUT_INCOMPLETE, dp, true, {
+				escalated_reason: ASK_DECISION_REASON_INPUT_INCOMPLETE,
+				input_diagnostics: inputDiagnostics,
+				observation: receiptObservation,
+			});
 		}
-		return signoffRefusal("upstream-error");
+		return unavailable("upstream-error", dp, true, {
+			input_diagnostics: inputDiagnostics,
+			observation: receiptObservation,
+		});
 	}
 	const decisionId = typeof receipt.decision_id === "string" ? receipt.decision_id : "";
 	const basis = selectedDecisionBasis(dp, material, preparation, conclusion, receipt.basis_id);
@@ -1536,7 +1990,7 @@ async function runSignoffAskDecision(
 		receipt.second_approval !== 0 ||
 		(conclusion === "finalize" ? !["written", "existing"].includes(signoffStatus) : signoffStatus !== "not-required")
 	)
-		return unavailable("bad-response", dp, true);
+		return unavailable("bad-response", dp, true, { observation: receiptObservation });
 	const signoff: DecisionSignoffResult = {
 		status: signoffStatus,
 		second_approval: typeof receipt.second_approval === "number" ? receipt.second_approval : 0,
@@ -1578,7 +2032,17 @@ async function runSignoffAskDecision(
 		selection: { question: "q-conclusion", id: conclusion },
 		signoff,
 	};
-	return { payload, text: jsonText(payload), spawned: true, meta };
+	return {
+		payload,
+		text: jsonText(payload),
+		spawned: true,
+		meta,
+		observation: {
+			origin: "mw-decide-sign",
+			stage: "sign-receipt",
+			raw: { ...receipt, available: true, decision_id: decisionId, answers: payload.answers },
+		},
+	};
 }
 
 /** The legacy L0/L1 path of the other 21 dps (unchanged behaviour). */
@@ -1635,7 +2099,7 @@ async function runLegacyAskDecision(input: AskDecisionInput, dp: string, started
 				: "unknown",
 		latency_ms: latency,
 	};
-	return { payload, text: jsonText(payload), spawned: true };
+	return { payload, text: jsonText(payload), spawned: true, observation: called.observation };
 }
 
 // ── Anti-retry counter ──────────────────────────────────────────────────────
@@ -1694,7 +2158,30 @@ export interface AskDecisionToolOptions {
 	signRunner?: SignRunner;
 	/** Timeout override (tests); production is {@link ASK_DECISION_TIMEOUT_MS}. */
 	timeoutMs?: number;
+	/** Config-facts injection for isolated unit runs. Production omits this and
+	 * uses `readRealDecideConfigFacts` (existing real config readers). */
+	configReader?: DecideConfigReader;
+	/** Real trusted host stop/budget/authority facts (T06 connection point).
+	 * T04A never supplies or invents one; model text never enters host facts. */
+	hostFacts?: HostFacts;
+	/** Host-only reader of the CURRENT admitted PM stage; absent for ordinary
+	 * PM/worker windows. It is re-read at prepare AND submit revalidation. */
+	stageSource?: () => DecisionStageIdentity | undefined;
+	/** T04B: shared host offer/submit handle. When absent (all legacy callers)
+	 * the ask result stays byte-for-byte unchanged and NO offer is prepared. */
+	submitHandle?: SubmitDecisionHostHandle;
 }
+
+/** `ask_decision` details: frozen legacy payload + T04A feedback. T04B adds
+ *  `submit_offer` as an INDEPENDENT field only when a handle is shared in; the
+ *  first-line legacy payload never gains a field. */
+export type AskDecisionToolDetails = AskDecisionPayload & {
+	blocked_event_id?: string;
+	gate_route?: ReturnType<typeof resolvePmGateRoute>;
+	decision_feedback?: DecisionFeedback;
+	matter_suppressed?: true;
+	submit_offer?: SubmitOfferMetadata;
+};
 
 export interface AskDecisionToolHandle {
 	projectDir: string;
@@ -1822,7 +2309,7 @@ export const ASK_DECISION_PARAMETERS = Type.Object(
 			pattern: "^[^\\s:]+$",
 			description:
 				"Audit trigger label, e.g. <task_key> or <task_key>#ckpt3 (no ':' per D-023); " +
-				"the decision id itself is resolved by the service",
+				"use the actual framework gate ID for a gate lookup or a route concerning that gate",
 		}),
 		question: Type.Optional(
 			Type.String({
@@ -1913,6 +2400,7 @@ export interface DecisionReceiptDetails {
 	stage: string;
 	status: DecisionFeedbackResult["status"] | "refused";
 	unavailable?: string;
+	/** Same independent diagnosis on a LOCAL claim/key-binding receipt refusal. */
 	claim_diagnosis?: ClaimDiagnosis;
 }
 
@@ -1962,80 +2450,322 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 		}
 		if (initiatorRole !== "pm") return { key: undefined, diagnosis: claimDiagnosis("unknown-role") };
 		const inspection = inspectPmClaim(projectDir, requested);
+		// inspectPmClaim resolves a key only when the unique active row's claimId
+		// exactly equals currentClaimId(); the frozen store likewise uses that live
+		// row.claimId as owner. No unbound/foreign/ambiguous read reaches this branch.
 		return inspection.key !== undefined
-			? { key: inspection.key }
+			? { key: inspection.key, owner: currentClaimId() }
 			: { key: undefined, diagnosis: claimDiagnosis(inspection.reason) };
+	}
+
+	/** Host-only current stage. Re-derived on every prepare/revalidate: a lost
+	 *  live claim, stale session or foreign key cannot keep an old stage offer. */
+	function stageFor(key: string | undefined): DecisionStageIdentity | undefined {
+		if (key === undefined || initiatorRole !== "pm") return undefined;
+		const stage = options.stageSource?.();
+		if (
+			stage === undefined ||
+			stage.key !== key ||
+			stage.claimId !== currentClaimId() ||
+			!stage.stageId.trim() ||
+			!stage.scopeRef.trim() ||
+			!stage.matterRef.trim() ||
+			!/^[a-f0-9]{64}$/.test(stage.grantDigest)
+		)
+			return undefined;
+		return stage;
 	}
 
 	const counter = createDecisionBlockCounter();
 	/** The decisions this window asked (receipt lookup + the join meta). */
 	const asked = new Map<string, { meta: DecisionToolMeta; dp: string }>();
+	/** r2 matter-scoped replay cache. NOT reset on `turn_start`: the same real
+	 * binding + substantive facts + dp/mode version is ONE matter forever in
+	 * this window, so a new turn/trigger cannot buy another DP request. A
+	 * changed material/preparation/context produces a new key (re-prepare).
+	 * R1: a real config/policy or host fact change is rechecked before ANY
+	 * replay; unchanged facts never buy a second runner. */
+	interface MatterOutcome {
+		payload: AskDecisionPayload;
+		firstLine: string;
+		directiveSuffix: string;
+		details: AskDecisionToolDetails;
+		feedback?: DecisionFeedback;
+		observation?: DecisionFeedbackObservation;
+		configSignature: string;
+		hostSignature: string;
+		fileEvidence?: FileEvidenceDependency[];
+		fileEvidenceRefused?: true;
+	}
+	const matterOutcomes = new Map<string, MatterOutcome>();
+	const fileRevisions = new Map<string, string>();
+	const isolatedChild = options.runner !== undefined || options.signRunner !== undefined;
+	const configFactsReader: DecideConfigReader | undefined =
+		options.configReader ?? (isolatedChild ? undefined : readRealDecideConfigFacts);
+	/** Only real reader facts enter the signature: no model text, no
+	 *  self-reported version, no new turn and no invented budget can refresh
+	 *  a cached verdict or its permission. */
+	const currentConfigSignature = (dp: string): string =>
+		stableJson({
+			config: configFactsReader?.(dp, projectDir),
+			// ONLY the trusted real reader's current per-dp mode/validity fact
+			// enters invalidation: never a model parameter, a bare mtime, raw
+			// config text, a new turn or an invented budget.
+			mode: readDecideConfigFacts(dp, projectDir).mode,
+			policy: resolveDecidePolicy(dp, projectDir),
+			decide: readDecidePolicy(projectDir),
+		});
+	const currentHostSignature = (): string => {
+		const { stop_signals, ...facts } = options.hostFacts ?? {};
+		// A timeout ends the service request. It does not change the authority
+		// or invalidate the already prepared local action.
+		const authorityStops = stop_signals?.filter((signal) => signal.kind !== "service-timeout") ?? [];
+		return stableJson(authorityStops.length === 0 ? facts : { ...facts, stop_signals: authorityStops });
+	};
+	/** Only TYPED host facts can be a real cancellation. Model material,
+	 *  context, note or trigger strings are never read as stop facts. */
+	const currentTrustedStop = (): StopSignal | undefined =>
+		(options.hostFacts?.stop_signals ?? []).find(
+			(signal) => signal.kind === "user-stop" || signal.kind === "parent-cancel",
+		);
 
-	function blockedResult(
+	function recordBlockedAttempt(
+		dp: string,
+		payload: AskDecisionPayload,
+		feedback: DecisionFeedback | undefined,
+		observation?: DecisionFeedbackObservation,
+	): string | undefined {
+		if (payload.available) return undefined;
+		const raw = observation?.raw;
+		const serviceId = isRecord(raw) ? raw.blocked_event_id : undefined;
+		if (
+			payload.matter_suppressed !== true &&
+			(observation?.origin === "mw-decide-run" || observation?.origin === "mw-decide-sign") &&
+			typeof serviceId === "string" &&
+			/^[0-9a-f-]{36}$/.test(serviceId)
+		) {
+			return serviceId;
+		}
+		const eventId = randomUUID();
+		const directory = path.join(projectDir, ".agenticdoc", "_autopilot", "dp-blocked");
+		const temporary = path.join(directory, `.${eventId}.tmp`);
+		const identifier = (value: unknown): string | undefined =>
+			typeof value === "string" && /^[a-zA-Z0-9_.:[\]/-]{1,160}$/.test(value) && !/^sk-/i.test(value)
+				? value
+				: undefined;
+		const fields = (payload.missing_fields ?? []).flatMap((field) => {
+			const name = identifier(field);
+			return name === undefined ? [] : [{ field: name, issue: "required or invalid" }];
+		});
+		for (const issue of payload.material_issues ?? []) {
+			const name = identifier(issue.field);
+			if (name !== undefined) fields.push({ field: name, issue: issue.code ?? "invalid" });
+		}
+		const event = {
+			schema_version: 1,
+			event_id: eventId,
+			ts: new Date().toISOString(),
+			source: "ask_decision",
+			stage: payload.matter_suppressed === true ? "replay" : (feedback?.stage ?? "preflight"),
+			dp: identifier(dp),
+			key: identifier(feedback?.binding?.key ?? ownerKey),
+			task_key: identifier(feedback?.binding?.task_key ?? workerTaskKey),
+			logical_id: identifier(isRecord(raw) ? raw.logical_id : undefined),
+			matter_ref: identifier(feedback?.matter_ref),
+			feedback_ref: identifier(feedback?.feedback_ref),
+			reason: payload.unavailable,
+			escalated_reason: identifier(payload.escalated_reason),
+			category: feedback?.category,
+			detail: payload.claim_diagnosis?.reason,
+			issues: fields.slice(0, 8),
+			...(payload.input_diagnostics ? { input_diagnostics: payload.input_diagnostics } : {}),
+			original_blocked_event_id: identifier(payload.original_blocked_event_id),
+		};
+		try {
+			fs.mkdirSync(directory, { recursive: true });
+			fs.writeFileSync(temporary, `${JSON.stringify(event)}\n`, { flag: "wx", flush: true });
+			fs.renameSync(temporary, path.join(directory, `${eventId}.json`));
+			return eventId;
+		} catch {
+			try {
+				fs.rmSync(temporary, { force: true });
+			} catch {
+				// A failed receipt must not replace the actual decision result.
+			}
+			appendDecisionTrace(tracePath, `[DECISION_BLOCK_AUDIT_FAILED] ${event.ts} reason=${event.reason}`);
+			return undefined;
+		}
+	}
+
+	/** The registered tool's host-facing result: the legacy frozen payload
+	 * PLUS the frozen T01 feedback. The first text line stays the exact legacy
+	 * JSON (exact-key contracts / DP receipt join); the feedback is the second
+	 * line and a sibling `details` field so the model and the host both see it. */
+	function publicResult(
 		dp: string,
 		outcome: AskDecisionOutcome,
-		stage: string,
-		key = ownerKey,
-		taskKey = workerTaskKey,
-	): { content: Array<{ type: "text"; text: string }>; details: AskDecisionPayload & { blocked_event_id?: string } } {
-		const { payload } = outcome;
-		if (payload.available) return { content: [{ type: "text", text: outcome.text }], details: payload };
-		const serviceId = outcome.blockedEventId;
-		let blockedEventId: string | undefined;
-		if (typeof serviceId === "string" && /^[0-9a-f-]{36}$/.test(serviceId)) {
-			blockedEventId = serviceId;
-		} else {
-			const eventId = randomUUID();
-			const directory = path.join(projectDir, ".agenticdoc", "_autopilot", "dp-blocked");
-			const temporary = path.join(directory, `.${eventId}.tmp`);
-			const identifier = (value: unknown): string | undefined =>
-				typeof value === "string" && /^[a-zA-Z0-9_.:[\]/-]{1,160}$/.test(value) && !/^sk-/i.test(value)
-					? value
-					: undefined;
-			const issues = (payload.missing_fields ?? []).slice(0, 8).flatMap((field) => {
-				const name = identifier(field);
-				return name === undefined ? [] : [{ field: name, issue: "required or invalid" }];
-			});
-			const event = {
-				schema_version: 1,
-				event_id: eventId,
-				ts: new Date().toISOString(),
-				source: "ask_decision",
-				stage,
-				dp: identifier(dp),
-				key: identifier(key),
-				task_key: identifier(taskKey),
-				reason: payload.unavailable,
-				escalated_reason: identifier(payload.escalated_reason),
-				issues,
-				...(payload.input_diagnostics ? { input_diagnostics: payload.input_diagnostics } : {}),
-			};
-			try {
-				fs.mkdirSync(directory, { recursive: true });
-				fs.writeFileSync(temporary, `${JSON.stringify(event)}\n`, { flag: "wx", flush: true });
-				fs.renameSync(temporary, path.join(directory, `${eventId}.json`));
-				blockedEventId = eventId;
-			} catch {
-				try {
-					fs.rmSync(temporary, { force: true });
-				} catch {
-					// A failed receipt must not replace the actual decision result.
-				}
-				appendDecisionTrace(tracePath, `[DECISION_BLOCK_AUDIT_FAILED] ${event.ts} reason=${event.reason}`);
-			}
-		}
+		offer?: SubmitOfferMetadata,
+	): {
+		content: Array<{ type: "text"; text: string }>;
+		details: AskDecisionToolDetails;
+	} {
+		const blockedEventId = recordBlockedAttempt(dp, outcome.payload, outcome.decision_feedback, outcome.observation);
+		const details: AskDecisionToolDetails = {
+			...outcome.payload,
+			...(outcome.decision_feedback === undefined ? {} : { decision_feedback: outcome.decision_feedback }),
+			...(offer === undefined ? {} : { submit_offer: offer }),
+			...(blockedEventId === undefined ? {} : { blocked_event_id: blockedEventId }),
+		};
+		const firstLine = jsonText(outcome.payload);
+		const suffix = outcome.text.startsWith(firstLine) ? outcome.text.slice(firstLine.length) : "";
+		const feedbackLine =
+			outcome.decision_feedback === undefined
+				? ""
+				: `\n${jsonText({ decision_feedback: outcome.decision_feedback })}`;
+		// T04B: offer metadata is an INDEPENDENT field/line, never folded into the
+		// frozen first-line payload. Absent when no handle was shared in.
+		const offerLine = offer === undefined ? "" : `\n${jsonText({ submit_offer: offer })}`;
 		return {
-			content: [{ type: "text", text: outcome.text }],
-			details: { ...payload, ...(blockedEventId === undefined ? {} : { blocked_event_id: blockedEventId }) },
+			content: [{ type: "text", text: `${firstLine}${feedbackLine}${offerLine}${suffix}` }],
+			details,
 		};
 	}
 
-	// One turn = one retry window: the same dp gets a fresh budget per turn.
+	/** T04B host offer junction. Runs ONLY when a submit handle was shared in;
+	 *  it prepares an immutable host offer when the STRUCTURAL identity and the
+	 *  complete business material/preparation/context are valid — independent of
+	 *  available=true/answers/decision_id/consumed. Incomplete material yields
+	 *  fillable gaps, never a fabricated offer. `revalidate` re-derives current
+	 *  config/host/identity/stop facts from the SAME real readers at submit time,
+	 *  so drift cannot buy a stale offer. No child raw is used as an authority. */
+	function buildOffer(
+		payload: AskDecisionPayload,
+		feedback: DecisionFeedback | undefined,
+		params: {
+			dp: string;
+			material?: Record<string, unknown>;
+			preparation?: DecisionPreparation;
+			context?: Record<string, unknown>;
+		},
+		hostContext: DecisionHostContext,
+		boundKey: string,
+		requestedTask: string | null,
+		fileEvidence?: FileEvidenceDependency[],
+	): SubmitOfferMetadata | undefined {
+		if (options.submitHandle === undefined) return undefined;
+		if (fileEvidence !== undefined && checkFileEvidence(fileEvidence).changed) {
+			return { submittable: false, submit_tool: "submit_decision_handoff", gaps: ["file-evidence-changed"] };
+		}
+		const source = initiatorRole === "pm" ? "pm" : "worker-local";
+		const identityOf = (ctx: DecisionHostContext): PrepareOfferInput["identity"] => ({
+			source,
+			key: ctx.binding.key ?? "",
+			role: ctx.binding.role,
+			...(ctx.binding.claim_id === undefined ? {} : { claimId: ctx.binding.claim_id }),
+			...(ctx.binding.owner === undefined ? {} : { owner: ctx.binding.owner }),
+			...(ctx.binding.task_key === undefined ? {} : { taskKey: ctx.binding.task_key }),
+			...(ctx.binding.run_id === undefined ? {} : { runId: ctx.binding.run_id }),
+			...(ctx.stageSource === undefined
+				? {}
+				: { stageId: ctx.stageSource.stageId, scopeRef: ctx.stageSource.scopeRef }),
+		});
+		const input: PrepareOfferInput = {
+			dp: params.dp,
+			identity: identityOf(hostContext),
+			material: params.material,
+			preparation: params.preparation,
+			context: params.context,
+			parentDecisionId: payload.available ? payload.decision_id : undefined,
+			matterRef: hostContext.matterRef,
+			...(hostContext.stageSource === undefined ? {} : { stageMatterRef: hostContext.stageSource.matterRef }),
+			feedbackEffectUnknown: feedback?.effect_state === "unknown",
+			revalidate: () => {
+				const fresh = hostContextFor(
+					params,
+					boundKey,
+					requestedTask,
+					initiatorRole === "pm" ? hostContext.binding.owner : undefined,
+				);
+				return {
+					configSignature:
+						fileEvidence === undefined
+							? currentConfigSignature(params.dp)
+							: stableJson({
+									config: currentConfigSignature(params.dp),
+									file_evidence: checkFileEvidence(fileEvidence).revision,
+								}),
+					hostSignature: currentHostSignature(),
+					identity: identityOf(fresh),
+					trustedStop: currentTrustedStop() !== undefined,
+					...(fresh.stageSource === undefined ? {} : { stageMatterRef: fresh.stageSource.matterRef }),
+				};
+			},
+		};
+		return options.submitHandle.prepareOffer(input).metadata;
+	}
+
+	/** Real host context for one execute: live PM claim or worker run.json,
+	 * never a model-supplied owner/p0/stop. */
+	function hostContextFor(
+		params: {
+			dp: string;
+			question?: string;
+			note?: string;
+			material?: unknown;
+			evidence_refs?: DecisionEvidenceRef[];
+			preparation?: unknown;
+			context?: unknown;
+			task_before?: unknown;
+		},
+		key: string | undefined,
+		taskKey: string | null,
+		trustedPmOwner?: string,
+	): DecisionHostContext {
+		const runState = resolvedTaskPath !== undefined ? readRunState(path.dirname(resolvedTaskPath)) : undefined;
+		const verifiedPmOwner =
+			initiatorRole === "pm" && trustedPmOwner === currentClaimId() ? trustedPmOwner : undefined;
+		const stage = stageFor(key);
+		const binding = hostBinding({
+			role: initiatorRole,
+			...(key === undefined ? {} : { key }),
+			taskKey: stage === undefined ? (taskKey ?? undefined) : stage.stageId,
+			...(key !== undefined && initiatorRole === "pm" ? { claimId: currentClaimId() } : {}),
+			...(runState === undefined ? {} : { owner: runState.owner_key, runId: runState.run_id }),
+			...(verifiedPmOwner === undefined ? {} : { owner: verifiedPmOwner }),
+		});
+		return {
+			binding,
+			host: { ...(options.hostFacts ?? {}), binding },
+			matterRef: decisionMatterRef({
+				version: decisionMatterVersion(),
+				owner: binding.owner ?? null,
+				role: binding.role,
+				key: binding.key ?? null,
+				task_key: binding.task_key ?? null,
+				run_id: binding.run_id ?? null,
+				claim_id: binding.claim_id ?? null,
+				dp: params.dp,
+				question: params.question ?? null,
+				note: params.note ?? null,
+				material: params.material ?? null,
+				...(params.evidence_refs === undefined ? {} : { evidence_refs: params.evidence_refs }),
+				preparation: matterIdentityParts(params.preparation, ["prepared_at"]) ?? null,
+				context: params.context ?? null,
+				task_before: matterIdentityParts(params.task_before, ["observed_at"]) ?? null,
+			}),
+			origin: "registered-ask-decision",
+			stage: "public-execute",
+			...(stage === undefined ? {} : { stageSource: stage }),
+		};
+	}
+
+	// One turn = one per-dp TRACE count window. It deliberately does NOT reset
+	// `matterOutcomes`: the matter identity outlives turns and triggers.
 	pi.on("turn_start", () => counter.reset());
 
 	pi.registerTool<
 		typeof ASK_DECISION_PARAMETERS,
-		| (AskDecisionPayload & { blocked_event_id?: string; gate_route?: ReturnType<typeof resolvePmGateRoute> })
+		| AskDecisionToolDetails
 		| ReturnType<typeof previewDecisionInput>
 		| { available: false; gate_route: ReturnType<typeof resolvePmGateRoute> }
 	>({
@@ -2044,27 +2774,34 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 		description:
 			"Ask the external decision service for a human-style ruling on a gated decision point. " +
 			"Returns ONE line of JSON: {available, decision_id, mode, acted, answers, confidence_source, latency_ms}" +
-			", plus {selection, feedback} on the prepared material path. " +
-			"A direct PM dp-gate-approve lookup returns gate_route only. Follow its instruction. " +
-			"available=false means UNAVAILABLE: the gated action stays blocked — do NOT guess, do NOT work around it, " +
-			'report "blocked on decision <dp>" and stop. The failure line also carries escalated_reason, and for ' +
-			"input-incomplete, missing_fields. A claim/key-binding refusal instead carries claim_diagnosis " +
+			", plus {selection, feedback} on the prepared material path. A direct PM dp-gate-approve lookup returns gate_route only and never issues a decision. Every decision attempt carries decision_feedback " +
+			"(frozen T01 classification with origin/stage/raw_reason/category/effect_state/stop_scope/gaps). " +
+			"For dp-w-type, action=pm-select-type transfers type selection to the owning PM using the original card and prepared basis; continue through dispatch_worker. " +
+			"For gate_route follow its instruction. Otherwise available=false is matter-scoped, NOT a global PM stop: the gated action stays blocked — do NOT guess, do NOT work around it — " +
+			'report "blocked on decision <dp>" with the concrete decision_feedback gap; a same-matter repeat returns the existing feedback (matter_suppressed=true) with no new DP request, and independent legal tools may continue. ' +
+			"Only a real host user-stop/parent-cancel/authority/budget/role/write-face fact stops wider work. " +
+			"The failure line also carries escalated_reason; local material validation reports material_issues with exact rules/counts and missing_fields only for absent fields. A claim/key-binding refusal instead carries claim_diagnosis " +
 			"(reason/message/recovery) with a reason-specific safe next step: worker/unknown-role diagnoses " +
 			"do not advise PM claim/switch; it is a local identity check failure, NOT a missing MATERIAL field — " +
 			"do NOT add meta.key to material, do NOT retry, preempt or re-claim, and do NOT write the index; " +
 			"it is terminal for this round.",
 		promptSnippet:
 			"ask_decision(dp, trigger, material?, question?, note?) — ask the decision service before a gated action; " +
-			"available=false means blocked, never guess.",
+			"gate_route gives local applicability and the next step; action=pm-select-type means PM chooses the dispatch type; otherwise available=false blocks that matter only " +
+			"(decision_feedback carries the concrete facts), never the whole PM.",
 		promptGuidelines: [
-			PM_GATE_ROUTING_RULE,
-			PM_TYPE_FALLBACK_DIRECTIVE,
 			"Include evidence_refs in new decisions. Use [] for inline evidence, or list existing files with field, path and optional inclusive lines. Leave planned outputs in the task text. Use input_diagnostics to correct local preparation failures.",
 			"Call ask_decision ONLY with a dp id from the enum and the trigger_id from your task context " +
-				"(<task_key> or <task_key>#ckpt<N>); never invent a dp id, trigger or question id.",
-			'available=false is a terminal answer for this attempt: report "blocked on decision <dp>" and wait ' +
-				"for a human. Repeating the same call in one turn is cut off by the retry breaker.",
+				"(<task_key>, <task_key>#ckpt<N>, or the existing framework gate ID for a gate lookup); never invent a dp id, trigger or question id.",
+			PM_TYPE_FALLBACK_DIRECTIVE,
+			PM_GATE_ROUTING_RULE,
+			'For decision failures other than action=pm-select-type, available=false closes THIS gated attempt only: report "blocked on decision <dp>" and the concrete ' +
+				"decision_feedback gap, do not wait for a human as a general rule, and do not resend the same matter (a repeat returns matter_suppressed=true with zero DP traffic). " +
+				"Two service failures never terminate the whole PM: continue other ready, independently legal tools within the existing claim/role/write-face.",
 			"unavailable=input-incomplete reports material_issues for invalid material, including UTF-8 byte counts and declared limits; " +
+				"missing_fields lists absent material fields or preparation/metadata problems, never a supplied invalid material value. " +
+				"MATERIAL_REFS_DIAGNOSIS explains invalid references and lists allowed_fields in this request's material; " +
+				"correct the named fields and retry once only after a substantive correction; " +
 				"a missing field is never filled by inference. EXCEPT a claim_diagnosis refusal (a claim/key-binding " +
 				"failure): meta.key is NOT a material field to add — never supplement material, retry, preempt or " +
 				're-claim; report "blocked on decision <dp>" and stop, since available=false is terminal for this round.',
@@ -2074,7 +2811,9 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			"Before submission, use preview=true on ask_decision. Correct local input issues and repeat preview before requesting a ruling. Preview never authorizes action or consumes an attempt.",
 			...Object.values(DECISION_MATERIAL_PROMPTS),
 			"Prepare material and a separately timestamped basis_catalog. Each item's material_refs is a non-empty array of existing field paths in this request's material, " +
-				"without the material. prefix, not repository file path:line. Each item names its applicable choices.",
+				"without the material. prefix, not repository file path:line. For dp-auto use e.g. background.current_state; " +
+				"for dp-QG use e.g. review_evidence or review_findings. Put file locations in the evidence field values. " +
+				"Each item names its applicable choices. No preparation means this request is blocked; never invent evidence. An L0 note cannot substitute for pm_note.",
 			"task_before is an optional local Agent report of this task BEFORE the decision, never model material. Use source=agent-report, an ISO timestamp with timezone, and null for unrecorded progress; do not substitute current state for past state or invent observations.",
 			"Generated roleScope governs the entry. Only the current worker can ask dp-w-check-task; a worker is refused on PM entries and must report the block " +
 				"instead of asking.",
@@ -2091,14 +2830,46 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 		// it authorizes (design Q1 §1.1).
 		executionMode: "sequential",
 		execute: async (_toolCallId, params, signal) => {
+			// Local preflight refusals never run a child, but they are still real
+			// public results: classify them with a real (possibly unbound) host
+			// context so no result lacks frozen feedback.
+			const refusedWithFeedback = (
+				outcome: AskDecisionOutcome,
+				context: DecisionHostContext,
+				stage: string,
+				claimReason?: string,
+			): AskDecisionOutcome =>
+				attachDecisionFeedback(outcome, context, {
+					origin: claimReason === undefined ? "local-preflight" : "claim-binding",
+					stage,
+					raw: {
+						unavailable: outcome.payload.available ? "" : outcome.payload.unavailable,
+						raw_reason: outcome.payload.available ? "" : outcome.payload.unavailable,
+						...(outcome.payload.available || outcome.payload.missing_fields === undefined
+							? {}
+							: { missing_fields: outcome.payload.missing_fields }),
+						...(outcome.payload.available || outcome.payload.material_issues === undefined
+							? {}
+							: { material_issues: outcome.payload.material_issues }),
+						...(claimReason === undefined ? {} : { claim_reason: claimReason }),
+					},
+				});
 			if (Object.hasOwn(params, "parentDecisionRef") || Object.hasOwn(params, "parent_decision_ref")) {
-				const refused = refusalOutcome("input-incomplete", params.dp, ["parent_decision_ref"]);
-				return blockedResult(params.dp, refused, "parameter-check");
+				const refused = refusedWithFeedback(
+					refusalOutcome("input-incomplete", params.dp, ["parent_decision_ref"]),
+					hostContextFor(params, undefined, workerTaskKey),
+					"parameter-check",
+				);
+				return publicResult(params.dp, refused);
 			}
 			const invalidDp = decisionIdRefusal(params.dp);
 			if (invalidDp) {
-				const refused = refusalOutcome(invalidDp, params.dp);
-				return blockedResult(params.dp, refused, "registry-check");
+				const refused = refusedWithFeedback(
+					refusalOutcome(invalidDp, params.dp),
+					hostContextFor(params, undefined, workerTaskKey),
+					"registry-check",
+				);
+				return publicResult(params.dp, refused);
 			}
 			if (params.preview) {
 				const preview = previewDecisionInput(
@@ -2115,29 +2886,217 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				// A window never decides under another key: the association must stay
 				// exact instead of being rewritten by a model parameter (AC-010).
 				// The reason is from the SAME single inspectPmClaim read as the gate.
-				const refused = claimRefusalOutcome(params.dp, bound.diagnosis);
+				const refused = refusedWithFeedback(
+					claimRefusalOutcome(params.dp, bound.diagnosis),
+					hostContextFor(params, undefined, workerTaskKey),
+					"identity-check",
+					bound.diagnosis.reason,
+				);
 				appendDecisionTrace(
 					tracePath,
 					`[DECISION_UNAVAILABLE] ${new Date().toISOString()} dp=${params.dp} trigger=${params.trigger} ` +
 						`reason=input-incomplete claim_reason=${bound.diagnosis.reason} count=1 max=` +
 						`${ASK_DECISION_MAX_BLOCKED_PER_TURN} role=${initiatorRole}`,
 				);
-				return blockedResult(params.dp, refused, "identity-check");
+				return publicResult(params.dp, refused);
 			}
-			const requestedKey = bound.key;
-			if (initiatorRole === "pm" && params.dp === "dp-gate-approve" && !signal?.aborted) {
+			const stage = stageFor(bound.key);
+			const requestedTask = stage === undefined ? (params.task_key ?? workerTaskKey ?? null) : stage.stageId;
+			if (
+				(workerTaskKey !== null && params.task_key !== undefined && params.task_key.trim() !== workerTaskKey) ||
+				(stage !== undefined && params.task_key !== undefined && params.task_key !== stage.stageId)
+			) {
+				const refused = refusedWithFeedback(
+					refusalOutcome("input-incomplete", params.dp, ["meta.task_key"]),
+					hostContextFor(params, bound.key, requestedTask, bound.owner),
+					"parameter-check",
+				);
+				return publicResult(params.dp, refused);
+			}
+			const baseHostContext = hostContextFor(params, bound.key, requestedTask, bound.owner);
+			if (initiatorRole === "pm" && params.dp === "dp-gate-approve" && currentTrustedStop() === undefined) {
 				const details = {
 					available: false as const,
-					gate_route: resolvePmGateRoute(projectDir, requestedKey, params.trigger),
+					gate_route: resolvePmGateRoute(projectDir, bound.key, params.trigger),
 				};
 				return { content: [{ type: "text", text: jsonText(details) }], details };
 			}
-			const requestedTask = params.task_key ?? workerTaskKey ?? null;
-			if (workerTaskKey !== null && params.task_key !== undefined && params.task_key.trim() !== workerTaskKey) {
-				const refused = refusalOutcome("input-incomplete", params.dp, ["meta.task_key"]);
-				return blockedResult(params.dp, refused, "identity-check");
+			// A router selection (including a replay) can propose an entry, but its
+			// cached decision must never stand in for today's gate queue.
+			const withGateRoute = (result: ReturnType<typeof publicResult>) => {
+				if (
+					params.dp === "dp-route" &&
+					result.details.available &&
+					result.details.selection?.id === "dp-gate-approve"
+				) {
+					const gate_route = resolvePmGateRoute(projectDir, bound.key, params.trigger);
+					result.details = { ...result.details, gate_route };
+					result.content = [...result.content, { type: "text", text: jsonText({ gate_route }) }];
+				}
+				return result;
+			};
+			const baseMatterRef = baseHostContext.matterRef;
+			const sourceRevision = fileRevisions.get(baseMatterRef);
+			let hostContext =
+				sourceRevision === undefined
+					? baseHostContext
+					: {
+							...baseHostContext,
+							matterRef: decisionMatterRef({ base: baseMatterRef, file_evidence_revision: sourceRevision }),
+						};
+			const configSignature = currentConfigSignature(params.dp);
+			const hostSignature = currentHostSignature();
+			const trustedStop = currentTrustedStop();
+			// A current typed user-stop / parent-cancel is effective even on an
+			// EMPTY cache: no first ask, config invalidation, material change or
+			// new matter may buy a NEW DP runner call. Cached answers remain
+			// zero-spawn replays; model strings never count as a stop fact and
+			// no-stop config recovery still runs once.
+			const cached = matterOutcomes.get(baseMatterRef);
+			if (cached !== undefined && cached.configSignature !== configSignature) {
+				// A REAL config/policy change is a new fact: never keep returning
+				// an old disabled verdict. Only the readers can reach this branch.
+				// A current trusted stop is NOT allowed to turn this invalidation
+				// into a new request; the guard below returns a zero-spawn result.
+				matterOutcomes.delete(baseMatterRef);
 			}
-			const outcome = await runAskDecision({
+			if (cached?.fileEvidence !== undefined) {
+				// These paths came from Python's authorized source preparation,
+				// never from a second parser over model-provided material. Check
+				// aliases before hashing so a retargeted symlink cannot expand reads.
+				const fileCheck = checkFileEvidence(cached.fileEvidence);
+				if (fileCheck.changed) {
+					fileRevisions.set(baseMatterRef, fileCheck.revision);
+					hostContext = {
+						...baseHostContext,
+						matterRef: decisionMatterRef({ base: baseMatterRef, file_evidence_revision: fileCheck.revision }),
+					};
+					matterOutcomes.delete(baseMatterRef);
+				}
+			}
+			const replay = matterOutcomes.get(baseMatterRef);
+			if (replay !== undefined) {
+				// The observation-time exclusions must not cancel real checks:
+				// re-validate material, preparation (incl. prepared_at shape) and
+				// task_before on every replay, with ZERO child traffic.
+				const revalidated = prepareDecisionEnvelope(
+					params.dp,
+					params.material,
+					buildDecisionToolMeta({
+						key: bound.key,
+						taskKey: requestedTask,
+						initiatorRole,
+						taskBefore: params.task_before,
+					}),
+					0,
+					params.preparation,
+					params.context,
+				);
+				if (!revalidated.ok) {
+					const refused = refusedWithFeedback(
+						refusalOutcome(
+							revalidated.reason,
+							params.dp,
+							revalidated.missing,
+							revalidated.material_ref_issues,
+							revalidated.material_issues,
+						),
+						hostContext,
+						"matter-recheck",
+					);
+					return publicResult(params.dp, refused);
+				}
+				// A REAL host stop/budget/authority change reclassifies the SAME
+				// answer with its true scope; no new DP request is sent.
+				let feedback = replay.feedback;
+				if (replay.hostSignature !== hostSignature || trustedStop !== undefined) {
+					const reclassified = attachDecisionFeedback(
+						{
+							payload: replay.payload,
+							text: `${replay.firstLine}${replay.directiveSuffix}`,
+							spawned: false,
+							...(replay.observation === undefined ? {} : { observation: replay.observation }),
+						},
+						hostContext,
+						replay.observation,
+					);
+					feedback = reclassified.decision_feedback;
+					replay.feedback = feedback;
+					replay.hostSignature = hostSignature;
+				}
+				const replayPayload = {
+					...replay.payload,
+					matter_suppressed: true as const,
+					...(replay.payload.available || replay.details.blocked_event_id === undefined
+						? {}
+						: { original_blocked_event_id: replay.details.blocked_event_id }),
+				};
+				const feedbackLine = feedback === undefined ? "" : `\n${jsonText({ decision_feedback: feedback })}`;
+				// T04B: a same-matter replay RE-PREPARES the host offer; the handle's
+				// deterministic identity reuses the same offer_id (no new budget).
+				const offer =
+					replay.fileEvidenceRefused && options.submitHandle !== undefined
+						? {
+								submittable: false,
+								submit_tool: "submit_decision_handoff" as const,
+								gaps: ["file-evidence-metadata"],
+							}
+						: buildOffer(
+								replay.payload,
+								feedback,
+								params,
+								hostContext,
+								bound.key,
+								requestedTask,
+								replay.fileEvidence,
+							);
+				const offerLine = offer === undefined ? "" : `\n${jsonText({ submit_offer: offer })}`;
+				const blockedEventId = recordBlockedAttempt(params.dp, replayPayload, feedback, replay.observation);
+				const replayDetails: AskDecisionToolDetails = {
+					...replay.details,
+					matter_suppressed: true,
+					...(replayPayload.original_blocked_event_id === undefined
+						? {}
+						: { original_blocked_event_id: replayPayload.original_blocked_event_id }),
+					...(feedback === undefined ? {} : { decision_feedback: feedback }),
+					...(offer === undefined ? {} : { submit_offer: offer }),
+					...(blockedEventId === undefined ? {} : { blocked_event_id: blockedEventId }),
+				};
+				appendDecisionTrace(
+					tracePath,
+					`[DECISION_MATTER_SUPPRESSED] ${new Date().toISOString()} dp=${params.dp} ` +
+						`trigger=${params.trigger} matter=${hostContext.matterRef} role=${initiatorRole}`,
+				);
+				return withGateRoute({
+					content: [
+						{
+							type: "text",
+							text: `${jsonText(replayPayload)}${feedbackLine}${offerLine}${replay.directiveSuffix}`,
+						},
+					],
+					details: replayDetails,
+				});
+			}
+			if (trustedStop !== undefined) {
+				// Current typed cancellation forbids any NEW DP request —
+				// including a first-ever ask, config invalidation or a
+				// substantive material change.
+				// This is a local zero-spawn refusal with real host facts, never
+				// a fabricated DP answer or a global PM termination.
+				const stopped = unavailable("upstream-error", params.dp, false, {
+					observation: {
+						origin: "host-stop-guard",
+						stage: "pre-transport",
+						raw: {
+							unavailable: "upstream-error",
+							raw_reason: trustedStop.kind,
+							stop_signal_ref: trustedStop.signal_ref,
+						},
+					},
+				});
+				return publicResult(params.dp, attachDecisionFeedback(stopped, hostContext));
+			}
+			let outcome = await runAskDecision({
 				projectDir,
 				dp: params.dp,
 				trigger: params.trigger,
@@ -2147,7 +3106,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				preparation: params.preparation,
 				evidenceRefs: params.evidence_refs,
 				context: params.context,
-				key: requestedKey,
+				key: bound.key,
 				taskKey: requestedTask,
 				taskBefore: params.task_before,
 				initiatorRole,
@@ -2156,7 +3115,68 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				signRunner: options.signRunner,
 				timeoutMs: options.timeoutMs,
 				signal,
+				hostContext,
+				configReader: options.configReader,
+				hostFacts: options.hostFacts,
 			});
+			const childRaw = isRecord(outcome.observation?.raw) ? outcome.observation.raw : undefined;
+			let fileEvidence = parseFileEvidence(childRaw);
+			const metadataRefused = fileEvidence === null || (fileEvidence === undefined && childRaw?.available === true);
+			if (metadataRefused) {
+				outcome = attachDecisionFeedback(
+					unavailable("bad-response", params.dp, outcome.spawned, {
+						missing_fields: ["file_evidence"],
+						observation: outcome.observation,
+					}),
+					hostContext,
+				);
+				// Cache the refusal without any file dependencies. Malformed
+				// metadata authorizes no reads and never buys a same-fact retry.
+				fileEvidence = [];
+			}
+			// T04B: prepare the host offer for THIS ask result (available OR not),
+			// as an independent field; undefined leaves the legacy result intact.
+			const offer =
+				metadataRefused && options.submitHandle !== undefined
+					? {
+							submittable: false,
+							submit_tool: "submit_decision_handoff" as const,
+							gaps: ["file-evidence-metadata"],
+						}
+					: buildOffer(
+							outcome.payload,
+							outcome.decision_feedback,
+							params,
+							hostContext,
+							bound.key,
+							requestedTask,
+							fileEvidence ?? undefined,
+						);
+			const publicOutcome = publicResult(params.dp, outcome, offer);
+			const firstLine = jsonText(outcome.payload);
+			const unresolvedSources =
+				fileEvidence === undefined &&
+				((typeof childRaw?.detail === "string" && childRaw.detail.includes("file evidence preparation failed")) ||
+					(Array.isArray(childRaw?.problems) &&
+						childRaw.problems.some(
+							(item) => typeof item === "string" && item.includes("file evidence preparation failed"),
+						)));
+			// Malformed metadata replays only its stable refusal. A source refusal
+			// from an older child without dependency metadata must be locally
+			// prepared again rather than trapping a repaired missing file forever.
+			if (!unresolvedSources)
+				matterOutcomes.set(baseMatterRef, {
+					payload: outcome.payload,
+					firstLine,
+					directiveSuffix: outcome.text.startsWith(firstLine) ? outcome.text.slice(firstLine.length) : "",
+					details: publicOutcome.details,
+					feedback: outcome.decision_feedback,
+					observation: outcome.observation,
+					configSignature,
+					hostSignature,
+					...(fileEvidence == null ? {} : { fileEvidence }),
+					...(metadataRefused ? { fileEvidenceRefused: true as const } : {}),
+				});
 			const iso = new Date().toISOString();
 			if (outcome.payload.available) {
 				counter.clear(params.dp);
@@ -2175,25 +3195,8 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 							? ` feedback=${outcome.payload.feedback.stage}:${outcome.payload.feedback.status}`
 							: ""),
 				);
-				if (
-					initiatorRole === "pm" &&
-					params.dp === "dp-route" &&
-					outcome.payload.selection?.id === "dp-gate-approve"
-				) {
-					const gate_route = resolvePmGateRoute(projectDir, requestedKey, params.trigger);
-					return {
-						content: [
-							{ type: "text", text: outcome.text },
-							{ type: "text", text: jsonText({ gate_route }) },
-						],
-						details: { ...outcome.payload, gate_route },
-					};
-				}
-				return { content: [{ type: "text", text: outcome.text }], details: outcome.payload };
+				return withGateRoute(publicOutcome);
 			}
-
-			if (outcome.payload.action === "pm-select-type")
-				return { content: [{ type: "text", text: outcome.text }], details: outcome.payload };
 
 			const reason = outcome.payload.unavailable;
 			const escalated =
@@ -2206,24 +3209,18 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				`[DECISION_UNAVAILABLE] ${iso} dp=${params.dp} trigger=${params.trigger} reason=${reason}` +
 					`${escalated} count=${blocks} max=${ASK_DECISION_MAX_BLOCKED_PER_TURN} role=${initiatorRole}`,
 			);
-			const stage = outcome.spawned ? (reason === "timeout" ? "child-timeout" : "request") : "preflight";
-			const blocked = blockedResult(params.dp, outcome, stage, requestedKey, requestedTask);
-			if (blocks < ASK_DECISION_MAX_BLOCKED_PER_TURN) {
-				return blocked;
+			// r2: the old `terminate:true` after two failures is GONE. A repeated
+			// matter is suppressed by `matterOutcomes` above and reported as a
+			// concrete feedback/gap; independent legal tools remain callable.
+			if (blocks >= ASK_DECISION_MAX_BLOCKED_PER_TURN) {
+				appendDecisionTrace(
+					tracePath,
+					`[DECISION_MATTER_SUPPRESSED] ${iso} dp=${params.dp} trigger=${params.trigger} reason=${reason} ` +
+						`count=${blocks} max=${ASK_DECISION_MAX_BLOCKED_PER_TURN} matter=${hostContext.matterRef} ` +
+						`role=${initiatorRole}`,
+				);
 			}
-			appendDecisionTrace(
-				tracePath,
-				`[DECISION_RETRY_STOP] ${iso} dp=${params.dp} trigger=${params.trigger} reason=${reason} ` +
-					`count=${blocks} max=${ASK_DECISION_MAX_BLOCKED_PER_TURN} role=${initiatorRole}`,
-			);
-			// `terminate` stops the tool loop when every finalized result in the
-			// batch asks for it (agent-loop.ts:582-584); ask_decision is
-			// sequential, so a batch that contains it stops here.
-			return {
-				content: [{ type: "text", text: `${outcome.text}\n${terminalDirective(params.dp, blocks)}` }],
-				details: blocked.details,
-				terminate: true,
-			};
+			return publicOutcome;
 		},
 	});
 

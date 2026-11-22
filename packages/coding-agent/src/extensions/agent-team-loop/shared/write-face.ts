@@ -138,6 +138,7 @@ export interface WriteFace {
 	readonly caseInsensitive: boolean;
 	/** Configured roots for absolute identities in separated workspaces. */
 	readonly roots?: readonly string[];
+	readonly externalRoot?: (absolutePath: string) => string | undefined;
 }
 
 export interface WriteFaceParseOptions {
@@ -153,8 +154,11 @@ export interface WriteFaceParseOptions {
 	 * workspace supplies them as literal anchors (never realpath-migrated), so a
 	 * junctioned artifact directory cannot rescue an escape. */
 	readonly readOnlyAllowedRoots?: readonly string[];
+	readonly readOnlyAllows?: (root: string, entry: string) => boolean;
 	/** Resolve existing path prefixes at workspace boundaries, before comparison. */
 	readonly canonicalize?: (absolutePath: string) => string;
+	/** Return a literal anchor only for a permitted external declaration. */
+	readonly externalRoot?: WriteFace["externalRoot"];
 }
 
 /** §3.3 three states: undeclared / refused / declared. */
@@ -591,6 +595,7 @@ function normalizeEntry(
 	caseInsensitive: boolean,
 	roots?: readonly string[],
 	canonicalize?: (absolutePath: string) => string,
+	externalRoot?: WriteFaceParseOptions["externalRoot"],
 ): NormalizeResult {
 	let entry = raw.trim();
 	if (entry === "" || entry === "-") return { kind: "skip" };
@@ -610,6 +615,7 @@ function normalizeEntry(
 			.map((value) => normalizeSeparators(value).replace(/\/+$/, ""))
 			.filter((value) => toRelative(absolute, value, caseInsensitive) !== null)
 			.sort((a, b) => b.length - a.length)[0];
+		root ??= externalRoot?.(absolute);
 		if (root === undefined) return { kind: "rejected", code: WRITE_FACE_OUTSIDE_BASE };
 		entry = toRelative(absolute, root, caseInsensitive) ?? "";
 	} else if (isAbsolutePath(entry)) {
@@ -662,11 +668,12 @@ function normalizeEntries(
 	label: "entry" | "deny entry",
 	roots?: readonly string[],
 	canonicalize?: (absolutePath: string) => string,
+	externalRoot?: WriteFaceParseOptions["externalRoot"],
 ): NormalizedEntries {
 	const globs: WriteFaceGlob[] = [];
 	const entries: string[] = [];
 	for (const raw of rawEntries) {
-		const r = normalizeEntry(raw, base, caseInsensitive, roots, canonicalize);
+		const r = normalizeEntry(raw, base, caseInsensitive, roots, canonicalize, externalRoot);
 		if (r.kind === "skip") continue;
 		if (r.kind === "rejected") return { kind: "rejected", code: r.code, detail: `${label} '${raw}'` };
 		globs.push(...r.globs);
@@ -681,7 +688,15 @@ function buildFace(
 	opts: WriteFaceParseOptions,
 ): WriteFaceParseResult {
 	if (rawAllow.length === 0) return { kind: "rejected", code: WRITE_FACE_EMPTY, detail: WRITE_FACE_EMPTY_DETAIL };
-	const allow = normalizeEntries(rawAllow, opts.base, opts.caseInsensitive, "entry", opts.roots, opts.canonicalize);
+	const allow = normalizeEntries(
+		rawAllow,
+		opts.base,
+		opts.caseInsensitive,
+		"entry",
+		opts.roots,
+		opts.canonicalize,
+		opts.externalRoot,
+	);
 	if (allow.kind === "rejected") return allow;
 	if (allow.entries.length === 0) return { kind: "rejected", code: WRITE_FACE_EMPTY, detail: WRITE_FACE_EMPTY_DETAIL };
 	const denyNormalized = normalizeEntries(
@@ -691,6 +706,7 @@ function buildFace(
 		"deny entry",
 		opts.roots,
 		opts.canonicalize,
+		opts.externalRoot,
 	);
 	if (denyNormalized.kind === "rejected") return denyNormalized;
 	const face: WriteFace = {
@@ -700,6 +716,7 @@ function buildFace(
 		base: opts.base,
 		caseInsensitive: opts.caseInsensitive,
 		...(opts.roots === undefined ? {} : { roots: opts.roots }),
+		...(opts.externalRoot === undefined ? {} : { externalRoot: opts.externalRoot }),
 	};
 	for (const root of opts.readOnlyRoots ?? []) {
 		const protectedFace = parseWriteFaceEntries([`${normalizeSeparators(root).replace(/\/+$/, "")}/**`], {
@@ -711,21 +728,25 @@ function buildFace(
 			return { kind: "rejected", code: WRITE_FACE_READ_ONLY, detail: `read-only root '${root}'` };
 		}
 		const refused = { kind: "rejected", code: WRITE_FACE_READ_ONLY, detail: `read-only root '${root}'` } as const;
-		if (opts.readOnlyAllowedRoots === undefined) {
+		if (opts.readOnlyAllowedRoots === undefined && opts.readOnlyAllows === undefined) {
 			if (writeFacesOverlap(face, protectedFace.face) !== null) return refused;
 			continue;
 		}
 		// Narrow exception: each overlapping expanded glob must be provably inside
 		// one of the literal build-artifact directories. An undecidable overlap is
 		// treated as overlapping (fail closed).
-		const allowed = opts.readOnlyAllowedRoots.map(literalPathSegments);
+		const allowed = (opts.readOnlyAllowedRoots ?? []).map(literalPathSegments);
 		for (const glob of face.allow) {
 			const overlaps = protectedFace.face.allow.some((protectedGlob) => {
 				const result = globsOverlap(glob.segments, protectedGlob.segments, opts.caseInsensitive);
 				return result.kind !== "none";
 			});
 			if (!overlaps) continue;
-			if (!isInsideAllowedArtifactRoot(glob, allowed, opts.caseInsensitive)) return refused;
+			if (
+				!isInsideAllowedArtifactRoot(glob, allowed, opts.caseInsensitive) &&
+				!opts.readOnlyAllows?.(root, glob.text)
+			)
+				return refused;
 		}
 	}
 	return { kind: "declared", face };

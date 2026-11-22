@@ -1,7 +1,10 @@
 """Per-run offline recovery, real lifecycle reader/receipts and both producer identities."""
 import copy
+import hashlib
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -12,7 +15,7 @@ import decision_lifecycle
 import decision_wire
 import mw_common
 import replan_tasks as rp
-from autopilot import dispatch
+from autopilot import conductor, dispatch, timeline as timeline_mod
 
 
 def put(path, text):
@@ -107,6 +110,184 @@ def test_offline_recovery_parallel_apply_and_dispatch(fixture):
     mw_common.update_status(project, first.task_key, "done")
     put(first.task_md.with_name("run.json"), json.dumps({"status": "done"}))
     assert send("two").ok
+
+
+def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None):
+    project, key, folder, _ = fixture
+    put(key.parent / "_index.parallel", f"| demo | active | EXECUTE | {claim} | | | now |\n")
+    run = json.loads(rp.body(folder / "run.json"))
+    run["stop_kind"] = "worker-deadline"
+    put(folder / "run.json", json.dumps(run))
+    (folder / "trace.log").unlink()
+    put(folder / "report.md", "AC-001 PASS")
+    progress = {
+        "run_id": run["run_id"],
+        "milestone": {"at": "2026-11-17T00:00:50Z", "current": "finishing", "remaining": "AC-002",
+                      "completed": [{"acceptance": "AC-001", "evidence": ".agenticdoc/demo/workers/old/report.md"}],
+                      "blocker": "", "next": "Verify remaining acceptance"},
+        "activity": {"source": "tool_update", "at": "2026-11-17T00:00:59Z", "tools": []},
+    }
+    put(folder / "run-progress.json", json.dumps(progress))
+    inspected = tool(project, "inspect", task="old", claim=claim)
+    assert inspected["facts"]["stop_kind"] == "worker-deadline"
+    assert inspected["facts"]["run_id"] == run["run_id"]
+    assert inspected["progress"] == progress
+    assert "output.md" not in inspected["evidence_refs"]
+    assert "report.md" in inspected["evidence_refs"]
+    recovery = unit("recover", "AC-001 AC-002")
+    recovery["covers"] = ["AC-001", "AC-002"]
+    deadline = deadline or (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(
+        timespec="milliseconds").replace("+00:00", "Z")
+    recovery["markdown"] = (f"parent_worker_run: {run['run_id']}\n" + recovery["markdown"] +
+                            "\n## 事项预算事实\n"
+                            "- `budget_ref`: `tasks/recover.md#事项预算事实` + SHA\n"
+                            "- `matter_ref`: `demo/recover`\n"
+                            f"- `parent_matter_ref`: `{matter}`\n"
+                            f"- `deadline`: `{deadline}`\n"
+                            "- `max_steps`: 2\n"
+                            "- `no_progress_limit`: 2\n"
+                            "- `remaining_cost`: 2（1 cost unit ≡ 1 tool call）\n"
+                            "- `steps_consumed`: 0\n"
+                            "- `cost_consumed`: 0\n"
+                            "- `no_progress_count`: 0\n"
+                            "- `source_refs`: 卡 SHA、`run.json`、`_index.parallel`\n")
+    args = {k: inspected[k] for k in ("issue", "snapshot")}
+    prepared = tool(project, "preview", **args, claim=claim,
+                    plan={"action": "narrow", "reason": "Finish remaining verification from report.md",
+                          "units": [recovery]})
+    decision_ref = answer(project, prepared, choice="narrow")
+    tool(project, "apply", **args, version=prepared["version"], decision_id=decision_ref, claim=claim)
+    pin = dispatch.card_digest(key / "tasks/recover.md")
+    return run["run_id"], pin
+
+
+def deadline_grant(fixture, child, parent, pin):
+    project, key, _, _ = fixture
+    card_ref = "tasks/recover.md"
+    approval = rp.deadline_successor(project, "demo", child, card_ref, pin, parent)
+    deadline = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    stage_path = key / "tasks/stage.md"
+    put(stage_path, "# Stage")
+    stage_pin = dispatch.card_digest(stage_path)
+    channel_id = hashlib.sha256(os.path.normcase(str(project)).encode()).hexdigest()
+    channel = project / ".mw-pm-channel" / channel_id
+    binding = {"id": "event", "key": "demo", "claim": "host:1", "binding": "window"}
+    grant_hash = "verified-stage"
+    request = channel / "demo" / "window" / "event.request.json"
+    receipt = request.with_name("event.receipt.json")
+    put(request, json.dumps({**binding, "stage": {"deadline": deadline, "max_steps": 2, "remaining_cost": 2,
+                                                  "project_ref": channel_id, "key": "demo", "card_path": "tasks/stage.md",
+                                                  "card_sha256": stage_pin, "write_face": ["src/recover.py"]},
+                             "duty": {"shift": "test", "until": 9_999_999_999_999, "stopHash": "missing"}}))
+    put(receipt, json.dumps({**binding, "state": "started", "session": "session-a", "stage_digest": grant_hash}))
+    session = project / "session.jsonl"
+    data = {"unit": "stage", "kind": "event", "key": "demo", "claim_id": "host:1", "source_pin": stage_pin,
+            "event": {"kind": "reserve-child",
+                      "request": {"reservation_id": f'deadline:["demo","{pin}"]',
+                                  "steps": 2, "cost": 2, "deadline": deadline}}}
+    put(session, "\n".join(map(json.dumps, [{"type": "session", "id": "session-a"},
+                                           {"type": "custom", "customType": "mw-runtime-budget-v1", "data": data}])) + "\n")
+    file = key.parent / "_runtime" / "fixed-child-budgets" / "demo" / f"deadline-{pin}.json"
+    grant = {"approval": approval, "task": child, "card": card_ref, "pin": pin, "steps": 2, "cost": 2, "deadline": deadline,
+             "authority": {"channel": str(channel), "request": request.relative_to(channel).as_posix(),
+                           "request_sha256": hashlib.sha256(request.read_bytes()).hexdigest(),
+                           "receipt": receipt.relative_to(channel).as_posix(), "session": str(session),
+                           "session_id": "session-a", "event_id": "event", "grant_digest": grant_hash,
+                           "unit": "stage", "stage_card": "tasks/stage.md", "stage_pin": stage_pin}}
+    put(file, json.dumps(grant))
+    return file, receipt, session
+
+
+@pytest.mark.parametrize("cancel_before_recovery", [False, True])
+def test_deadline_successor_enqueues_once_and_recovers_the_same_reservation(fixture, monkeypatch, cancel_before_recovery):
+    project, key, folder, _ = fixture
+    monkeypatch.setattr(rp.Path, "home", lambda: project)
+    parent, pin = deadline_plan(fixture)
+    before = (folder / "run.json").read_bytes()
+    def send(_=None):
+        return dispatch.dispatch(project, "demo", "recover", "phase-writer", "check", loop="execute", attempt=1)
+    assert "allocation is missing" in send().reason
+    child = dispatch.task_key_for("demo", "recover")
+    file, _, session = deadline_grant(fixture, child, parent, pin)
+    original_budget = session.read_bytes()
+    # Fail after the envelope is durable and before the worker row is published.
+    with patch.object(mw_common, "upsert_worker_row", side_effect=OSError("interrupted")):
+        interrupted = send()
+    assert interrupted.reason.startswith("queue-write-failed")
+    envelope = rp.body(interrupted.task_md)
+    assert mw_common.read_task_header_scalar(envelope, "deadline_successor") == "yes"
+    assert mw_common.read_task_header_scalar(envelope, "fixed_child_steps") == "2"
+    assert dispatch.dispatch_parent_refusal(project, "demo", child, envelope, launching=True) is None
+    timeline = timeline_mod.Timeline(timeline_mod.timeline_path(project))
+    state = conductor.ConductorState(timeline, conductor.goal_mtime_ns(project))
+    if cancel_before_recovery:
+        put(folder / "run.json", json.dumps({**json.loads(before), "aborted": True}))
+        conductor.reconcile_orphans(project, state)
+        assert "parent-cancel" in dispatch.dispatch_parent_refusal(project, "demo", child, envelope, launching=True)
+        assert [r["task_key"] for r in mw_common.parse_workers_file(mw_common.workers_path(project))] == ["old"]
+        assert session.read_bytes() == original_budget
+        return
+    conductor.reconcile_orphans(project, state)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert not any(result.ok for result in pool.map(send, range(2)))
+    conductor.reconcile_orphans(project, state)
+    assert [r["task_key"] for r in mw_common.parse_workers_file(mw_common.workers_path(project))].count(child) == 1
+    assert file.is_file() and session.read_bytes() == original_budget
+    assert (folder / "run.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("change,reason", [
+    ("cancel", "parent-cancel"), ("revoked", "PM stage revoked"), ("duty-stop", "user-stop"),
+    ("wrong-task", "allocation binding mismatch"), ("missed-reservation", "reservation is missing"),
+    ("edited-card", "pinned dispatch card"), ("expired", "expired"), ("budget", "revoked or exhausted"),
+    ("claim", "another claim"), ("wrong-scope", "another project"), ("source-change", "requires an applied replan"),
+    ("user-cancelled", "user-stop"), ("envelope-scope", "differs from its frozen card"),
+    ("missing-receipt", "decision receipt is missing"),
+])
+def test_deadline_successor_refusal_preserves_the_queue(fixture, change, reason, monkeypatch):
+    project, key, folder, _ = fixture
+    monkeypatch.setattr(rp.Path, "home", lambda: project)
+    parent, pin = deadline_plan(fixture)
+    child = dispatch.task_key_for("demo", "recover")
+    file, receipt, session = deadline_grant(fixture, child, parent, pin)
+    card_data = dispatch.dispatch_card(project, "demo", "recover")
+    envelope = dispatch.render_task_md("phase-writer", "check", loop="execute", attempt=1, card=card_data)
+    grant = json.loads(rp.body(file))
+    if change == "cancel":
+        put(folder / "run.json", json.dumps({**json.loads(rp.body(folder / "run.json")), "aborted": True}))
+    elif change == "revoked":
+        put(receipt, json.dumps({**json.loads(rp.body(receipt)), "state": "cancelled"}))
+    elif change == "duty-stop":
+        put(key / "duty" / "test" / "STOP", "stopped")
+    elif change == "wrong-task":
+        grant["task"] = "some-other-task"
+    elif change == "missed-reservation":
+        put(session, rp.body(session).splitlines()[0] + "\n")
+    elif change == "edited-card":
+        card_path = key / "tasks/recover.md"
+        put(card_path, rp.body(card_path) + "changed")
+    elif change == "expired":
+        grant["deadline"] = "2026-01-01T00:00:00.000Z"
+    elif change == "budget":
+        grant["cost"] = 3
+    elif change == "claim":
+        put(key.parent / "_index.parallel", "| demo | active | EXECUTE | host:2 | | | now |\n")
+    elif change == "wrong-scope":
+        grant["authority"]["channel"] = str(project / ".mw-pm-channel" / ("a" * 64))
+    elif change == "source-change":
+        put(folder / "run-progress.json", json.dumps({"run_id": parent, "milestone": {"remaining": "changed"}}))
+    elif change == "user-cancelled":
+        put(file.with_suffix(".json.cancelled"), "stopped")
+    elif change == "envelope-scope":
+        envelope = envelope.replace("write_face: src/recover.py", "write_face: src/another.py")
+    elif change == "missing-receipt":
+        sink = decision_wire.production_lifecycle_sink(project)
+        retained = [line for line in rp.body(sink).splitlines()
+                    if json.loads(line).get("lifecycle") != "settled"]
+        put(sink, "\n".join(retained) + "\n")
+    put(file, json.dumps(grant))
+    assert reason in dispatch.dispatch_parent_refusal(project, "demo", child, envelope, allocation={})
+    assert [r["task_key"] for r in mw_common.parse_workers_file(mw_common.workers_path(project))] == ["old"]
 
 
 def test_conflict_missing_ac_cycle_stale_claim_and_snapshot(fixture):
@@ -443,7 +624,8 @@ def test_task_output_is_bounded_but_preview_checks_every_live_worker(fixture):
             **row, "task_key": stem, "task_path": str(folder / "task.md"), "status": "running"})
     current = tool(project, "inspect", task="base")
     assert set(current) == {"issue", "snapshot", "state", "facts", "acceptance", "coverage", "evidence_refs"}
-    assert current["facts"] == {"task": "old", "status": "failed", "category": "wall-timeout"}
+    assert current["facts"] == {"task": "old", "status": "failed", "category": "wall-timeout",
+                                "run_id": "old@2026-11-17T00:00:00Z"}
     assert current["evidence_refs"]["card"] == ".agenticdoc/demo/tasks/base.md"
     assert current["evidence_refs"]["task.md"] == ".agenticdoc/demo/workers/old/task.md"
     assert "report.md" not in current["evidence_refs"]

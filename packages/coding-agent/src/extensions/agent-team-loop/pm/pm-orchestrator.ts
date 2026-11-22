@@ -30,6 +30,7 @@ import {
 	keyStateDocPaths,
 	ownerEvidenceCurrent,
 } from "../shared/index-store.ts";
+import { LocalSelectionStore } from "../shared/local-selection-store.ts";
 import {
 	findMwPy,
 	getMwStatus,
@@ -55,14 +56,41 @@ import {
 import { readTaskHeaderScalar, readTaskType } from "../shared/task-frontmatter.ts";
 import { type WorkerEntry, type WorkerStatus, WorkerStore, workerOwnerKey } from "../shared/worker-store.ts";
 import {
+	type BoundPmIdentity,
 	type DecisionFollowupIntent,
+	decisionFollowupParentCurrent,
+	hasDuplicateJsonMembers,
+	type LocalFollowupCheckpoint,
+	type LocalFollowupIntent,
+	type LocalFollowupOwner,
+	type LocalFollowupRecords,
+	type LocalTrustedExecutorCertificate,
+	type LocalTrustedOfferCertificate,
+	localFollowupSidecarPath,
 	markDecisionFollowupExecuted,
+	parseLocalIntentValue,
+	parsePriorLocalAssociation,
+	priorLocalAssociationEvidence,
 	resumeDecisionFollowup,
+	sharedFollowupLockPath,
+	verifyLocalFollowupEvidence,
 } from "./decision-followup.ts";
 import { captureDecisionTaskState } from "./decision-task-state.ts";
-import { ASK_DECISION_PARAMETERS, type AskDecisionInput, runAskDecision } from "./decision-tool.ts";
+import {
+	ASK_DECISION_PARAMETERS,
+	type AskDecisionInput,
+	readRealDecideConfigFacts,
+	runAskDecision,
+} from "./decision-tool.ts";
 import { PM_GATE_ROUTING_RULE } from "./gate-route.ts";
 import { isGoalEstablished, readGoal } from "./goal-reader.ts";
+import type { CurrentOfferCertificateScope, SubmitDecisionHostHandle, SubmitOfferMetadata } from "./host-submit.ts";
+import { runOfflineSignoff } from "./offline-signoff.ts";
+import {
+	type ProductionRuntimeHost,
+	parseHead,
+	type RuntimeExecutionCertificateScope,
+} from "./runtime-host-adapter.ts";
 import { StateManager } from "./state-manager.ts";
 import { type DispatchRefusal, dispatchTask } from "./task-dispatcher.ts";
 import { canonicalStateJson } from "./triage-client.ts";
@@ -95,6 +123,7 @@ import {
 	WATCH_ENTRY_TYPE,
 	windowClaimId,
 } from "./ui-bridge.ts";
+import { takeDeadlineReview } from "./worker-deadline-tool.ts";
 
 /**
  * Terminal-readback watermark semantics (AC-011 / AC-012 / AC-013):
@@ -1289,6 +1318,15 @@ function judgeOrphanScope(
 	};
 }
 
+/** Exact facts observed only AFTER a successful host dispatch queue write. */
+export interface RuntimeHostDispatchFacts {
+	key: string;
+	taskKey: string;
+	claimId: string;
+	taskMdPath: string;
+	dispatchedAt: string;
+}
+
 export interface DispatchScanOptions {
 	/** Keys already warned about in this session — a key is reported at most once. */
 	warnedKeys?: Set<string>;
@@ -1325,6 +1363,8 @@ export interface DispatchScanOptions {
 	 * refused task, never deduped), so this callback only carries the short
 	 * `formatDispatchAlarm` text to the PM. */
 	onRefusal?: (text: string) => void;
+	/** Host-only junction; never exposed as a model tool. */
+	onDispatchObserved?: (facts: RuntimeHostDispatchFacts) => void;
 	/** ORPHANED keys already alerted in this session (AC-011/T-19) — the
 	 * `orphaned-keys` alarm is once per key per session, so a key that stays
 	 * orphaned does not re-wake the PM on every settled turn. */
@@ -1856,6 +1896,23 @@ export async function dispatchNewTasks(
 				);
 				if (outcome.ok) {
 					queued += 1;
+					const row = workerStore.findByKey(taskKey);
+					const claimId = indexStore.findByKey(owner.name)?.claimId;
+					const head = parseHead(taskContent);
+					if (
+						row !== undefined &&
+						claimId !== undefined &&
+						head.ok &&
+						head.value.card_path &&
+						head.value.card_sha256
+					)
+						opts.onDispatchObserved?.({
+							key: owner.name,
+							taskKey,
+							claimId,
+							taskMdPath,
+							dispatchedAt: row.dispatchedAt,
+						});
 				} else {
 					// AC-003/D-008: a write-face refusal is a return value, not a
 					// throw — counting it as queued would both falsify the quota and
@@ -2100,6 +2157,7 @@ export function startWorkerPollLoop(
 	watch: PmWatchState,
 	ui: PmUiHolder,
 	pollIntervalMs = POLL_INTERVAL_MS,
+	onTerminalReview?: (key: string, taskKey: string) => void,
 ): NodeJS.Timeout {
 	// Baseline snapshot: rows already terminal when this window opens are
 	// history — never replay their summaries. Only transitions observed while
@@ -2197,7 +2255,7 @@ export function startWorkerPollLoop(
 			// widget only; no cross-window broadcast (scoped to the watched key ∪
 			// this window's dispatched tasks — mw-crosskey-risk-escalation D-101).
 			for (const entry of entries) {
-				if (entry.status !== "running" || escalated.has(entry.taskKey)) continue;
+				if (entry.status !== "running") continue;
 				// Ownership is "watched key OR dispatched by this window": a task this
 				// window sent across keys (explicit `key:` dispatch, gate fallback to
 				// _scratch) is still this PM's work, while other windows' workers stay
@@ -2206,10 +2264,15 @@ export function startWorkerPollLoop(
 				const ownerKey = ownerKeyOf(entry, agenticdocRoot);
 				const owned = watch.dispatchedTaskKeys?.has(entry.taskKey) ?? false;
 				if (!watch.key || (ownerKey !== watch.key && !owned)) continue;
-				const ck = readTaskProgress(path.dirname(entry.taskPath))?.checkpoint;
+				const taskDir = path.dirname(entry.taskPath);
+				const review = takeDeadlineReview(agenticdocRoot, taskDir, windowClaimId());
+				if (review) {
+					deliverPmAlert(pi, `[mw] Worker 截止复核 ${entry.taskKey} ${JSON.stringify(review)}`);
+				}
+				if (escalated.has(entry.taskKey)) continue;
+				const ck = readTaskProgress(taskDir)?.checkpoint;
 				if (!ck || ck.risk === "low") continue;
 				escalated.add(entry.taskKey);
-				const taskDir = path.dirname(entry.taskPath);
 				// T03 / design D-003: dp2 is PM-INITIATED only. The checkpoint loop
 				// deliberately asks no decision and executes no answer: the machine may
 				// not narrow, split, take over or authorize anything on its own. The
@@ -2251,6 +2314,7 @@ export function startWorkerPollLoop(
 				readbackDelivered.add(entry.taskKey);
 				// Task dir from the queue row taskPath: works for keyed {key}/workers/<task-key>/ and legacy root paths.
 				const taskDir = path.dirname(entry.taskPath);
+				if (entry.status === "done") onTerminalReview?.(watch.key, entry.taskKey);
 				// AC-007/DD-08 residual risk: a contract-allowed write whose basename
 				// still names a deny-list artifact is only observable here (the guard
 				// wrote `blocked=false risk=deny-basename` and moved on). Reuses the
@@ -2294,10 +2358,18 @@ export function startWorkerPollLoop(
 				// processes the result, and runs the next step — the finish call
 				// of dispatch → monitor → finish call → pm run (AC-015).
 				const header = `[${entry.taskKey}] ${entry.status}${heartbeatStatsSuffix(taskDir, entry)}`;
+				const run = readRunState(taskDir);
+				const parentHint =
+					run?.task_key === entry.taskKey && run.owner_key === watch.key && run.run_id
+						? run.stop_kind === "worker-deadline"
+							? `\nworker-deadline: ${run.run_id}。用 read_worker_progress 按 run ID 查看最后进度和活动，用 replan_tasks inspect 核对验收与产物。`
+							: `\n延续本 run 的任务卡在头部使用 parent_worker_run: ${run.run_id}。`
+						: "";
 				const continuation =
-					entry.status === "done"
+					(entry.status === "done"
 						? "[mw] worker 已完成：验收本次交付，按现有计划推进就绪工作。ack_worker_result（或 /mw ack all）只确认已读。"
-						: `[mw] worker 终态回读（key=${watch.key}, task=${entry.taskKey}）。${PM_CONTINUE_HINT}`;
+						: `[mw] worker 终态回读（key=${watch.key}, task=${entry.taskKey}）。${PM_CONTINUE_HINT}`) +
+					parentHint;
 				const body = readOutputBody(taskDir);
 				if (body) {
 					deliverWorkerResult(pi, `${header}:\n\n${body}\n\n${continuation}`);
@@ -2474,6 +2546,136 @@ function followupWorkerEvidence(doc: string, workers: WorkerStore, key: string, 
 	});
 }
 
+/** Trusted host junctions. Production uses the host-only readonly current
+ *  offer/execution certificates; explicitly labelled fixture tests may inject
+ *  their own boundary. A missing junction still fails closed by design. */
+interface LocalFollowupTrustedCertificates {
+	readTrustedExecutor(localRef: string): LocalTrustedExecutorCertificate | undefined;
+	readCurrentOffer(localRef: string): LocalTrustedOfferCertificate | undefined;
+}
+
+function nonEmptyText(value: unknown): value is string {
+	return typeof value === "string" && value.trim() !== "" && !value.includes("\0");
+}
+
+interface StrictLocalRecoveryInput {
+	persisted: unknown;
+	desired: LocalFollowupIntent;
+	boundPm: BoundPmIdentity;
+	key: string;
+	windowId: string;
+	fallbackExecutor: string;
+	currentExecutor: LocalTrustedExecutorCertificate | undefined;
+	claimCurrent: boolean;
+	sourceCurrent: boolean;
+	sharedHistoryCurrent: boolean;
+	/** RAW sidecar bytes carry duplicated JSON object members. */
+	rawDuplicate: boolean;
+	readRecords: (ref: string, source: "pm" | "worker-local", taskKey: string | null) => LocalFollowupRecords;
+}
+
+/** N1/N2/R4: a local child may be rewritten ONLY after RAW duplicate-member
+ *  detection, strict shape/source/owner/window/binding checks and a trusted
+ *  absence check from the frozen store's shape-only readers. Null
+ *  progress/evidence alone is not a history proof. The ONLY permitted changed
+ *  fields are `local_ref`, `restricted_executor` and the prior-association
+ *  marker in `local_action_evidence`; the new executor comes from a fresh
+ *  certificate or the current-window fallback, never from the stored row.
+ *  A locator correction MUST carry the old locator forward as coordination
+ *  evidence (frozen-store key absence is not host effect-history proof).
+ *  Malformed, duplicate, DP-mixed, wrong-owner, executing/unknown and
+ *  untrusted evidence-bearing bytes are preserved. */
+function strictLocalRecoveryPermitted(input: StrictLocalRecoveryInput): boolean {
+	if (input.rawDuplicate || !input.claimCurrent || !input.sourceCurrent || !input.sharedHistoryCurrent) return false;
+	const persisted = parseLocalIntentValue(input.persisted);
+	if (persisted === undefined) return false;
+	const desired = input.desired;
+	// Non-null evidence is accepted ONLY when it is the prior-association marker
+	// this recovery path wrote; an untrusted evidence string must refuse.
+	const priorRefs = parsePriorLocalAssociation(persisted.local_action_evidence);
+	if (priorRefs === undefined) return false;
+	const expectedRefs = persisted.local_ref === desired.local_ref ? priorRefs : [...priorRefs, persisted.local_ref];
+	const expectedEvidence = expectedRefs.length === 0 ? null : priorLocalAssociationEvidence(expectedRefs);
+	if (desired.local_action_evidence !== expectedEvidence) return false;
+	if (
+		persisted.local_progress !== null ||
+		persisted.owner_key !== input.key ||
+		persisted.owner_key !== desired.owner_key ||
+		desired.owner_key !== input.key ||
+		persisted.local_source !== "pm" ||
+		desired.local_source !== "pm" ||
+		persisted.source !== "local" ||
+		desired.source !== "local" ||
+		persisted.schema_version !== 1 ||
+		desired.schema_version !== 1
+	)
+		return false;
+	const sameBoundPm = (value: BoundPmIdentity): boolean =>
+		value.role === "pm" && value.key === input.boundPm.key && value.window_id === input.boundPm.window_id;
+	if (
+		!sameBoundPm(persisted.prepared_by) ||
+		!sameBoundPm(desired.prepared_by) ||
+		input.boundPm.window_id !== input.windowId
+	)
+		return false;
+	const frozenFields = [
+		"schema_version",
+		"source",
+		"local_source",
+		"parent_ref",
+		"parent_logical_id",
+		"parent_decision_id",
+		"parent_matter_version",
+		"target_dp",
+		"material_version",
+		"basis_version",
+		"owner_key",
+		"task_key",
+		"restricted_action",
+		"local_progress",
+	] as const;
+	if (frozenFields.some((field) => persisted[field] !== desired[field])) return false;
+	if (
+		!nonEmptyText(persisted.local_ref) ||
+		!nonEmptyText(desired.local_ref) ||
+		!nonEmptyText(persisted.restricted_executor) ||
+		!nonEmptyText(desired.restricted_executor)
+	)
+		return false;
+	if (input.currentExecutor !== undefined) {
+		const certificate = input.currentExecutor;
+		if (
+			certificate.current !== true ||
+			certificate.local_ref !== desired.local_ref ||
+			!nonEmptyText(certificate.run_id) ||
+			!nonEmptyText(certificate.tool_call_id) ||
+			!nonEmptyText(certificate.executor) ||
+			certificate.executor !== desired.restricted_executor
+		)
+			return false;
+	} else if (desired.restricted_executor !== input.fallbackExecutor) {
+		return false;
+	}
+	// Existing trusted absence evidence: the frozen store's shape-only readers
+	// report no committed local selection/execution for BOTH the old locator and
+	// the new locator. This does NOT certify host effect history; a missing
+	// interface stays an explicit PM-retained gap.
+	const noCommittedHistory = (ref: string): boolean => {
+		try {
+			const records = input.readRecords(ref, "pm", desired.task_key);
+			return (
+				records.selection_status === "absent" &&
+				records.execution_status === "absent" &&
+				records.selection === undefined &&
+				records.execution === undefined
+			);
+		} catch {
+			return false;
+		}
+	};
+	return noCommittedHistory(persisted.local_ref) && noCommittedHistory(desired.local_ref);
+}
+
 /** Register only in a PM window. The tool coordinates a prepared request; the
  * normal task tools and the T10 writer remain the only authorities for work. */
 export function registerPmGateFollowup(
@@ -2482,6 +2684,16 @@ export function registerPmGateFollowup(
 	workers: WorkerStore,
 	watch: PmWatchState,
 	decide: (input: AskDecisionInput) => ReturnType<typeof runAskDecision> = runAskDecision,
+	/** Optional host junctions for the discriminated LOCAL follow-up branch.
+	 *  `submitHandle` supplies the real host-bound offer projection; `host`
+	 *  supplies the independent runtime execution/result verifier. When either
+	 *  is absent the local branch fails closed with a precise missing-interface
+	 *  reason; it never fakes success and never stops the DP branch. */
+	localHost?: {
+		submitHandle?: SubmitDecisionHostHandle;
+		host?: ProductionRuntimeHost;
+		certificates?: LocalFollowupTrustedCertificates;
+	},
 ): void {
 	const doc = resolveAgenticdocRoot(projectDir);
 	const reply = (value: Record<string, unknown>) => ({
@@ -2512,6 +2724,14 @@ export function registerPmGateFollowup(
 				action_event: Type.Optional(Type.String({ description: "An existing T10 executed event id" })),
 				request_ref: Type.Optional(
 					Type.String({ description: "The actual successor decision id for the action receipt" }),
+				),
+				local_ref: Type.Optional(
+					Type.String({ description: "Host-bound local selection ref; selects the local follow-up branch" }),
+				),
+				sign_material: Type.Optional(
+					Type.Record(Type.String(), Type.Unknown(), {
+						description: "Four-part sign-off material for a current offline stage with independent QG",
+					}),
 				),
 			},
 			{ additionalProperties: false },
@@ -2577,6 +2797,114 @@ export function registerPmGateFollowup(
 				return { ...decision, ...(stageNoteEvent ? { stageNoteEvent } : {}) };
 			};
 			try {
+				if (params.local_ref && localHost?.host && localHost.submitHandle && controlledPath(doc, gatePath)) {
+					const gateBytes = fs.readFileSync(gatePath);
+					const gate = parseGateFile(gateBytes.toString("utf8"), gatePath);
+					const decision = gate.decision;
+					if (decision && decision.transport !== "answered" && decision.decisionRef === null) {
+						const stage = localHost.host.stageIdentity();
+						const config = readConfig(projectDir);
+						const gateDigest = createHash("sha256").update(gateBytes).digest("hex");
+						if (
+							!config.ok ||
+							!config.config.enabled ||
+							config.config.paused ||
+							config.config.auto_gate_mode !== "live" ||
+							gate.id !== params.gate_id ||
+							gate.key !== key ||
+							(gate.kind !== "stage-confirm" && gate.kind !== "stage-close") ||
+							(decision.effect !== "not-started" && decision.effect !== "blocked") ||
+							stage?.key !== key ||
+							stage.claimId !== window ||
+							stage.matterRef !== decision.matterRef ||
+							stage.scopeRef !== `${gate.id}.${gateDigest}` ||
+							params.action_event !== undefined ||
+							params.request_ref !== undefined ||
+							params.source_card !== undefined ||
+							params.source_worker !== undefined ||
+							params.task_key !== undefined
+						)
+							return refuse("offline-gate-scope-unbound");
+						const offer = localHost.submitHandle.hostExpectedFor(params.local_ref);
+						const digest = (value: unknown) =>
+							createHash("sha256").update(canonicalStateJson(value)).digest("hex");
+						if (
+							offer?.identity?.scopeRef !== stage.scopeRef ||
+							offer.stage_matter_ref !== stage.matterRef ||
+							offer.parent_decision_id !== undefined ||
+							offer.material_digest !== digest({ material: params.material, context: null }) ||
+							offer.basis_digest !== digest({ basis_catalog: preparation.basis_catalog })
+						)
+							return refuse("offline-gate-offer-unbound");
+						const { host, submitHandle } = localHost;
+						const localRef = params.local_ref;
+						const readProof = () => {
+							const currentOffer = submitHandle.hostExpectedFor(localRef);
+							const currentConfig = readConfig(projectDir);
+							if (
+								watch.key !== key ||
+								claimedPmKey(projectDir, key) !== key ||
+								!currentConfig.ok ||
+								!currentConfig.config.enabled ||
+								currentConfig.config.paused ||
+								currentConfig.config.auto_gate_mode !== "live" ||
+								// After VERIFY the stage cannot offer new work. The host
+								// only revalidates this already completed, pinned action.
+								((currentOffer !== undefined || host.stageIdentity() !== undefined) &&
+									canonicalStateJson(currentOffer ?? null) !== canonicalStateJson(offer)) ||
+								!controlledPath(doc, gatePath) ||
+								!fs.readFileSync(gatePath).equals(gateBytes)
+							)
+								return undefined;
+							const execution = host.currentOfflineGateExecution(
+								localRef,
+								{ key, source: "pm", claim_id: window },
+								offer,
+								params.restricted_action,
+							);
+							if (!execution || !fs.readFileSync(gatePath).equals(gateBytes)) return undefined;
+							return {
+								state: "executed",
+								source: "local",
+								verified_source: "local",
+								local_progress: "verified",
+								ref: execution.local_ref,
+								action: params.restricted_action,
+								evidence: execution.result_ref,
+								gate_id: gate.id,
+								gate_sha256: gateDigest,
+								matter_ref: decision.matterRef,
+								matter_version: decision.substantiveVersion,
+								parent_released: false,
+								run_id: execution.run_id,
+								target_digest: execution.target_digest,
+								qg_refs: execution.qg_refs,
+								qg_sha256: execution.qg_sha256,
+								review_run_id: execution.review_run_id,
+								review_artifact_ref: execution.review_artifact_ref,
+								review_artifact_sha256: execution.review_artifact_sha256,
+								material_sha256: offer.material_digest,
+								basis_sha256: offer.basis_digest,
+							};
+						};
+						const followup = readProof();
+						if (!followup) return refuse("offline-gate-execution-unverified");
+						if (params.sign_material === undefined) return reply(followup);
+						const material = structuredClone(params.sign_material);
+						const signoff = await runOfflineSignoff(
+							projectDir,
+							key,
+							() => {
+								const current = readProof();
+								if (!current) return undefined;
+								return { key, claim_id: window, followup: current, material };
+							},
+							signal,
+						);
+						return reply({ ...followup, signoff });
+					}
+				}
+				if (params.sign_material !== undefined) return refuse("offline-signoff-requires-local-gate");
 				const parent = readParent();
 				if (!parent?.decisionRef || !parent.modelBasis || !controlledPath(doc, ownerDir))
 					return refuse("gate-or-authority-unavailable");
@@ -2630,6 +2958,20 @@ export function registerPmGateFollowup(
 					restricted_action: params.restricted_action,
 					restricted_executor: `pm:${window}`,
 				};
+				// Shared authoritative parent/source currentness predicate. The DP
+				// branch aliases it below; the local branch calls it at every lock
+				// and verifier-await checkpoint instead of trusting a captured snapshot.
+				const sourceStillCurrent = (): boolean => {
+					const now = readParent();
+					return (
+						now !== undefined &&
+						canonicalStateJson(now) === canonicalStateJson(parent) &&
+						(!sourceWorker ||
+							followupWorkerEvidence(doc, workers, key, sourceWorker) === material.worker_execution) &&
+						(!sourcePath ||
+							(controlledPath(doc, sourcePath) && fs.readFileSync(sourcePath, "utf8") === originalTask))
+					);
+				};
 				let dir = ownerDir;
 				for (const part of ["evidence", "decision-followups"]) {
 					dir = path.join(dir, part);
@@ -2638,6 +2980,298 @@ export function registerPmGateFollowup(
 				}
 				// A single path per owner/matter/version across gate ids and labels.
 				const file = path.join(dir, `${digest([key, parent.matterRef, parent.substantiveVersion])}.json`);
+				// Discriminated LOCAL follow-up (design.md §4.6). A `local_ref` is ONLY
+				// a locator to a real committed local selection/execution: never a DP
+				// decision id and never authority. The consumer reads the real frozen
+				// store records, the current host-bound offer projection and the live
+				// claim, and delegates final execution certification to the independent
+				// host verifier. A missing junction fails closed with a precise
+				// missing-interface reason; this branch NEVER releases the parent gate
+				// and NEVER writes to the DP lifecycle ledger.
+				if (params.local_ref !== undefined) {
+					if (params.action_event !== undefined || params.request_ref !== undefined)
+						return refuse("local-conflicts-with-action-receipt");
+					const localRef = params.local_ref;
+					if (localRef.length === 0 || localRef.length > 120 || localRef.includes("\0"))
+						return refuse("invalid-local-ref");
+					// F2: the original DP intent keeps `file`; local state is a strict
+					// child under the SAME shared matter lock. Neither source erases
+					// or rewrites the other's truthful bytes.
+					const sharedIntentPath = file;
+					const intentPath = localFollowupSidecarPath(sharedIntentPath);
+					const sharedLockPath = sharedFollowupLockPath(sharedIntentPath);
+					const offerScope: CurrentOfferCertificateScope = {
+						key,
+						source: "pm",
+						claim_id: window,
+						parent_ref: parent.matterRef,
+						parent_decision_id: parentRef,
+						parent_logical_id: binding.parent_logical_id,
+						parent_matter_version: parent.substantiveVersion,
+						target_dp: target,
+						material_version: binding.material_version,
+						basis_version: binding.basis_version,
+						restricted_action: params.restricted_action,
+					};
+					const executionScope: RuntimeExecutionCertificateScope = {
+						key,
+						source: "pm",
+						claim_id: window,
+					};
+					const productionCertificates: LocalFollowupTrustedCertificates | undefined =
+						localHost?.host !== undefined && localHost.submitHandle !== undefined
+							? {
+									readTrustedExecutor: (requestedRef) => {
+										if (requestedRef !== localRef) return undefined;
+										const certificate = localHost.host?.currentExecutionCertificateFor(
+											localRef,
+											executionScope,
+										);
+										if (certificate === undefined) return undefined;
+										return {
+											current: true,
+											local_ref: localRef,
+											run_id: certificate.run_id,
+											tool_call_id: certificate.tool_call_id,
+											executor: certificate.executor,
+										};
+									},
+									readCurrentOffer: (requestedRef) =>
+										requestedRef === localRef
+											? localHost.submitHandle?.currentOfferCertificateFor?.(localRef, offerScope)
+											: undefined,
+								}
+							: undefined;
+					const certificates = localHost?.certificates ?? productionCertificates;
+					const executorCertificate = certificates?.readTrustedExecutor(localRef);
+					const localBinding =
+						executorCertificate === undefined
+							? binding
+							: { ...binding, restricted_executor: executorCertificate.executor };
+					const initialProjection = localHost?.submitHandle?.hostExpectedFor(localRef);
+					const initialProjectionJson =
+						initialProjection === undefined ? null : canonicalStateJson(initialProjection);
+					const initialOfferCertificate = certificates?.readCurrentOffer(localRef);
+					const initialOfferJson =
+						initialOfferCertificate === undefined ? null : canonicalStateJson(initialOfferCertificate);
+					const initialExecutorJson =
+						executorCertificate === undefined ? null : canonicalStateJson(executorCertificate);
+					const readCurrentSource = (_checkpoint: LocalFollowupCheckpoint): boolean => {
+						if (!sourceStillCurrent()) return false;
+						const projection = localHost?.submitHandle?.hostExpectedFor(localRef);
+						if ((projection === undefined ? null : canonicalStateJson(projection)) !== initialProjectionJson)
+							return false;
+						const offer = certificates?.readCurrentOffer(localRef);
+						if ((offer === undefined ? null : canonicalStateJson(offer)) !== initialOfferJson) return false;
+						const executor = certificates?.readTrustedExecutor(localRef);
+						if ((executor === undefined ? null : canonicalStateJson(executor)) !== initialExecutorJson)
+							return false;
+						if (executor !== undefined && executor.executor !== localBinding.restricted_executor) return false;
+						try {
+							const raw = fs.readFileSync(intentPath, "utf8");
+							if (hasDuplicateJsonMembers(raw)) return false;
+							const persisted: unknown = JSON.parse(raw);
+							if (typeof persisted !== "object" || persisted === null || Array.isArray(persisted)) return false;
+							const row = persisted as Record<string, unknown>;
+							return (
+								row.local_ref === localRef &&
+								row.local_source === "pm" &&
+								row.owner_key === key &&
+								row.prepared_by !== undefined &&
+								(row.prepared_by as { window_id?: unknown }).window_id === window
+							);
+						} catch {
+							return false;
+						}
+					};
+					const store = new LocalSelectionStore({ agenticdoc_root: doc, key });
+					const readRecords = (
+						ref: string,
+						source: "pm" | "worker-local",
+						taskKey: string | null,
+					): LocalFollowupRecords => {
+						const readReq = { source, ref, ...(taskKey === null ? {} : { task_key: taskKey }) };
+						const selection = store.readSelection(readReq);
+						const execution = store.readExecution(readReq);
+						return {
+							selection: selection.status === "ok" ? selection.record : undefined,
+							execution: execution.status === "ok" ? execution.record : undefined,
+							selection_status: selection.status,
+							execution_status: execution.status,
+						};
+					};
+					const createUnlock = await acquireLock(sharedLockPath);
+					try {
+						// N1/N2: validate CURRENT source and the shared failed-DP bytes
+						// UNDER the shared matter lock, BEFORE minting or rewriting an
+						// authoritative child. A parent/config/watch/card/worker drift
+						// while this lock was being waited on must never pin stale facts.
+						const sourceCurrent = sourceStillCurrent();
+						if (!sourceCurrent) return refuse("source-evidence-not-current:create-lock");
+						const readSharedBytes = (): string | null => {
+							try {
+								return fs.existsSync(sharedIntentPath) ? fs.readFileSync(sharedIntentPath, "utf8") : null;
+							} catch {
+								return null;
+							}
+						};
+						const sharedBytesBefore = readSharedBytes();
+						if (!fs.existsSync(intentPath)) {
+							const localIntent: LocalFollowupIntent = {
+								schema_version: 1,
+								source: "local",
+								local_ref: localRef,
+								local_source: "pm",
+								...localBinding,
+								prepared_by: bound,
+								local_progress: null,
+								local_action_evidence: null,
+							};
+							fs.writeFileSync(intentPath, `${JSON.stringify(localIntent)}\n`, { flag: "wx", mode: 0o600 });
+						}
+						if (!controlledPath(doc, intentPath)) return refuse("intent-path-unbound");
+						// N1 SAFE RECOVERY: only a strictly validated, current-owner,
+						// no-progress placeholder may be re-initialized, and ONLY its
+						// locator/executor may change. The executor comes from a
+						// FRESH certificate or the current-window fallback, never the old
+						// stored value. Frozen-store absent records for both locators are
+						// the available trusted absence evidence; that is NOT a host effect
+						// history certificate. Malformed/duplicate/DP-mixed/wrong-owner/
+						// unknown, executing/verified/evidence-bearing rows and shared
+						// failed-DP bytes are preserved without any blind rebinding or
+						// erasure. R4: a locator correction records the old locator as
+						// prior-association coordination evidence in the recovered child.
+						let sidecarRaw: string | undefined;
+						try {
+							sidecarRaw = fs.readFileSync(intentPath, "utf8");
+						} catch {
+							sidecarRaw = undefined;
+						}
+						const sidecarDuplicateMembers = sidecarRaw === undefined || hasDuplicateJsonMembers(sidecarRaw);
+						// H2: duplicated members are ambiguous RAW bytes. JSON.parse would
+						// keep only the last value; refuse BEFORE any parse/locator rewrite
+						// so the original bytes stay untouched.
+						if (sidecarRaw === undefined || sidecarDuplicateMembers)
+							return refuse("local-sidecar-duplicate-members");
+						let persisted: unknown;
+						try {
+							persisted = JSON.parse(sidecarRaw);
+						} catch {
+							persisted = undefined;
+						}
+						const persistedRow = parseLocalIntentValue(persisted);
+						const priorRefs =
+							persistedRow === undefined
+								? []
+								: (parsePriorLocalAssociation(persistedRow.local_action_evidence) ?? []);
+						const oldRef = persistedRow?.local_ref;
+						const carriedRefs = oldRef !== undefined && oldRef !== localRef ? [...priorRefs, oldRef] : priorRefs;
+						const desiredEvidence = carriedRefs.length === 0 ? null : priorLocalAssociationEvidence(carriedRefs);
+						const desired: LocalFollowupIntent = {
+							schema_version: 1,
+							source: "local",
+							local_ref: localRef,
+							local_source: "pm",
+							...localBinding,
+							prepared_by: bound,
+							local_progress: null,
+							local_action_evidence: desiredEvidence,
+						};
+						const desiredJson = JSON.stringify(desired);
+						const currentWindow = windowClaimId();
+						const claimCurrent =
+							claimedPmKey(projectDir, key) === key && watch.key === key && currentWindow === window;
+						const currentExecutor = certificates?.readTrustedExecutor(localRef);
+						const sharedHistoryCurrent = readSharedBytes() === sharedBytesBefore;
+						const recoveryPermitted = strictLocalRecoveryPermitted({
+							persisted,
+							desired,
+							boundPm: bound,
+							key,
+							windowId: window,
+							fallbackExecutor: binding.restricted_executor,
+							currentExecutor,
+							claimCurrent,
+							sourceCurrent,
+							sharedHistoryCurrent,
+							rawDuplicate: sidecarDuplicateMembers,
+							readRecords,
+						});
+						if (readSharedBytes() !== sharedBytesBefore) return refuse("shared-followup-history-changed");
+						if (recoveryPermitted && JSON.stringify(persisted) !== desiredJson) {
+							const temporary = `${intentPath}.${process.pid}.${Date.now()}.recover.tmp`;
+							try {
+								fs.writeFileSync(temporary, desiredJson, { flag: "wx", mode: 0o600 });
+								fs.renameSync(temporary, intentPath);
+							} finally {
+								try {
+									fs.unlinkSync(temporary);
+								} catch {
+									// The atomic rename consumed the temporary file.
+								}
+							}
+						}
+					} finally {
+						createUnlock();
+					}
+					const hostVerifier = localHost?.host?.adapterHooks().verifyExecution;
+					const readCurrentOwner = (): LocalFollowupOwner | undefined => {
+						const currentProjection = localHost?.submitHandle?.hostExpectedFor(localRef);
+						if (currentProjection === undefined) return undefined; // missing interface -> fail closed
+						const trustedOffer = certificates?.readCurrentOffer(localRef);
+						const parentDecisionId = trustedOffer?.parent_decision_id ?? currentProjection.parent_decision_id;
+						if (parentDecisionId === undefined) return undefined; // no inferred/fallback parent id
+						return {
+							owner_key: key,
+							claim_id: window,
+							window_id: window,
+							unique_active: claimedPmKey(projectDir, key) === key,
+							material_digest: currentProjection.material_digest,
+							basis_digest: currentProjection.basis_digest,
+							parent_decision_id: parentDecisionId,
+						};
+					};
+					const outcome = await verifyLocalFollowupEvidence({
+						intent_path: intentPath,
+						lock_path: sharedLockPath,
+						expected: localBinding,
+						bound_pm: bound,
+						source: "pm",
+						local_ref: localRef,
+						readRecords,
+						readCurrentOwner,
+						readCurrentSource,
+						readTrustedExecutor: () => certificates?.readTrustedExecutor(localRef),
+						readCurrentOffer: () => certificates?.readCurrentOffer(localRef),
+						verifyExecution: async (execution) => {
+							if (hostVerifier === undefined) return undefined; // missing interface -> fail closed
+							let proof: Awaited<ReturnType<NonNullable<typeof hostVerifier>>> | undefined;
+							try {
+								proof = await hostVerifier({
+									key,
+									source: "pm",
+									local_ref: localRef,
+									action_ref: execution.action_ref,
+									result_ref: execution.result_ref,
+									executor: execution.executor,
+									observed_effect: execution.observed_effect,
+									binding: execution.host_binding,
+								});
+							} catch {
+								return undefined;
+							}
+							if (proof === undefined) return undefined;
+							return {
+								verifier_ref: proof.verifier_ref,
+								target_digest: proof.target_digest,
+								observed_effect: proof.observed_effect,
+								confirmed: proof.effect_state === "known",
+							};
+						},
+					});
+					return reply({ ...outcome, gate_id: params.gate_id, target, source: "local" });
+				}
+
 				const unlock = await acquireLock(`${file}.lock`);
 				try {
 					if (!fs.existsSync(file)) {
@@ -2670,17 +3304,7 @@ export function registerPmGateFollowup(
 						},
 					},
 				};
-				const stillCurrent = () => {
-					const now = readParent();
-					return (
-						now !== undefined &&
-						canonicalStateJson(now) === canonicalStateJson(parent) &&
-						(!sourceWorker ||
-							followupWorkerEvidence(doc, workers, key, sourceWorker) === material.worker_execution) &&
-						(!sourcePath ||
-							(controlledPath(doc, sourcePath) && fs.readFileSync(sourcePath, "utf8") === originalTask))
-					);
-				};
+				const stillCurrent = sourceStillCurrent;
 				if (params.action_event && params.request_ref) {
 					if (!stillCurrent()) return refuse("gate-or-authority-changed");
 					const action = await markDecisionFollowupExecuted({
@@ -2691,6 +3315,7 @@ export function registerPmGateFollowup(
 					return reply({ ...action, gate_id: params.gate_id, target });
 				}
 				let taskBefore: ReturnType<typeof captureDecisionTaskState> | undefined;
+				let requestOutcome: Awaited<ReturnType<typeof runAskDecision>> | undefined;
 				const outcome = await resumeDecisionFollowup({
 					...common,
 					observe_task: () => {
@@ -2714,8 +3339,27 @@ export function registerPmGateFollowup(
 							taskBefore,
 							signal,
 						});
+						requestOutcome = outcome;
 						if (!stillCurrent()) return { available: false, reason: "unauthorized" };
-						if (!outcome.payload.available) return { available: false, reason: outcome.payload.unavailable };
+						if (!outcome.payload.available) {
+							// F2: retain ONLY the frozen native effect facts of this real
+							// reply (never the model text). Missing facts stay unknown.
+							const observed = outcome.observation?.raw;
+							const rawFacts =
+								typeof observed === "object" && observed !== null && !Array.isArray(observed)
+									? (observed as Record<string, unknown>)
+									: undefined;
+							return {
+								available: false,
+								reason: outcome.payload.unavailable,
+								effect_facts: {
+									attempts: rawFacts?.attempts,
+									transport_attempts: rawFacts?.transport_attempts,
+									business_decisions: rawFacts?.business_decisions,
+									replayed: rawFacts?.replayed,
+								},
+							};
+						}
 						const answer = outcome.payload.selection?.id;
 						return answer
 							? { available: true, request_ref: outcome.payload.decision_id, answer }
@@ -2723,6 +3367,97 @@ export function registerPmGateFollowup(
 					},
 				});
 				if (!stillCurrent()) return refuse("gate-or-authority-changed");
+				// No model task/run/claim is promoted here. source_card is an exact
+				// locator into the host's dispatch observations, independently from
+				// the DP envelope's deliberately task-less meta.task_key.
+				let submitOffer: SubmitOfferMetadata | undefined;
+				// F2/P1-02: a FRESH failure and a later duplicate ingress must share ONE
+				// conservative effect verdict. Missing/effect-bearing/unknown facts are
+				// never recovery evidence — on the first reply exactly as on a re-read of
+				// the retained row — and `disabled` keeps its own separate semantics. The
+				// verdict comes from our own real reply or the retained+corroborated
+				// facts, never from the reason string.
+				const failureEffect =
+					outcome.state === "failed" && outcome.reason !== "disabled" ? outcome.failure_effect : undefined;
+				if (
+					outcome.state === "failed" &&
+					!params.action_event &&
+					sourcePath &&
+					localHost?.host &&
+					localHost.submitHandle?.runtimeHost === localHost.host &&
+					(requestOutcome !== undefined ||
+						(outcome.duplicate &&
+							(outcome.reason === "disabled" ||
+								failureEffect === "known-no-effect" ||
+								failureEffect === "unknown")))
+				) {
+					const host = localHost.host;
+					const sourceInput = { key, claimId: window, cardPath: `tasks/${params.source_card}.md` };
+					const source = host.readPmDispatchSource(sourceInput);
+					if (source.ok && source.value.identity !== undefined) {
+						const identity = source.value.identity;
+						const parentGateBytes = fs.readFileSync(gatePath, "utf8");
+						const configSignature = () =>
+							canonicalStateJson({
+								autopilot: readConfig(projectDir),
+								decide: readRealDecideConfigFacts(target, projectDir),
+							});
+						const revalidate = () => {
+							try {
+								const current = host.readPmDispatchSource(sourceInput);
+								return {
+									identity,
+									configSignature: configSignature(),
+									hostSignature: current.ok ? current.value.signature : "unavailable",
+									trustedStop:
+										!current.ok ||
+										!sourceStillCurrent() ||
+										fs.readFileSync(gatePath, "utf8") !== parentGateBytes ||
+										!decisionFollowupParentCurrent(common.lifecycle, binding, bound),
+								};
+							} catch {
+								return {
+									identity,
+									configSignature: "unavailable",
+									hostSignature: "unavailable",
+									trustedStop: true,
+								};
+							}
+						};
+						submitOffer = localHost.submitHandle.prepareOffer({
+							dp: target,
+							identity,
+							matterRef: source.value.matterRef,
+							material,
+							preparation,
+							parentDecisionId: parentRef,
+							parentJoin: {
+								decision_id: parentRef,
+								logical_id: binding.parent_logical_id,
+								matter_ref: parent.matterRef,
+								matter_version: parent.substantiveVersion,
+							},
+							feedbackEffectUnknown:
+								requestOutcome?.decision_feedback?.effect_state === "unknown" || failureEffect === "unknown",
+							revalidate,
+						}).metadata;
+						// F2 negative: an unknown/missing effect fact is NOT recovery
+						// evidence — on the first reply as on a re-read. The same matter's offer
+						// keeps the sticky unknown marker above, so its commit stays refused;
+						// this ingress reports a refusal (with BOTH the host's own gap and the
+						// effect gap) instead of a fabricated submittable offer.
+						if (failureEffect === "unknown" && submitOffer !== undefined) {
+							const gaps = [...(submitOffer.gaps ?? [])];
+							if (!gaps.includes("effect-unknown-no-replay")) gaps.push("effect-unknown-no-replay");
+							submitOffer = { ...submitOffer, submittable: false, gaps };
+						}
+					} else
+						submitOffer = {
+							submittable: false,
+							submit_tool: "submit_decision_handoff",
+							gaps: source.ok ? ["host.identity"] : source.gaps,
+						};
+				}
 				const branch = outcome.answer;
 				const choiceBasis = preparation.basis_catalog.find((item) => item.id === outcome.basis_id)?.text;
 				const next =
@@ -2735,6 +3470,7 @@ export function registerPmGateFollowup(
 					target,
 					pm_note: parent.pmNote,
 					parent_model_basis: parent.modelBasis,
+					...(submitOffer === undefined ? {} : { submit_offer: submitOffer }),
 					...(outcome.state === "answered" && choiceBasis ? { selected_basis: choiceBasis } : {}),
 					...(next ? { next } : {}),
 				});
@@ -2745,7 +3481,12 @@ export function registerPmGateFollowup(
 	});
 }
 
-export function pmActivate(pi: ExtensionAPI, projectDir = process.cwd()): void {
+export function pmActivate(
+	pi: ExtensionAPI,
+	projectDir = process.cwd(),
+	host?: ProductionRuntimeHost,
+	submitHandle?: SubmitDecisionHostHandle,
+): void {
 	const agenticdocRoot = resolveAgenticdocRoot(projectDir);
 	const workerStore = new WorkerStore(agenticdocRoot);
 	const ackStore = new AckStore(agenticdocRoot);
@@ -2771,11 +3512,23 @@ export function pmActivate(pi: ExtensionAPI, projectDir = process.cwd()): void {
 	// Register commands and tools during loading (safe — not action methods)
 	registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agenticdocRoot);
 	registerPmSaveCommand(pi, indexStore, workerStore, watch, agenticdocRoot);
-	registerMwCommands(pi, projectDir, workerStore, ackStore, watch, agenticdocRoot, indexStore);
+	registerMwCommands(pi, projectDir, workerStore, ackStore, watch, agenticdocRoot, undefined, indexStore);
 	registerMwTools(pi, projectDir);
 	registerAdvancePhaseTool(pi, projectDir, indexStore);
-	registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, projectDir);
-	registerPmGateFollowup(pi, projectDir, workerStore, watch);
+	registerWorkerTools(
+		pi,
+		workerStore,
+		ackStore,
+		indexStore,
+		agenticdocRoot,
+		watch,
+		projectDir,
+		undefined,
+		undefined,
+		undefined,
+		host,
+	);
+	registerPmGateFollowup(pi, projectDir, workerStore, watch, undefined, { submitHandle, host });
 	registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agenticdocRoot);
 	registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch, projectDir);
 	// RAG tool surface (D-002): registration is structural — an empty enabled
@@ -2828,6 +3581,7 @@ export function pmActivate(pi: ExtensionAPI, projectDir = process.cwd()): void {
 		watch,
 		ui,
 		POLL_INTERVAL_MS,
+		(key, taskKey) => host?.consumeTerminalLocalReview(key, taskKey),
 	);
 	// Session teardown stops the loop (review m3): a fresh runtime re-runs
 	// pmActivate and starts a new one, so this only removes the zombie that
@@ -2853,6 +3607,7 @@ export function pmActivate(pi: ExtensionAPI, projectDir = process.cwd()): void {
 	// (`orphanedWarned`), so a newly orphaned key is still reported immediately
 	// while a key that stays orphaned is not re-reported every turn.
 	const dispatchAlarmsSeen = new Set<DispatchAlarmKind>();
+	const deliveredRefusals = new Set<string>();
 	const orphanedWarned = new Set<string>();
 	// T-22: `out-of-scope` notice dedup is per KEY (not per kind): a key left
 	// unregistered with undispatched work must be reported once per session, not
@@ -2867,7 +3622,14 @@ export function pmActivate(pi: ExtensionAPI, projectDir = process.cwd()): void {
 			orphanedWarned,
 			// Per-task write-face refusals are recorded by the scan itself (one
 			// ledger row each, never deduped); this only delivers the human alert.
-			onRefusal: (text) => deliverPmAlert(pi, text),
+			onRefusal: (text) => {
+				if (deliveredRefusals.has(text)) return;
+				deliveredRefusals.add(text);
+				deliverPmAlert(pi, text);
+			},
+			onDispatchObserved: (facts) => {
+				host?.registerPmDispatch(facts);
+			},
 			unregisteredWarned,
 			// AC-022 (T-20): the product decides. A candidate whose own run.json
 			// already ended (or is still live) is refused before any queue write;
@@ -2945,6 +3707,10 @@ export function pmActivate(pi: ExtensionAPI, projectDir = process.cwd()): void {
 
 	// Defer action method calls to after runner.initialize() (session_start fires post-init)
 	pi.on("session_start", async (_event, ctx) => {
+		if (host !== undefined && submitHandle?.runtimeHost !== host)
+			console.error(
+				"[mw] PM submit handle is not bound to this window's runtime host; controlled writes fail closed",
+			);
 		// Capture the UI context so the poll loop can render the bottom widget.
 		ui.ctx = ctx;
 		// Autopilot progress panel: auto-show for enabled projects so a stalled

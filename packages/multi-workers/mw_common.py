@@ -2469,7 +2469,8 @@ def acquire_lock(
     base_delay: float = 0.05,
     *,
     deadline_s: float | None = None,
-) -> None:
+    delete_on_close: bool = False,
+) -> int | None:
     """Exclusive lock via O_CREAT|O_EXCL. Same protocol as the TS side.
 
     ``deadline_s`` (optional, keyword-only) is a *monotonic* total budget for
@@ -2479,14 +2480,24 @@ def acquire_lock(
     defaults, which must never gate an evidence append). Omitting it keeps the
     historical behaviour byte-identical. The budget covers the retry sleeps
     only; OS scheduling and fsync are not strict real-time guarantees.
+
+    On Windows, ``delete_on_close`` returns the file descriptor to the caller.
+    Closing it releases the lock, including if the owning process is killed.
     """
     if deadline_s is not None and deadline_s < 0:
         raise ValueError(f"deadline_s must be >= 0, got {deadline_s!r}")
     lock_file.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    if delete_on_close:
+        if os.name != "nt":
+            raise ValueError("delete-on-close locking requires Windows")
+        flags |= os.O_TEMPORARY
     deadline = None if deadline_s is None else time.monotonic() + deadline_s
     for attempt in range(retries + 1):
         try:
-            fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            fd = os.open(str(lock_file), flags)
+            if delete_on_close:
+                return fd
             os.close(fd)
             return
         except FileExistsError:
@@ -6190,13 +6201,13 @@ def scan_build_error_lines(text: str) -> list[str]:
 
 PROFILE_MARK_V2 = "<!-- mw-profile: v2 -->"
 
-#: The three UBT build-artifact directories frozen by the dual-key design §4,
-#: relative to the configured Engine repository root (`target.yml` engine root,
-#: i.e. the UE repository root whose top level owns `Engine/`).
+#: Generated outputs relative to the configured UE repository root.
 ENGINE_BUILD_ARTIFACT_SUFFIXES = (
-    ("Engine", "Intermediate", "Build"),
-    ("Engine", "Saved", "UnrealBuildTool"),
-    ("Engine", "Saved", "Logs"),
+    ("Engine", "Intermediate"),
+    ("Engine", "Saved"),
+    ("Engine", "DerivedDataCache"),
+    ("Engine", "Programs", "UnrealBuildTool"),
+    *(("Engine", "Binaries", platform) for platform in ("Win64", "Linux", "LinuxArm64", "Mac", "DotNET")),
 )
 
 
@@ -6204,7 +6215,7 @@ def engine_build_artifact_roots(engine_root: str) -> list[str]:
     """Mirror `engineBuildArtifactRoots` (mw-dual-build-artifacts design §4).
 
     `engine_root` must be the already-resolved real Engine repository root;
-    this helper only concatenates the three frozen literal exceptions.  It
+    this helper only concatenates literal exceptions. It
     never realpaths an exception into a different authorization root, so a
     junction target cannot become a new writable root.  An absent root yields
     no exceptions (the read-only rule stays all-or-nothing).
@@ -6225,12 +6236,15 @@ def dual_engine_policy_lines(config: dict) -> list[str]:
         f"Engine source writes: {'enabled' if writable else 'read-only'} (engine_writable: {str(writable).lower()}).",
         "PM: Engine write permission never overrides project/task constraints. Never change engine_writable to unblock your own task.",
     ]
+    if config.get("engine_root"):
+        lines.append("Windows UE runtime: declare the concrete local UnrealEngine version's Saved or Saved_<suffix> directory, Common/DerivedDataCache, local UnrealBuildTool logs, and the existing empty ProgramData/Epic/NotAllowedUnattendedBugReports marker as needed. The Editor manages the marker.")
     if writable:
         lines.append("PM: Plan direct Engine changes only within the approved scope, declare precise write_face/write_scope, and validate the affected target.")
     else:
         lines.extend([
-            "UBT builds: allowed without enabling Engine source writes. Build-generated files, caches and logs are writable only under Engine/Intermediate/Build/**, Engine/Saved/UnrealBuildTool/** and Engine/Saved/Logs/** (relative to the configured Engine root; subject to task write_face/write_scope).",
-            "UBT build permission does not allow rebuilding UBT itself or writing other Engine/Binaries paths, changing Engine source/build/config files or InstalledBuild.txt. A command name is not a write exemption.",
+            "UBT builds: allowed without enabling Engine source writes. Declare generated output directories under Engine/Intermediate, Engine/Saved, Engine/DerivedDataCache or Engine/Binaries/{Win64,Linux,LinuxArm64,Mac,DotNET} (subject to task write_face/write_scope).",
+            "Engine build outputs also include Programs/UnrealBuildTool logs, installed plugin Binaries/Intermediate/Saved directories and .NET program bin/obj/uatbin/uatobj directories.",
+            "Engine feature development stays in Game. Preserve Engine source, build scripts, input configuration, bundled third-party binaries and InstalledBuild.txt.",
             "Static command guards are not an OS sandbox. Keep detached run_dir outside Engine unless it is an explicitly permitted build-artifact path; report any other required Engine write.",
             "Engine extension policy (mandatory):",
             "- Keep extensions in Game. Wrap each upstream implementation in a project-owned code file that references the original Engine code (include/public API); maintain only the added or changed behavior.",

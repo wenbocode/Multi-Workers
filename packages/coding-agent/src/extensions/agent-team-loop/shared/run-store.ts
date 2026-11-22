@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { DeadlineStop, WorkerDeadlineBinding } from "./worker-deadline.ts";
 
 /**
  * `run.json` — the product-carried run identity (D-022/D-023, AC-022).
@@ -42,6 +43,12 @@ export interface RunState {
 	/** Task type from task.md (`coding`/`review`/`research`/...). */
 	kind: string;
 	status: RunStatus;
+	/** Set by the worker when its parent request was cancelled. */
+	aborted?: boolean;
+	stop_kind?: DeadlineStop;
+	live_deadline?: WorkerDeadlineBinding;
+	/** Exact run from which this independent successor was authorized. */
+	parent_worker_run?: string;
 	started_at: string;
 	ended_at?: string;
 	/** Process exit code; absent while running, absent for `lost`. */

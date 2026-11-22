@@ -14,6 +14,7 @@ Subcommands:
   update-env — incremental self-check over the update anchors (UPDATE.md); --apply runs the safe fixes
   ue-toolchain — dual-mode UE toolchain discipline (UE game dev: game repo + engine source repo, MSVC/UBT): run a configured command with evidence, discover UE targets, EOL-normalized hashing
   run-detached — detached background command runner: hidden-console supervisor + heartbeat/marker evidence
+  pm-state — preview or apply complete-SDD PM handoff compaction
 """
 
 from __future__ import annotations
@@ -6270,6 +6271,96 @@ def _decide_sign_reviewed(
     return 0
 
 
+def _decide_sign_local(
+    args: argparse.Namespace, key_dir: pathlib.Path, key: str, envelope: dict,
+) -> int:
+    """Consume the authenticated PM channel at the official sign-off writer."""
+    as_json = bool(getattr(args, "json", False))
+    receipt: dict = {
+        "decision_source": "pm-evidence", "conclusion": "continue",
+        "signoff_status": "not-required", "second_approval": 0,
+    }
+    proof_id = envelope.get("proof_id")
+    nonce = envelope.get("proof_nonce")
+    reconcile = envelope.get("reconcile") is True
+    expected_fields = {"decision_source", "proof_id", "proof_nonce"}
+    if reconcile:
+        expected_fields.add("reconcile")
+    if (
+        set(envelope) != expected_fields
+        or getattr(args, "retry_write", None) is not None
+        or not isinstance(proof_id, str)
+        or not isinstance(nonce, str)
+    ):
+        receipt["problems"] = ["a private live PM proof is required"]
+        _decide_print(receipt, as_json)
+        return 2
+    if (os.environ.get("PI_WORKER_TASK") or "").strip():
+        receipt["problems"] = ["sign-off requires the live PM"]
+        _decide_print(receipt, as_json)
+        return 2
+    read_proof = decision_signoff_result.read_local_signoff_proof
+    try:
+        with contract_guard.contract_publication_lock(key_dir):
+            proof = read_proof(key_dir, key, proof_id, nonce)
+            if proof is None:
+                raise decision_signoff_result.SignoffResultError("current PM evidence attestation is unavailable")
+            record = decision_signoff_result.capture_local_signoff(key_dir, key, proof_id, proof)
+            target = decision_signoff_result.signoff_path(key_dir)
+            decision_signoff_result.assert_safe_target(key_dir, target)
+            snapshot = record["snapshot_sha256"]
+            if reconcile:
+                receipt["signoff_status"] = "effect-unknown"
+                if (
+                    proof.get("prepared_sha256") != snapshot
+                    or not decision_signoff_result.local_signoff_matches_disk(key_dir, record)
+                ):
+                    raise decision_signoff_result.SignoffResultError("published sign-off cannot be reconciled with the live prepared snapshot")
+                confirmation = read_proof(key_dir, key, proof_id, nonce, published_snapshot=snapshot)
+                if confirmation is None or confirmation.get("publication_sha256") != snapshot:
+                    raise decision_signoff_result.SignoffResultError("current PM sign-off reconciliation is unavailable")
+                receipt.update(signoff_status="reconciled", logical_id=proof_id)
+            elif target.exists():
+                existing = decision_signoff_result.validate_signoff(key_dir, key)
+                if (
+                    not existing.valid
+                    or existing.decision_source != "pm-evidence"
+                    or existing.material_sha256 != record["material_sha256"]
+                    or existing.evidence_sha256 != record["evidence_sha256"]
+                ):
+                    receipt["signoff_status"] = "invalid-existing"
+                    raise decision_signoff_result.SignoffResultError("existing sign-off does not match current PM evidence")
+                receipt.update(signoff_status="existing", logical_id=existing.logical_id)
+            else:
+                prepared = read_proof(key_dir, key, proof_id, nonce, prepared_snapshot=snapshot)
+                if (
+                    prepared is None or prepared.get("prepared_sha256") != snapshot
+                    or decision_signoff_result.capture_local_signoff(key_dir, key, proof_id, prepared) != record
+                ):
+                    raise decision_signoff_result.SignoffResultError("PM evidence changed before sign-off preparation")
+                decision_signoff_result.write_local_signoff_result(key_dir, record)
+                current = read_proof(key_dir, key, proof_id, nonce)
+                if current is None or decision_signoff_result.capture_local_signoff(key_dir, key, proof_id, current) != record:
+                    raise decision_signoff_result.SignoffResultError("PM evidence changed before sign-off publication")
+                decide_signoff.write_signoff(
+                    key_dir, key, decision_signoff_result.local_signoff_text(record), replace=False,
+                )
+                confirmation = read_proof(
+                    key_dir, key, proof_id, nonce, published_snapshot=snapshot,
+                )
+                if confirmation is None or confirmation.get("publication_sha256") != snapshot:
+                    receipt["signoff_status"] = "effect-unknown"
+                    raise decision_signoff_result.SignoffResultError("sign-off was published but its current PM readback is unavailable")
+                receipt.update(signoff_status="written", logical_id=proof_id)
+            receipt.update(conclusion="finalize", signoff_path=str(target))
+    except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
+        receipt["problems"] = [str(exc)]
+        _decide_print(receipt, as_json)
+        return 2
+    _decide_print(receipt, as_json)
+    return 0
+
+
 def _decide_sign_finalize(
     args: argparse.Namespace,
     project_dir: pathlib.Path,
@@ -6316,7 +6407,11 @@ def _decide_sign_finalize(
             return _decide_sign_refusal(key_dir_path, as_json, [err], logical_id=retry_id)
         assert payload is not None
         if payload.get("decision_source") == "pm-evidence":
-            return _decide_sign_reviewed(args, key_dir_path, key, payload)
+            if "review_task" in payload or "review_source" in payload:
+                return _decide_sign_reviewed(args, key_dir_path, key, payload)
+            return _decide_sign_local(args, key_dir_path, key, payload)
+        if payload.get("decision_source") == "dp":
+            payload = {name: value for name, value in payload.items() if name != "decision_source"}
         evidence_refs = payload.get("evidence_refs")
         if "evidence_refs" in payload and not isinstance(evidence_refs, list):
             return _decide_sign_refusal(
@@ -6948,7 +7043,12 @@ def _decide_sign_finish(
                     facts_claim,
                     result=record,
                 )
-                written = decide_signoff.write_signoff(key_dir_path, key, text)
+                with contract_guard.contract_publication_lock(key_dir_path):
+                    if path.exists():
+                        existing_text = decision_signoff_result._safe_read_text(key_dir_path, path)
+                        if decision_signoff_result.parse_machine_lines(existing_text).get("decision_source") == "pm-evidence":
+                            raise decision_signoff_result.SignoffResultError("an existing local sign-off cannot be overwritten")
+                    written = decide_signoff.write_signoff(key_dir_path, key, text)
             except (
                 decide_signoff.SignoffError,
                 decision_signoff_result.SignoffResultError,
@@ -12007,7 +12107,10 @@ def _write_contract_freeze(
     blocks: dict[str, dict[str, str]],
 ) -> None:
     """Persist one merged payload through the T-04 atomic writer."""
-    payload = contract_guard.build_freeze(key, "", "")
+    payload = contract_guard.build_freeze(
+        key, _read_optional_text(key_dir / contract_guard.SPEC_FILE_NAME),
+        _read_optional_text(key_dir / contract_guard.DESIGN_FILE_NAME),
+    )
     payload["spec"] = dict(sorted(blocks.get("spec", {}).items()))
     payload["design"] = dict(sorted(blocks.get("design", {}).items()))
     contract_guard.write_freeze(key_dir, payload)
@@ -12052,6 +12155,14 @@ def _ap_contract_freeze(args: argparse.Namespace, project_dir: pathlib.Path) -> 
             if any(statuses[n]["status"] == "written" for n, _f in selected):
                 _write_contract_freeze(key_dir, key, blocks)
             break
+        if (
+            existing is not None
+            and existing.get("decision_signoff") == "required"
+            and not existing.get("function_flows")
+            and {name for name, _ in selected} == {"ac", "vc"}
+            and all(statuses[name]["status"] == "unchanged" for name, _ in selected)
+        ):
+            _write_contract_freeze(key_dir, key, blocks)
     except (OSError, ValueError) as exc:  # UnicodeDecodeError / relative_to are ValueError
         print(f"[mw autopilot contract-freeze] Error: {exc}", file=sys.stderr)
         return 1
@@ -15711,6 +15822,8 @@ if __name__ == "__main__":
         "thinking": cmd_thinking,
         "autopilot": cmd_autopilot,
         "init": cmd_init,
+        "ue-continue-develop-frame": cmd_ue_continue_develop_frame_install,
+        "install-cli": cmd_install_cli,
         "pull-agentictask": cmd_pull_agentictask,
         "push-agentictask": cmd_push_agentictask,
         "setup": cmd_setup,
@@ -15722,7 +15835,5 @@ if __name__ == "__main__":
         "rag": cmd_rag,
         "run-detached": console_run.cmd_run_detached,
         "pm-state": pm_state.cmd_compact,
-        "ue-continue-develop-frame": cmd_ue_continue_develop_frame_install,
-        "install-cli": cmd_install_cli,
     }
     sys.exit(dispatch[args.subcommand](args))

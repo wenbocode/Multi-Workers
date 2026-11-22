@@ -4,6 +4,7 @@ import { isSameOrUnder, normalizeForCompare } from "../worker/read-scope.ts";
 import { extractBashWriteCandidates, tokenizeShellCommand } from "../worker/worker-mode.ts";
 import { dualEnginePolicyLines, engineBuildArtifactRoots } from "./engine-policy.ts";
 import { resolveWorkspaceConfig, type WorkspaceConfig } from "./target-config.ts";
+import { isEngineProjectOutput, isUnattendedBugReportOptOut } from "./ue-runtime-paths.ts";
 
 /** Engine-root containment WITHOUT the build-artifact exception. The artifact
  * anchors are literal concatenations of the canonical Engine root (never
@@ -18,8 +19,7 @@ function isUnderEngineRoot(config: WorkspaceConfig, cwd: string, target: string)
 	return root !== null && isSameOrUnder(root, normalizeForCompare(cwd, target));
 }
 
-/** Is the already-normalized target inside one of the three frozen UBT build
- * directories? */
+/** Is the already-normalized target inside a generated output directory? */
 export function isEngineBuildArtifactTarget(engineRoot: string, resolvedTarget: string): boolean {
 	return engineBuildArtifactRoots(engineRoot).some((root) => isSameOrUnder(root, resolvedTarget));
 }
@@ -29,11 +29,9 @@ export function engineWriteBlockReason(config: WorkspaceConfig, cwd: string, tar
 	const resolved = normalizeForCompare(cwd, target);
 	const root = engineRootIdentity(config);
 	if (root === null || !isSameOrUnder(root, resolved)) return undefined;
-	// design.md §4: the build-generated UBT directories are the ONLY Engine
-	// write exception, and they never create one on their own — the role/task
-	// write face still decides (worker runtime). A declared name is not a write
-	// exemption, so everything else keeps the read-only verdict.
+	// The worker still requires a matching task declaration for these outputs.
 	if (isEngineBuildArtifactTarget(config.engineRoot, resolved)) return undefined;
+	if (isEngineProjectOutput(root, resolved)) return undefined;
 	return `engine-read-only: ${target}; Engine writes require engine_writable: true in target.yml. Keep extensions in Game and reference original Engine code; never copy it to another tree.`;
 }
 
@@ -98,7 +96,7 @@ export function registerWorkspaceEngineGuard(pi: ExtensionAPI, controlRoot: stri
 		} catch (error) {
 			return { block: true, reason: `target-config-unusable: ${String(error)}` };
 		}
-		if (config.mode !== "dual" || config.engineWritable === true) return undefined;
+		if (config.mode !== "dual") return undefined;
 		const cwd = detached
 			? typeof input.cwd === "string"
 				? path.resolve(ctx.cwd, input.cwd)
@@ -127,6 +125,9 @@ export function registerWorkspaceEngineGuard(pi: ExtensionAPI, controlRoot: stri
 			}
 		}
 		for (const target of targets) {
+			if (process.platform === "win32" && isUnattendedBugReportOptOut(normalizeForCompare(cwd, target))) {
+				return { block: true, reason: "UE's unattended bug report opt-out marker is managed by the Editor." };
+			}
 			const reason = engineWriteBlockReason(config, cwd, target);
 			if (reason) return { block: true, reason };
 		}

@@ -81,6 +81,8 @@ import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "
 import { type PmStateClaimSyncResult, syncPmStateClaimId } from "../shared/pm-state-claim.ts";
 import { PHASE_ORDER, phaseAuditWarnings } from "../shared/pm-state-guard.ts";
 import { type RunDetachedOptions, type RunDetachedResult, runDetachedMw } from "../shared/run-detached.ts";
+import { readRunProgress } from "../shared/run-progress.ts";
+import { readRunState } from "../shared/run-store.ts";
 import { readTaskHeaderScalar } from "../shared/task-frontmatter.ts";
 import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 import {
@@ -111,7 +113,12 @@ import {
 import { formatDispatchAlarm, recordDispatchAlarm } from "./pm-orchestrator.ts";
 import { planReviewSplitGate } from "./review-split-gate.ts";
 import { StateManager } from "./state-manager.ts";
-import { type DispatchRefusal, dispatchTask } from "./task-dispatcher.ts";
+import {
+	type DispatchRefusal,
+	type DispatchTaskOptions,
+	deadlineOrphanEnvelope,
+	dispatchTask,
+} from "./task-dispatcher.ts";
 import { runMwThinkingCommand } from "./thinking-command.ts";
 import {
 	canonicalStateBytes,
@@ -128,10 +135,24 @@ import {
 	type TriageResult,
 	triageDispatchEnvelope,
 } from "./triage-client.ts";
-
 import { canPmSelectType } from "./type-fallback.ts";
+import { registerWorkerDeadlineApproval, workerDeadlineStatus } from "./worker-deadline-tool.ts";
 
 export { captureDecisionTaskState };
+
+// T-05 (mw-issue-feedback): /mw issue wiring. Frozen T-04 window module +
+// T-02 root helpers; wrapTextWithAnsi backs a real scrollable FULL-text
+// preview. No env/auth scan, no cwd/root guessing, no worker write entry.
+import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { issueDevRootPointerPath, resolveIssueDevRoot } from "../shared/issue-root.ts";
+import {
+	createIssueCommandStore,
+	handleIssueCommand,
+	type IssueCommandHost,
+	type IssueCommandStore,
+	type IssueCommandUI,
+	parseIssueCommandArgs,
+} from "./issue-command.ts";
 
 /** Owner key for a worker task. Explicit key wins (deliberate choice — the
  * caller's `foreignLiveClaimRefusal` remains the real write-permission check);
@@ -1381,7 +1402,14 @@ export function renderWatchLines(
 			if (ck) {
 				detail += ` ck${Math.round(ck.elapsedS / 60)}m${ck.risk !== "low" ? ` ${ck.risk}⚠` : ""}`;
 			}
-			if (prog?.lastAction) detail += ` · ${prog.lastAction}`;
+			const taskDir = path.dirname(e.taskPath);
+			const run = readRunState(taskDir);
+			const report = run && readRunProgress(taskDir, run.run_id);
+			const tool = report && "activity" in report ? report.activity?.tools[0] : undefined;
+			if (report) detail += ` · progress ${report.status}`;
+			if (tool)
+				detail += ` · ${tool.name} active ${formatHeartbeatAge(Date.now() - Date.parse(tool.last_activity_at))} ago`;
+			else if (prog?.lastAction) detail += ` · ${prog.lastAction}`;
 		} else if (e.status === "pending") {
 			// Dispatch-time --model override; the effective id lands in trace.log
 			// [START] once the worker spawns.
@@ -2684,6 +2712,7 @@ export interface CardExtraSection {
  * passes the SAME extras judge the service layer (G-3) runs. */
 export interface CardSections {
 	timeoutMin?: number;
+	parentWorkerRun?: string;
 	context: string;
 	requirements: string;
 	deliverables: string;
@@ -2746,6 +2775,8 @@ export function extractCardSections(cardText: string): CardSections {
 			headings.push({ level: match[1]?.length ?? 2, text: stripCardHeadingNumbering(match[2] ?? ""), line: i });
 	}
 	const out: CardSections = { context: "", requirements: "", deliverables: "", extras: [] };
+	const parentWorkerRun = readTaskHeaderScalar(cardText, "parent_worker_run");
+	if (parentWorkerRun !== undefined) out.parentWorkerRun = parentWorkerRun;
 	// A source card can put its metadata immediately after a Markdown title (R25).
 	const prologue = raw
 		.slice(0, headings[0]?.line)
@@ -2975,6 +3006,7 @@ function mergeCardHeader(frontmatter: string, cardPath: string, cardSha256: stri
 		`${header}\ncard_path: ${cardPath}\ncard_sha256: ${cardSha256}\n` +
 		`${ENVELOPE_PRODUCER_KEY}: ${envelopeProducerIdentity()}\n` +
 		(sections.timeoutMin === undefined ? "" : `timeout: ${sections.timeoutMin}\n`) +
+		(sections.parentWorkerRun === undefined ? "" : `parent_worker_run: ${sections.parentWorkerRun}\n`) +
 		writeFaceLine
 	);
 }
@@ -2994,7 +3026,16 @@ function cleanupRefusedTaskDir(taskPath: string): void {
 /** Render a write-face refusal / D-003 deferral for the user-facing channel
  * (D-008: the PM audit channel is the dispatch return value). */
 function writeFaceRefusalText(taskKey: string, refusal: DispatchRefusal): string {
-	if (refusal.code === "replan-required") return refusal.detail;
+	if (refusal.code === "resource-limited")
+		return `Worker dispatch of '${taskKey}' is resource-limited: ${refusal.reason}`;
+	if (
+		refusal.code === "replan-required" ||
+		refusal.code === "parent-cancel" ||
+		refusal.code === "worker-deadline" ||
+		refusal.code === "parent-run-unavailable" ||
+		refusal.code === "user-stop"
+	)
+		return refusal.detail;
 	if (refusal.code === "write-face-undeclared") {
 		return (
 			`Worker dispatch of '${taskKey}' held serial-only: the card declares no 写入允许面` +
@@ -3322,8 +3363,10 @@ export function registerWorkerTools(
 	 * `mw decide lifecycle` child is the single write face). */
 	lifecycleRun?: LifecycleRunner,
 	dispatchAdapter?: WorkerDispatchAdapter,
+	budgetHost?: DispatchTaskOptions["budgetHost"],
 ): void {
 	registerReplanTool(pi, projectDir, windowClaimId);
+	registerWorkerDeadlineApproval(pi, agenticdocRoot, windowClaimId);
 	// dispatch_worker: create a task.md and immediately dispatch it to the worker queue.
 	pi.registerTool({
 		name: "dispatch_worker",
@@ -3339,7 +3382,8 @@ export function registerWorkerTools(
 			decision_preparation: ASK_DECISION_PARAMETERS.properties.preparation,
 			card_path: Type.String({
 				description:
-					"REQUIRED. Path to the dispatch card (task book) this worker is generated from — relative to the repo root or absolute, e.g. '.agenticdoc/<key>/tasks/T-02-slug.md'. The card must carry the dispatch envelope (type + 上下文 / 要求 / 交付格式), the per-type extras (coding: 写入允许面/写入禁止面/验收命令/改动历史; research: 唯一证据文件; review: 审计目标/未覆盖面声明), and the seed minimum (a goal.md reference plus at least one path:line reference); an incomplete or missing card refuses the dispatch with zero side effects. The card's envelope, extras and context are injected as the seed (not an upper bound on what the worker may read) and recorded via card_path/card_sha256 in task.md for traceability.",
+					"REQUIRED. Path to the dispatch card (task book) this worker is generated from — relative to the repo root or absolute, e.g. '.agenticdoc/<key>/tasks/T-02-slug.md'. The card must carry the dispatch envelope (type + 上下文 / 要求 / 交付格式), the per-type extras (coding: 写入允许面/写入禁止面/验收命令/改动历史; research: 唯一证据文件; review: 审计目标/未覆盖面声明), and the seed minimum (a goal.md reference plus at least one path:line reference); an incomplete or missing card refuses the dispatch with zero side effects. The card's envelope, extras and context are injected as the seed (not an upper bound on what the worker may read) and recorded via card_path/card_sha256 in task.md for traceability. " +
+					"For a worker successor, set parent_worker_run in the card header to the exact run_id from the PM terminal readback.",
 			}),
 			description: Type.String({
 				description: "Full task description and instructions for the worker agent.",
@@ -3473,7 +3517,11 @@ export function registerWorkerTools(
 			// Worker tasks live under {ownerKey}/workers/<task_key>/ (never at the
 			// agenticdoc root - that namespace belongs to AgenticTask keys).
 			const taskDir = workerTaskDir(agenticdocRoot, ownerKey, task_key);
-			if (fs.existsSync(taskDir)) {
+			const taskMdPath = path.join(taskDir, "task.md");
+			if (
+				fs.existsSync(taskDir) &&
+				(!deadlineOrphanEnvelope(taskMdPath) || workerStore.readAll().some((row) => row.taskKey === task_key))
+			) {
 				return {
 					content: [
 						{
@@ -3597,7 +3645,8 @@ export function registerWorkerTools(
 				return { content: [{ type: "text", text: currentWorkflow.reason }], details: undefined };
 			}
 
-			const publish = () =>
+			let published = false;
+			const publish = () => {
 				writeDispatchTaskMd(
 					{ agenticdocRoot, ownerKey },
 					{
@@ -3622,8 +3671,8 @@ export function registerWorkerTools(
 						decisionTrace: modelPlan.triage?.stateTrace,
 					},
 				);
-			const taskMdPath = path.join(taskDir, "task.md");
-
+				published = true;
+			};
 			const outcome = await dispatchTask(
 				{
 					taskKey: task_key,
@@ -3634,10 +3683,16 @@ export function registerWorkerTools(
 					taskPath: taskMdPath,
 				},
 				workerStore,
-				{ modelRegistry: _context?.modelRegistry, publishCard: publish, card: cardGate },
+				{
+					modelRegistry: _context?.modelRegistry,
+					publishCard: publish,
+					card: cardGate,
+					signal: _signal,
+					budgetHost,
+				},
 			);
 			if (!outcome.ok) {
-				if (outcome.code !== "replan-required") cleanupRefusedTaskDir(taskMdPath);
+				if (published) cleanupRefusedTaskDir(taskMdPath);
 				// The refused dispatch is still a real outcome of the decision: the
 				// consumed fact stands, the round settles as `rework`, and NO executed
 				// fact is written (nothing was executed).
@@ -3735,6 +3790,42 @@ export function registerWorkerTools(
 	});
 
 	// list_tasks: worker queue view, scoped to this window by default
+	pi.registerTool({
+		name: "read_worker_progress",
+		label: "Read worker progress",
+		description: "Read one worker run's reported milestones, evidence, tool activity and terminal reason.",
+		parameters: Type.Object({
+			key: Type.String(),
+			task_key: Type.String(),
+			run_id: Type.Optional(Type.String({ description: "Exact run ID, if already known" })),
+		}),
+		async execute(_id, params) {
+			const entry = workerStore
+				.readAll()
+				.find((row) => row.taskKey === params.task_key && ownerKeyOf(row, agenticdocRoot) === params.key);
+			const taskDir = entry && path.dirname(entry.taskPath);
+			const run = taskDir && readRunState(taskDir);
+			if (
+				!taskDir ||
+				!run ||
+				run.owner_key !== params.key ||
+				run.task_key !== params.task_key ||
+				(params.run_id && run.run_id !== params.run_id)
+			) {
+				throw new Error("The requested worker run is unavailable");
+			}
+			const details = {
+				run_id: run.run_id,
+				status: run.status,
+				stop_kind: run.stop_kind,
+				artifacts: run.artifacts,
+				progress: readRunProgress(taskDir, run.run_id),
+				deadline: workerDeadlineStatus(agenticdocRoot, taskDir, run),
+			};
+			return { content: [{ type: "text", text: JSON.stringify(details) }], details };
+		},
+	});
+
 	// (mw-task-scope-isolation); terminal rows carry an `acked` badge when
 	// acknowledged (AC-011) and every row carries its owning key.
 	pi.registerTool({
@@ -3877,7 +3968,8 @@ export function registerSwitchKeyTool(
 						text:
 							`Took over key '${trimmed}' (claim ${result.claimId})` +
 							`${result.created ? " — new key registered in _index.parallel" : ""}. ` +
-							"This window now watches it; the bottom widget shows its live progress. Only this window's previous active keys were marked idle." +
+							"This window now watches it; the bottom widget shows its live progress. " +
+							"Only this window's previous active keys were marked idle." +
 							auditNote +
 							(syncNote === "" ? "" : `\n\n${syncNote}`),
 					},
@@ -4192,7 +4284,8 @@ export function registerWorkerCommands(
 			}
 			// DP-1 ledger + (on disagreement) the one PM wake for this dispatch.
 			emitDispatchTriage(pi, agenticdocRoot, modelPlan.triage);
-			const publish = () =>
+			let published = false;
+			const publish = () => {
 				writeDispatchTaskMd(
 					{ agenticdocRoot, ownerKey },
 					{
@@ -4216,6 +4309,8 @@ export function registerWorkerCommands(
 						decisionTrace: modelPlan.triage?.stateTrace,
 					},
 				);
+				published = true;
+			};
 			const taskMdPath = path.join(taskDir, "task.md");
 
 			// Dispatch directly to _workers.parallel
@@ -4225,7 +4320,7 @@ export function registerWorkerCommands(
 				{ modelRegistry: ctx.modelRegistry, publishCard: publish, card: cardGate },
 			);
 			if (!outcome.ok) {
-				if (outcome.code !== "replan-required") cleanupRefusedTaskDir(taskMdPath);
+				if (published) cleanupRefusedTaskDir(taskMdPath);
 				const dp1Feedback = formatDp1ConsumerReceipt(
 					await writeDp1DispatchFeedback({
 						projectDir,
@@ -4690,7 +4785,7 @@ export async function runMwModelCommand(
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
 export const MW_COMMAND_DESCRIPTION =
-	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / runtime / doctor / update / target / partition / ue-continue-develop-frame install / model / thinking / decide / rag / stats / pm-state compact / run-detached / ack / trim [task] / replan [task]";
+	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / runtime / doctor / update / target / partition / ue-continue-develop-frame install / model / thinking / decide / rag / stats / pm-state compact / run-detached / ack / trim [task] / replan [task] / issue (report|retry|status|update|reply|bind), dev inbox [id]";
 
 const loadedExtension = (() => {
 	try {
@@ -5753,6 +5848,304 @@ export async function runMwDecideCommand(
 	return reportDecide(ctx, lines.join("\n"), "info");
 }
 
+// ─── T-05 /mw issue wiring (key mw-issue-feedback) ───────────────────────────
+// The ONLY pi-window write entry for product feedback. It is registered from
+// registerMwCommands(), which index.ts calls ONLY on the PM activation path
+// (PI_WORKER_TASK unset); workerModeActivate never reaches it. This block only
+// supplies REAL window facts (no default true, no model-provided identity, no
+// roots from command args), a real ctx.ui adapter whose present is a scrollable
+// FULL-text overlay, and the production store. The full redacted preview, exact
+// confirmation digest and cancel/exception zero-write contract stay untouched
+// in the frozen T-04 module (issue-command.ts).
+
+/** Visible text rows in the scrollable FULL preview overlay. */
+export const ISSUE_PREVIEW_VIEWPORT_LINES = 16;
+
+/** Injectable offline seam. Production leaves everything undefined: the store
+ * is createIssueCommandStore() (reads the REAL process env incl. PI_WORKER_TASK)
+ * and the dev-root locator reads the REAL machine pointer path. */
+export interface IssueWireDeps {
+	/** A real IssueStore over temp fixtures; default = production store. */
+	readonly store?: IssueCommandStore;
+	/** Explicit pointer path for offline dev-root fixtures; default = real. */
+	readonly pointerFile?: string;
+	/** Deterministic tz-aware window clock; default = new Date().toISOString(). */
+	readonly now?: () => string;
+}
+
+export interface IssueWindowFacts {
+	readonly role: "pm" | "unknown";
+	readonly trustedWindow: boolean;
+	readonly writeAuthorized: boolean;
+	readonly reason: string | null;
+}
+
+/** REAL provenance for the T-04 trusted-window gate: PM registration path
+ * (registerMwCommands), non-worker (PI_WORKER_TASK unset), mode=tui, hasUI.
+ * Nothing is read from command arguments or a model claim; no field defaults
+ * to true. RPC/print/json/unknown mode, no-UI and worker windows are refused. */
+export function issueWindowFacts(
+	ctx: Pick<ExtensionCommandContext, "mode" | "hasUI">,
+	env: NodeJS.ProcessEnv = process.env,
+): IssueWindowFacts {
+	const refuse = (reason: string): IssueWindowFacts => ({
+		role: "unknown",
+		trustedWindow: false,
+		writeAuthorized: false,
+		reason,
+	});
+	if (typeof env.PI_WORKER_TASK === "string" && env.PI_WORKER_TASK.trim() !== "") {
+		return refuse("worker 窗口（PI_WORKER_TASK）不得注册或调用 /mw issue 写入口");
+	}
+	if (ctx.mode !== "tui") {
+		return refuse(`需要 pi 交互窗口 (mode=tui)；当前入口 mode=${String(ctx.mode)}（RPC/print/未知）不是可信人类窗口`);
+	}
+	if (ctx.hasUI !== true) {
+		return refuse("需要交互 UI 完成真实确认与完整预览展示；当前窗口无 UI");
+	}
+	return { role: "pm", trustedWindow: true, writeAuthorized: true, reason: null };
+}
+
+/** devRoot/dev actor ONLY when the real canonical current-project root equals
+ * the VALIDATED dev root (explicit pointer + repo markers). An ordinary project
+ * that merely holds a pointer to the dev repo resolves mode=external -> null,
+ * so update AND the dev-only inbox read are refused. bind is a first-time
+ * explicit candidate from the dev repo's OWN window (the binder still validates
+ * caller==candidate + markers + a real confirmation); it never declares the
+ * current project authoritative. T-09B: `inbox` uses the SAME validated local
+ * root as `update`, but only for a pure read of the authority events directory;
+ * the store re-checks the dev identity independently. */
+export function issueDevRootForSub(
+	sub: string | null,
+	projectRoot: string,
+	pointerFile: string | undefined,
+): string | null {
+	if (sub === "update" || sub === "inbox") {
+		const resolved = resolveIssueDevRoot({ projectRoot, pointerFile });
+		return resolved.ok && resolved.mode === "local" ? resolved.canonicalRoot : null;
+	}
+	if (sub === "bind") return projectRoot;
+	return null;
+}
+
+/** Real ctx.ui adapter. confirm forwards the EXACT full preview (never a
+ * summary) and returns the real boolean; present is a scrollable full-text
+ * overlay, not a truncating notify. */
+function makeIssueUIAdapter(ctx: ExtensionCommandContext): IssueCommandUI {
+	return {
+		hasUI: ctx.hasUI,
+		confirm: (title, message, opts) => ctx.ui.confirm(title, message, opts),
+		input: (title, placeholder, opts) => ctx.ui.input(title, placeholder, opts),
+		editor: (title, prefill) => ctx.ui.editor(title, prefill),
+		select: (title, options, opts) => ctx.ui.select(title, [...options], opts),
+		notify: (message, type) => ctx.ui.notify(message, type),
+		present: (title, text) => presentIssueFullText(ctx, title, text),
+	};
+}
+
+/** Scrollable FULL-text TUI surface. The exact, never-truncated preview is also
+ * the message of the single real confirm dialog; this overlay only makes
+ * multi-KB text navigable (up/down/page/home/end) with the configurable
+ * KeybindingsManager.matches() API (no hardcoded matchesKey). Rendering wraps
+ * with wrapTextWithAnsi so every line stays within width and no text is lost. */
+async function presentIssueFullText(ctx: ExtensionCommandContext, title: string, text: string): Promise<void> {
+	// `done` can only RESOLVE ctx.ui.custom, never reject it. A live resize into
+	// a degenerate window therefore records the refusal at close time and this
+	// wrapper throws after the overlay closes: showFull -> confirmExact takes the
+	// existing exception/zero-write path instead of reaching the final confirm.
+	// A resize BACK to a usable height leaves this null, so Esc/CtrlC/Enter keep
+	// their continue-to-confirm semantics.
+	let closeRefusal: string | null = null;
+	await ctx.ui.custom<void>(
+		(tui, _theme, keybindings, done) => {
+			const source = text.replace(/\r\n/g, "\n").split("\n");
+			const overlayMaxHeight = ISSUE_PREVIEW_VIEWPORT_LINES + 4;
+			// compositeOverlays() slices an overlay to min(maxHeight, terminal
+			// rows) FROM THE TOP. A component that always renders a fixed number
+			// of content rows therefore loses its footer and its tail on short or
+			// narrow windows. Size every frame to the EFFECTIVE viewport instead.
+			// The factory's real TUI exposes a live Terminal; offline fakes may
+			// not, in which case the overlay cap is the safe fallback.
+			const terminalShape = tui as { terminal?: { rows?: number; columns?: number } };
+			const dimension = (value: number | undefined, fallback: number): number =>
+				typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+			const termRows = (): number => dimension(terminalShape.terminal?.rows, overlayMaxHeight);
+			const overlayWidth = (): number => {
+				const cols = dimension(terminalShape.terminal?.columns, 80);
+				return Math.max(1, Math.min(Math.floor((cols * 92) / 100), cols));
+			};
+			let cachedWidth = 80;
+			let lines: string[] = [];
+			let scrollTop = 0;
+			const wrap = (w: number): void => {
+				lines = [];
+				for (const line of source) {
+					if (line === "") {
+						lines.push("");
+						continue;
+					}
+					lines.push(...wrapTextWithAnsi(line, w));
+				}
+			};
+			wrap(cachedWidth);
+			const footer = "完整脱敏预览，未截断；确认对话框使用同一段完整原文。";
+			const pad = (n: number, digits: number): string => String(Math.max(0, n)).padStart(digits, "0");
+			const headerText = (start: number, end: number, digits: number): string =>
+				`[${title}] ${lines.length} 行 · 第 ${pad(start, digits)}-${pad(end, digits)} 行 · ↑↓/PgUp/PgDn/Home/End 滚动 · Esc/Enter 继续确认`;
+			/** Recompute on EVERY render/input: terminal rows, resolved overlay
+			 * width and the REAL wrapped header/footer row counts all change on
+			 * resize. Fixed-width numbers keep the header row count stable so the
+			 * content budget never depends on scrollTop. */
+			const viewport = (w: number) => {
+				const width = Math.max(1, w);
+				if (width !== cachedWidth) {
+					wrap(width);
+					cachedWidth = width;
+				}
+				const digits = String(Math.max(1, lines.length)).length;
+				const headerRowCount = wrapTextWithAnsi(headerText(lines.length, lines.length, digits), width).length;
+				const footerLines = wrapTextWithAnsi(footer, width);
+				const effectiveRows = Math.max(1, Math.min(overlayMaxHeight, termRows()));
+				const contentRows = Math.max(0, effectiveRows - headerRowCount - footerLines.length);
+				return { width, digits, headerRowCount, footerLines, effectiveRows, contentRows };
+			};
+			const currentWidth = (): number => (cachedWidth > 0 ? cachedWidth : overlayWidth());
+			const clampTop = (contentRows: number): void => {
+				scrollTop = Math.max(0, Math.min(scrollTop, Math.max(0, lines.length - contentRows)));
+			};
+			const move = (delta: number): void => {
+				const v = viewport(currentWidth());
+				clampTop(v.contentRows);
+				scrollTop += delta;
+				clampTop(v.contentRows);
+				tui.requestRender();
+			};
+			// Explicit refusal for a terminal too short to show ANY content row.
+			// Throwing before the overlay is registered reuses the existing
+			// exception -> confirmed:false -> zero-write path; Esc/CtrlC on a
+			// usable preview still closes it and continues to the final confirm.
+			const initial = viewport(overlayWidth());
+			if (initial.contentRows < 1) {
+				throw new Error(
+					`终端高度 ${termRows()} 行不足以完整展示脱敏预览（至少需要 ${
+						initial.headerRowCount + initial.footerLines.length + 1
+					} 行）；已拒绝本次预览/提交`,
+				);
+			}
+			return {
+				/** Exact FULL text handed to this overlay (no-truncation proof). */
+				fullText: text,
+				get lineCount(): number {
+					return lines.length;
+				},
+				render(width: number): string[] {
+					const v = viewport(width);
+					clampTop(v.contentRows);
+					if (v.contentRows < 1) {
+						// Live resize into a degenerate window: show an EXPLICIT
+						// degraded frame, never a silently incomplete "full" one.
+						return wrapTextWithAnsi(
+							`[${title}] 终端高度不足，无法完整展示脱敏预览；请放大窗口后重试，本次预览不声称完整。`,
+							v.width,
+						).slice(0, v.effectiveRows);
+					}
+					const end = Math.min(lines.length, scrollTop + v.contentRows);
+					const headerLines = wrapTextWithAnsi(headerText(scrollTop + 1, end, v.digits), v.width);
+					const overflow = Math.max(0, headerLines.length - v.headerRowCount);
+					const allowed = Math.max(0, v.contentRows - overflow);
+					const windowLines = lines.slice(scrollTop, scrollTop + allowed);
+					while (windowLines.length < allowed) windowLines.push("");
+					return [...headerLines, ...windowLines, ...v.footerLines];
+				},
+				invalidate(): void {
+					cachedWidth = 0;
+				},
+				handleInput(data: string): void {
+					if (
+						keybindings.matches(data, "tui.select.cancel") ||
+						keybindings.matches(data, "tui.select.confirm") ||
+						keybindings.matches(data, "app.interrupt")
+					) {
+						const closing = viewport(overlayWidth());
+						if (closing.contentRows < 1) {
+							closeRefusal = `终端高度 ${termRows()} 行不足以完整展示脱敏预览（至少需要 ${
+								closing.headerRowCount + closing.footerLines.length + 1
+							} 行）；已拒绝本次预览/提交`;
+						}
+						done(undefined);
+						return;
+					}
+					const v = viewport(currentWidth());
+					if (keybindings.matches(data, "tui.select.up") || keybindings.matches(data, "tui.editor.cursorUp")) {
+						move(-1);
+					} else if (
+						keybindings.matches(data, "tui.select.down") ||
+						keybindings.matches(data, "tui.editor.cursorDown")
+					) {
+						move(1);
+					} else if (
+						keybindings.matches(data, "tui.select.pageUp") ||
+						keybindings.matches(data, "tui.editor.pageUp")
+					) {
+						move(-v.contentRows);
+					} else if (
+						keybindings.matches(data, "tui.select.pageDown") ||
+						keybindings.matches(data, "tui.editor.pageDown")
+					) {
+						move(v.contentRows);
+					} else if (keybindings.matches(data, "tui.altScreen.top")) {
+						move(-lines.length);
+					} else if (keybindings.matches(data, "tui.altScreen.bottom")) {
+						move(lines.length);
+					}
+				},
+			};
+		},
+		{
+			overlay: true,
+			overlayOptions: { width: "92%", maxHeight: ISSUE_PREVIEW_VIEWPORT_LINES + 4, anchor: "center" },
+		},
+	);
+	if (closeRefusal !== null) throw new Error(closeRefusal);
+}
+
+/** /mw issue <args> pi-window entry. Returns the user-facing text so a headless
+ * caller can put it in the transcript (no silent loss). */
+export async function runMwIssueCommand(
+	ctx: ExtensionCommandContext,
+	projectDir: string,
+	argsText: string,
+	deps: IssueWireDeps = {},
+): Promise<string> {
+	const facts = issueWindowFacts(ctx);
+	if (facts.reason !== null) {
+		const text = `# /mw issue — 拒绝\n- ${facts.reason}\n- 未注册/未调用任何写入口；共享端新增记录数为 0。`;
+		ctx.ui.notify(text, "warning");
+		return text;
+	}
+	const projectRoot = fs.realpathSync(projectDir);
+	const pointerFile = issueDevRootPointerPath({ pointerFile: deps.pointerFile });
+	const sub = parseIssueCommandArgs(argsText).sub;
+	const host: IssueCommandHost = {
+		projectRoot,
+		projectLabel: path.basename(projectRoot),
+		by: `pm:${windowClaimId()}`,
+		role: facts.role,
+		trustedWindow: facts.trustedWindow,
+		writeAuthorized: facts.writeAuthorized,
+		devRoot: issueDevRootForSub(sub, projectRoot, deps.pointerFile),
+		pointerFile,
+		knownSecrets: [], // caller supplies NO transient secrets; no auth/env scan
+		localEvidence: null, // explicit unknown: never fabricate install/serve/bundle
+		observedEnvironment: null, // explicit unknown: never fabricate version/bundle/serve readings
+		now: deps.now ?? (() => new Date().toISOString()),
+	};
+	const ui = makeIssueUIAdapter(ctx);
+	const store = deps.store ?? createIssueCommandStore(projectRoot);
+	const result = await handleIssueCommand(argsText, { host, ui, store });
+	return result.text;
+}
+
 function registerOwnedPmStateCompaction(
 	pi: ExtensionAPI,
 	projectDir: string,
@@ -5841,6 +6234,7 @@ export function registerMwCommands(
 	ackStore: AckStore,
 	watch: PmWatchState,
 	agenticdocRoot: string,
+	issueDeps?: IssueWireDeps,
 	indexStore?: IndexStore,
 ): void {
 	const startPmStateCompaction = indexStore
@@ -6125,8 +6519,18 @@ export function registerMwCommands(
 				return;
 			}
 
+			if (sub === "issue") {
+				// T-05 (mw-issue-feedback): pi-window /mw issue entry. Registered
+				// only on the PM activation path; runMwIssueCommand derives every
+				// actor/trust/root fact from the real window (never from args or a
+				// model claim) and refuses worker/RPC/print/headless entries.
+				const text = await runMwIssueCommand(ctx, projectDir, trimmed.slice(sub.length).trim(), issueDeps);
+				if (!ctx.hasUI) displaySummary(pi, text);
+				return;
+			}
+
 			ctx.ui.notify(
-				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | ue-continue-develop-frame install | model show|set|clear|set-fallback|clear-fallback | thinking show|set <default|role> <level>|clear <default|role|all> | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | decide on|off|probe | decide dp on|off <id> | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | pm-state compact --key <k> --summary <file> [--apply <sha256>] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
+				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | ue-continue-develop-frame install | model show|set|clear|set-fallback|clear-fallback | thinking show|set <default|role> <level>|clear <default|role|all> | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | decide on|off|probe | decide dp on|off <id> | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | pm-state compact --key <k> --summary <file> [--apply <sha256>] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all | issue report|retry|status|update|reply|bind | issue inbox [id] (dev-only read)",
 				"warning",
 			);
 		},

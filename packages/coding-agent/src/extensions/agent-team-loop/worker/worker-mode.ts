@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
+import { createConnection } from "node:net";
 import * as path from "node:path";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import { killTrackedDetachedChildren } from "../../../utils/shell.ts";
@@ -8,6 +10,8 @@ import {
 	buildDecisionToolMeta,
 	DECISION_RECEIPT_TOOL,
 	type DecisionToolMeta,
+	decisionMatterRef,
+	decisionMatterVersion,
 	initiatorRoleFromWorkerTask,
 	type LifecycleRunner,
 	resolveHandlingSelection,
@@ -16,13 +20,25 @@ import {
 	writeDecisionLifecycle,
 } from "../pm/decision-tool.ts";
 import {
+	SUBMIT_DECISION_HANDOFF_TOOL,
+	SUBMIT_MATTER_VERSION,
+	type SubmitDecisionHostHandle,
+} from "../pm/host-submit.ts";
+import {
 	DP2_NARROW_MARKER,
 	DP2_STEER_FILE,
 	DP2_STEER_REQUEST_HEADER,
 	recordDispatchAlarm,
 } from "../pm/pm-orchestrator.ts";
 import {
+	buildMatterBudgetFromCard,
+	type ProductionRuntimeHost,
+	readRuntimeAuthority,
+	readRuntimeStopFacts,
+} from "../pm/runtime-host-adapter.ts";
+import {
 	canonicalStateBytes,
+	canonicalStateJson,
 	type DecideRunner,
 	type RawDecideRun,
 	readDecidePolicy,
@@ -49,12 +65,16 @@ import {
 import { isContextPolicyFailure } from "../shared/context-controller.ts";
 import { consumeContextPolicyFailure, consumeNativeContextAbort } from "../shared/context-extension.ts";
 import { resolveDecidePolicy } from "../shared/decide-policy.ts";
+import { stopScopeForSignal } from "../shared/decision-handoff.ts";
 import { findNonEmptyReport, hasDeliverableEvidence } from "../shared/deliverable-evidence.ts";
 import { type Claim, claimBudgetCaps, DISPATCH_TYPE_VOCABULARY, parseClaimsBlock } from "../shared/dispatch-card.ts";
 import { roleForTaskType } from "../shared/dispatch-models.ts";
+import { openFixedAllocation } from "../shared/fixed-child-budget.ts";
 import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.ts";
+import { IndexStore, normalizeKey } from "../shared/index-store.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
 import { MW_RUN_DETACHED_TOOL, registerRunDetachedTool } from "../shared/run-detached.ts";
+import { recordRunProgress } from "../shared/run-progress.ts";
 import {
 	collectArtifacts,
 	isTerminalRunStatus,
@@ -73,6 +93,13 @@ import {
 	readTaskType,
 	scanBodyTypeLines,
 } from "../shared/task-frontmatter.ts";
+import { isEngineProjectOutput, isUnattendedBugReportOptOut } from "../shared/ue-runtime-paths.ts";
+import {
+	type DeadlineStop,
+	deadlineEvidence,
+	readWorkerDeadline,
+	startWorkerDeadline,
+} from "../shared/worker-deadline.ts";
 import { workspaceWriteFaceOptions } from "../shared/workspace-write-face.ts";
 import {
 	parseWriteFace,
@@ -126,6 +153,7 @@ import {
 	readScopeConfigFromMeta,
 } from "./read-scope.ts";
 import { registerWorkerFileTool, WORKER_FILE_TOOL } from "./worker-file-tool.ts";
+import { registerWorkerProgressTool, WORKER_PROGRESS_TOOL } from "./worker-progress-tool.ts";
 
 // ── Tool allowlists by task type ─────────────────────────────────────────────
 
@@ -204,11 +232,11 @@ export function toolsForType(taskType: string): string[] {
 /** `toolsForType` plus the narrow write channel for roles with no write/edit
  * tool (D-104/D-106). The allowlist table and `toolsForType` stay byte for
  * byte unchanged (Python parity lock, direct test imports); the writeless
- * extra lives only here. Write roles get the base array untouched, read-only
- * roles get a copy with `worker_file` appended. */
+ * extra lives only here. Read-only roles also receive `worker_file`. */
 export function activeToolsForType(taskType: string): string[] {
 	const base = toolsForType(taskType);
-	const tools = base.includes("write") ? base : [...base, WORKER_FILE_TOOL];
+	const tools = [...base, WORKER_PROGRESS_TOOL];
+	if (!base.includes("write")) tools.push(WORKER_FILE_TOOL);
 	// mw_run_detached is a spawn surface: only shell roles (base carries
 	// `bash`) get it. Read-only roles stay without it so the AC-005b bash
 	// write-surface guard cannot be bypassed (design D-005). Never goes into
@@ -2528,14 +2556,17 @@ function samePath(a: string, b: string): boolean {
  * must stay writable for `coding`/`repair`), so it cannot be the PM table under
  * another name. The ALLOW face below is shared with the predicate instead. */
 function bashWriteDenyReason(config: BashWriteScopeConfig, target: string): string | null {
+	if (config.writeFace?.externalRoot && isUnattendedBugReportOptOut(target)) {
+		return "UE Editor-managed opt-out marker";
+	}
 	for (const root of config.readOnlyWriteRoots ?? []) {
 		if (!isSameOrUnder(normalizeForCompare(config.projectRoot, root), target)) continue;
-		// design.md §4: the three UBT build directories are the only Engine write
-		// exception. The anchors are literal concatenations of the canonical
+		// Generated output anchors are literal concatenations of the canonical
 		// Engine root while `target` is realpath-normalized, so a junctioned
 		// artifact directory stays denied (design D-003). The exception never
 		// widens a role or task face — it only removes the read-only verdict.
 		if ((config.readOnlyArtifactRoots ?? []).some((allowed) => isSameOrUnder(allowed, target))) continue;
+		if (isEngineProjectOutput(root, target)) continue;
 		return "engine-read-only";
 	}
 	// Targets already use realpath; anchors must use the same identity when the
@@ -2579,6 +2610,7 @@ function matchesWriteFaceTarget(face: WriteFace, absoluteTarget: string): boolea
 		base: face.base,
 		caseInsensitive: face.caseInsensitive,
 		roots: face.roots,
+		externalRoot: face.externalRoot,
 	});
 	if (targetFace.kind !== "declared") return false;
 	const result = writeFacesOverlap(targetFace.face, face);
@@ -2718,6 +2750,7 @@ export function checkBashWriteScopeTarget(
 	}
 	const inOwnSandbox =
 		resolveOwnWriteTarget(target, surfacePaths, { evidenceBasis: "project-root", basenameChannel: false }) !== null;
+	const inWriteFace = config.writeFace !== undefined && matchesWriteFaceTarget(config.writeFace, target);
 	// Role-classified default face (D-007). The writable face is the repo root;
 	// its realpath is taken so a junctioned cwd cannot make the containment check
 	// depend on the unnormalized spelling.
@@ -2725,7 +2758,8 @@ export function checkBashWriteScopeTarget(
 		? inOwnSandbox ||
 			isSameOrUnder(normalizeForCompare(config.projectRoot, config.projectRoot), target) ||
 			(config.writeFace !== undefined &&
-				(config.writeRoots ?? []).some((root) => isSameOrUnder(normalizeForCompare(root, root), target)))
+				((config.writeRoots ?? []).some((root) => isSameOrUnder(normalizeForCompare(root, root), target)) ||
+					(inWriteFace && config.writeFace.externalRoot?.(target.replaceAll("\\", "/")) !== undefined)))
 		: inOwnSandbox;
 	if (!insideDefaultFace) {
 		return {
@@ -2752,7 +2786,6 @@ export function checkBashWriteScopeTarget(
 		const declaredFacePresent = config.writeFace !== undefined || config.writeFaceRejected === true;
 		const declaredScopePresent = config.writeScope !== undefined;
 		if (declaredFacePresent || declaredScopePresent) {
-			const inWriteFace = config.writeFace !== undefined && matchesWriteFaceTarget(config.writeFace, target);
 			const inWriteScope =
 				config.writeScope === undefined ||
 				config.writeScope.some((entry) =>
@@ -3020,10 +3053,24 @@ export function emitRagRequiredMissing(check: RagRequiredCheck): string | null {
 // ── Main entry ───────────────────────────────────────────────────────────────
 
 export interface WorkerModeOptions {
+	/** Private PM channel root override for isolated host tests. */
+	liveDeadlineHome?: string;
 	/** Test seam for the dp3 decision service (production uses the triage
 	 * client's `runDecideMw`, which reuses `findMwPy()` + `PYTHON_EXE`). */
 	dp3Runner?: DecideRunner;
 	reachabilityLifecycleRunner?: LifecycleRunner;
+	/** Deferred to preserve worker → submit → ask registration order. */
+	submitHandle?: () => SubmitDecisionHostHandle | undefined;
+	/** ONE host object / store / C / D registered at the activation boundary. */
+	runtimeHost?: ProductionRuntimeHost;
+	/** Host-only reader for an explicitly supplied trusted adapter. It must re-read
+	 * the SAME authority/budget/stop source as submit, never tool details. Absent
+	 * checks readRuntimeStopFacts for concrete stops/gaps but cannot grant a
+	 * continuation without the live host source. Rejection/throw/missing facts
+	 * fail closed; neither a card declaration nor tool details are a live grant. */
+	readLocalContinuationFacts?: (
+		input: Parameters<typeof readRuntimeStopFacts>[0] & { localRef: string; claimId: string; bindingVersion: string },
+	) => ReturnType<typeof readRuntimeStopFacts> | Promise<ReturnType<typeof readRuntimeStopFacts>>;
 }
 
 export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeOptions): Promise<void> {
@@ -3076,6 +3123,27 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	// task.md is read once here and reused for the read-scope parent root below.
 	const taskDir = path.dirname(taskPath);
 	const taskContent = fs.readFileSync(taskPath, "utf8");
+	const fixedAllocation = openFixedAllocation(taskDir, taskContent);
+	const configuredBudgetMs = resolveBudgetMs(meta.timeoutMin, process.env.PI_WORKER_TIMEOUT_MS);
+	const initialDeadline = Math.min(startedAt + configuredBudgetMs, fixedAllocation?.deadline ?? Infinity);
+	if (fixedAllocation?.alreadyStarted) {
+		writeWorkerLogLine("[worker] resource-limited: fixed child allocation already started");
+		process.exit(1);
+	}
+	if (readTaskHeaderScalar(taskContent, "deadline_successor") === "yes" && !fixedAllocation?.steps) {
+		writeWorkerLogLine("[worker] resource-limited: deadline successor allocation missing or expired");
+		process.exit(1);
+	}
+	let remainingFixedSteps = fixedAllocation?.steps ?? 0;
+	const nativeReviewEndpoint = process.env.MW_NATIVE_OBSERVATION;
+	const nativeReviewDispatch = process.env.MW_NATIVE_REVIEW_DISPATCH;
+	delete process.env.MW_NATIVE_OBSERVATION;
+	delete process.env.MW_NATIVE_REVIEW_DISPATCH;
+	const nativeReviewPipe =
+		meta.type === "review"
+			? /^windows-named-pipe:(\\\\\.\\pipe\\mw-native-observation-[\w-]+)$/i.exec(nativeReviewEndpoint ?? "")?.[1]
+			: undefined;
+	let authoredReviewReport: Buffer | undefined;
 
 	// AC-005 observability: record the ignored body `type:` lines / BOM / GC-8
 	// fallback before the fail-closed gate so a refused spawn is audited too.
@@ -3092,10 +3160,42 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		status: "running",
 		started_at: new Date().toISOString(),
 		supersedes: parseSupersedes(taskContent),
+		parent_worker_run: readTaskHeaderScalar(taskContent, "parent_worker_run"),
 		artifacts: [],
 		pid: process.pid,
 		last_heartbeat_at: new Date().toISOString(),
 	};
+	let ceilingLimit = fixedAllocation?.deadline ?? Infinity;
+	const cardRef = readTaskHeaderScalar(taskContent, "card_path");
+	const cardPin = readTaskHeaderScalar(taskContent, "card_sha256");
+	if (cardRef && cardPin && /^tasks\/[\w-][\w.-]*\.md$/.test(cardRef)) {
+		try {
+			const card = buildMatterBudgetFromCard(
+				fs.readFileSync(path.join(meta.trueAgenticdocRoot, runState.owner_key, cardRef), "utf8"),
+				{
+					cardRef,
+					cardSha256: cardPin,
+					runStartedAt: runState.started_at,
+					runRef: runState.run_id,
+					indexRef: "_index.parallel",
+				},
+			);
+			if (card.ok) ceilingLimit = Math.min(ceilingLimit, Date.parse(card.value.budget.deadline));
+		} catch {
+			// The live deadline policy independently requires a current pinned card.
+		}
+	}
+	const liveDeadline = startWorkerDeadline(
+		meta.trueAgenticdocRoot,
+		taskDir,
+		runState,
+		startedAt,
+		initialDeadline,
+		ceilingLimit,
+		fixedAllocation?.steps,
+		options?.liveDeadlineHome,
+	);
+	if (liveDeadline) runState.live_deadline = liveDeadline;
 	writeRunState(taskDir, runState);
 
 	// D-107 fail-closed gate: refuse the task before any agent turn, with the
@@ -3121,6 +3221,21 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		process.exit(1);
 	}
 
+	// T06-J: register the exact dispatched pin, immutable run start and declared
+	// write face at the trusted activation boundary, BEFORE any tool/ask event.
+	// A failure leaves this run with no host authority; submit then refuses only
+	// that controlled matter, never inventing or resetting a grant.
+	options?.runtimeHost?.registerWorkerActivation({
+		agenticdocRoot: meta.trueAgenticdocRoot,
+		key: runState.owner_key,
+		taskKey: meta.taskKey,
+		runId: runState.run_id,
+		startedAt: runState.started_at,
+		kind: runState.kind,
+		taskContent,
+		writeFaceEntries: meta.writeFaceEntries,
+	});
+
 	// Read-scope enforcement (D-106/AC-009): active only when task.md carries
 	// read_scope — otherwise zero interception (AC-012 red line). Rejections
 	// accumulate in memory and are written to output.md on every exit path via
@@ -3144,6 +3259,8 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	const allowedReadTargets = new Set<string>();
 
 	function writeOutputGuarded(opts: WriteOutputOpts): void {
+		const current = readRunState(taskDir);
+		if (current && !isOwnedRunningRun(current)) return;
 		// The product write is this run's terminal moment, and the marker it carries
 		// must state the outcome the same write records — so reflect it in memory
 		// first (finishRun persists it right after, R15).
@@ -3162,6 +3279,18 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		return runState.status;
 	}
 
+	/** Same running identity only; terminal/foreign records belong to their writer. */
+	function isOwnedRunningRun(current: RunState): boolean {
+		return (
+			current.status === "running" &&
+			current.run_id === runState.run_id &&
+			current.owner_key === runState.owner_key &&
+			current.task_key === runState.task_key &&
+			current.kind === runState.kind &&
+			current.started_at === runState.started_at
+		);
+	}
+
 	/** Terminal write for THIS run (AC-022/D-022). Every exit path lands here
 	 * through `recordEnd`, a startup refusal, or the process-exit safety net.
 	 * Best-effort by contract (R15): when the write fails it is noted in
@@ -3169,11 +3298,81 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	 * here (the deliverables exist by now), never for a `lost` run — the Python
 	 * launcher owns that single addition (D-023). */
 	function finishRun(status: RunStatus, exit?: number): void {
+		const current = readRunState(taskDir);
+		if (current && !isOwnedRunningRun(current)) return;
 		runState.status = status;
 		runState.ended_at = new Date().toISOString();
 		if (exit !== undefined) runState.exit = exit;
 		runState.artifacts = collectArtifacts(taskDir);
 		writeRunState(taskDir, runState);
+	}
+
+	async function deliverNativeReview(): Promise<void> {
+		if (
+			!nativeReviewPipe ||
+			!nativeReviewDispatch ||
+			!authoredReviewReport ||
+			!runState.artifacts.includes("report.md")
+		)
+			return;
+		let frame: Buffer;
+		try {
+			const reportPath = path.join(taskDir, "report.md");
+			if (!fs.lstatSync(reportPath).isFile() || !fs.readFileSync(reportPath).equals(authoredReviewReport)) return;
+			const verdictBlocks = [
+				...authoredReviewReport
+					.toString("utf8")
+					.matchAll(/^```mw-local-qg-verdict[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gm),
+			];
+			if (verdictBlocks.length !== 1) return;
+			const verdict = asPlainRecord(JSON.parse(verdictBlocks[0][1]));
+			if (!verdict) return;
+			const now = new Date().toISOString();
+			const payload = Buffer.from(
+				JSON.stringify({
+					schema_version: 1,
+					kind: "native-review-terminal",
+					protocol: "mw-native-observation-v1",
+					delivered_at: now,
+					run: {
+						owner_key: runState.owner_key,
+						task_key: runState.task_key,
+						run_id: runState.run_id,
+						kind: runState.kind,
+						status: runState.status,
+						started_at: runState.started_at,
+					},
+					dispatch: JSON.parse(nativeReviewDispatch) as unknown,
+					review: {
+						role: "review",
+						reviewed_at: now,
+						verifier_ref: "independent-review:current-refs@local-qg-consumer-v1",
+						verdict: verdict.verdict,
+						findings: verdict.findings,
+						unresolved_findings: verdict.unresolved_findings,
+						refs: verdict.refs,
+					},
+					report: {
+						path: "report.md",
+						b64: authoredReviewReport.toString("base64"),
+						sha256: createHash("sha256").update(authoredReviewReport).digest("hex"),
+					},
+				}),
+			);
+			if (payload.length > 1024 * 1024) return;
+			frame = Buffer.allocUnsafe(4 + payload.length);
+			frame.writeUInt32BE(payload.length);
+			payload.copy(frame, 4);
+		} catch {
+			return;
+		}
+		await new Promise<void>((resolve) => {
+			const socket = createConnection(nativeReviewPipe);
+			socket.setTimeout(1_000, () => socket.destroy());
+			socket.on("error", () => socket.destroy());
+			socket.once("close", () => resolve());
+			socket.once("connect", () => socket.end(frame));
+		});
 	}
 
 	// Task lifecycle start: trace.log gets a machine-parseable [START] anchor
@@ -3309,6 +3508,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	// `registerRagTools`'s disabled→skip. OUTSIDE the RAG try/catch on purpose:
 	// a broken RAG config must not swallow a read-only role's only channel.
 	const hasWriteTool = toolsForType(meta.type).includes("write");
+	registerWorkerProgressTool(pi, taskDir, runState.run_id);
 	if (!hasWriteTool) {
 		registerWorkerFileTool(pi, workerTaskDir);
 	}
@@ -3321,7 +3521,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 			workerTaskDir,
 			meta.ragChatBudget ?? ragRuntime.config.budgets.chat,
 			(meta.ragTimeBudgetS ?? ragRuntime.config.budgets.timeS) * 1000,
-			{ taskWallMs: resolveBudgetMs(meta.timeoutMin, process.env.PI_WORKER_TIMEOUT_MS) },
+			{ taskWallMs: liveDeadline ? liveDeadline.ceiling - startedAt : configuredBudgetMs },
 		);
 	}
 
@@ -3385,23 +3585,92 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		);
 		return true;
 	}
-	pi.on("before_agent_start", () => {
+	pi.on("before_agent_start", (event) => {
+		enforceLiveStop(false);
 		applyRagTools(pi, ragRuntime, meta.type);
 		consumeDp2NarrowSteer("before_agent_start");
+		if (nativeReviewPipe)
+			return {
+				systemPrompt: `${event.systemPrompt}\n\nFor this local QG review, write your independent findings to report.md using worker_file in write mode. Include one fenced mw-local-qg-verdict JSON block with verdict (pass, fix or partial), findings, unresolved_findings and refs (arrays of strings).`,
+			};
 	});
 
-	pi.on("tool_call", (event, ctx) => {
+	pi.on("tool_call", async (event, ctx) => {
+		if (fixedAllocation && !liveDeadline) {
+			if (
+				!Number.isSafeInteger(remainingFixedSteps) ||
+				remainingFixedSteps <= 0 ||
+				Date.now() >= effectiveDeadline()
+			)
+				return { block: true, reason: "resource-limited: fixed child allocation exhausted or expired" };
+			remainingFixedSteps--;
+		}
+		if (localContinuationBlock) return { block: true, reason: localContinuationBlock };
 		if (
 			event.toolName === DECISION_RECEIPT_TOOL &&
 			typeof event.input.decision_id === "string" &&
 			event.input.decision_id.startsWith("dp-w-check-task:")
 		)
 			return { block: true, reason: "The worker records reachability receipts from observed actions." };
-		if (taskDone && runState.reachability) return { block: true, reason: "This worker run has ended." };
-		if (blockedDecision && !(event.toolName === ASK_DECISION_TOOL && event.input.dp === "dp-w-check-task"))
+		if (taskDone && (runState.reachability || localReachability))
+			return { block: true, reason: "This worker run has ended." };
+		const selfAssessment = event.toolName === ASK_DECISION_TOOL && event.input.dp === "dp-w-check-task";
+		if (localReachability) {
+			const reason = await localContinuationFailure();
+			if (reason !== undefined) {
+				localContinuationBlock = reason;
+				finishUnreachable(null, null, localReachability.material, reason);
+				ctx.abort();
+				ctx.shutdown();
+				return { block: true, reason: `${reason}; this tool was not executed.` };
+			}
+		}
+		if (selfAssessment) {
+			if (
+				localReachability?.choice === "investigate" &&
+				!localReachability.blocked &&
+				!localReachability.readCallId &&
+				Date.now() < (localReachability.readDeadline ?? 0)
+			)
+				return { block: true, reason: "Read the prepared evidence_source once before reassessing reachability." };
+			if (
+				localReachability?.choice === "investigate" &&
+				asPlainRecord(event.input.material)?.reachability_facts === localReachability.material.reachability_facts
+			)
+				return { block: true, reason: "Supply fresh reachability_facts after the bounded investigation." };
+			pendingLocalAsk = { input: structuredClone(event.input), claimId: currentOwnerClaim() };
+		}
+		if (blockedDecision && !selfAssessment && event.toolName !== SUBMIT_DECISION_HANDOFF_TOOL)
 			return { block: true, reason: blockedDecision.reason };
+		if (
+			localReachability?.choice === "investigate" &&
+			!selfAssessment &&
+			event.toolName !== SUBMIT_DECISION_HANDOFF_TOOL
+		) {
+			const active = localReachability;
+			if (
+				!active.blocked &&
+				!active.readCallId &&
+				Date.now() < (active.readDeadline ?? 0) &&
+				event.toolName === "read" &&
+				typeof event.input.path === "string"
+			) {
+				try {
+					if (fs.realpathSync(path.resolve(ctx.cwd, event.input.path)) === active.source) {
+						active.readCallId = event.toolCallId;
+						return;
+					}
+				} catch {
+					/* fail closed below */
+				}
+			}
+			return {
+				block: true,
+				reason: active.blocked ?? "Only one prepared evidence_source read is permitted; reassess with fresh facts.",
+			};
+		}
 		if (reachability?.choice !== "investigate") return;
-		if (Date.now() - startedAt >= budgetMs) {
+		if (Date.now() >= effectiveDeadline()) {
 			reachability.blocked = "The existing worker budget has expired.";
 			return { block: true, reason: reachability.blocked };
 		}
@@ -3685,6 +3954,25 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	let lastToolAt: number | undefined;
 	/** Last source that refreshed `lastActivityAt` (VC-004 evidence field). */
 	let lastActivitySource = "session_start";
+	let progressActivityWrittenAt = 0;
+	function saveProgressActivity(): void {
+		try {
+			recordRunProgress(taskDir, runState.run_id, {
+				activity: {
+					at: new Date(lastActivityAt).toISOString(),
+					source: lastActivitySource,
+					tools: [...inFlightTools.values()].slice(0, 20).map((tool) => ({
+						name: tool.name,
+						started_at: new Date(tool.startedAt).toISOString(),
+						last_activity_at: new Date(tool.lastActivityAt).toISOString(),
+					})),
+				},
+			});
+			progressActivityWrittenAt = Date.now();
+		} catch {
+			// Progress observation is best effort. The existing watchdog remains authoritative.
+		}
+	}
 	const touch = (source: string): void => {
 		lastActivityAt = Date.now();
 		lastActivitySource = source;
@@ -3720,10 +4008,12 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		const tool = inFlightTools.get(event.toolCallId);
 		if (tool) tool.lastActivityAt = Date.now();
 		touch("tool_update");
+		if (lastActivityAt - progressActivityWrittenAt >= 1_000) saveProgressActivity();
 	});
 	pi.on("tool_execution_end", (event) => {
 		inFlightTools.delete(event.toolCallId);
 		touch("tool_end");
+		saveProgressActivity();
 	});
 
 	// Track tool calls for trace.log (AC-012) + structured [TOOL]/[TOOL_ERR]
@@ -3756,6 +4046,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 			lastActivityAt: toolStartedAt,
 		});
 		touch("tool_start");
+		saveProgressActivity();
 		lastToolAt = Date.now();
 		const target = toolTarget(event.args);
 		if (READ_TOOLS.has(event.toolName)) {
@@ -3846,6 +4137,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	// Shared terminal bookkeeping: trace [END] with exact runtime + a status
 	// line into worker.log (synchronous — survives an immediate process.exit).
 	function recordEnd(exitCode: 0 | 1 | 2 | 3): void {
+		saveProgressActivity();
 		// Single exit-code → status mapping (markOutcome), reused here so the trace
 		// line, the persisted record and the marker can never disagree (AC-006).
 		const status = markOutcome(exitCode);
@@ -3884,7 +4176,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	//   machine evidence + steer the agent to self-assess; refresh every 10m.
 	// - deadline steer: near budget end, steer the agent to wrap up and produce
 	//   its final reply (→ output.md) instead of dying mid-finalization.
-	const budgetMs = resolveBudgetMs(meta.timeoutMin, process.env.PI_WORKER_TIMEOUT_MS);
+	const budgetMs = Math.max(0, (liveDeadline?.initial ?? initialDeadline) - startedAt);
 	const idleMs = resolveIdleMs(process.env.PI_WORKER_IDLE_MS);
 	// T-04: the in-flight branch judges the tool-idle clock against this bound
 	// (>= the raw idle threshold) so a silent long command is not a hang, while a
@@ -3898,12 +4190,68 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	let steerTimer: NodeJS.Timeout | undefined;
 	let idleTimer: NodeJS.Timeout | undefined;
 	let wallTimer: NodeJS.Timeout | undefined;
+	let liveTimer: NodeJS.Timeout | undefined;
+	let scheduledDeadline: number | undefined;
+	const liveAbort = new AbortController();
+	const chargedTools = new Set<string>();
+
+	function liveView() {
+		if (!liveDeadline) return;
+		const current = readRunState(taskDir);
+		if (!current || !isOwnedRunningRun(current) || !current.live_deadline) {
+			return { deadline: liveDeadline.initial, stop: "authority-revoked" as const };
+		}
+		return readWorkerDeadline(meta.trueAgenticdocRoot, taskDir, current, Date.now(), options?.liveDeadlineHome);
+	}
+
+	function effectiveDeadline(): number {
+		return liveView()?.deadline ?? initialDeadline;
+	}
+
+	function enforceLiveStop(includeBudget: boolean): DeadlineStop | undefined {
+		if (taskDone) return runState.stop_kind;
+		const view = liveView();
+		const stop = view?.stop ?? (Date.now() >= (view?.deadline ?? initialDeadline) ? "worker-deadline" : undefined);
+		if (!stop || (stop === "budget-exhausted" && !includeBudget)) return;
+		if (stop === "worker-deadline") {
+			const seconds = Math.round(((view?.deadline ?? initialDeadline) - startedAt) / 1000);
+			const sinceAct = Math.round((Date.now() - lastActivityAt) / 1000);
+			timeoutExit("wall", `budget ${seconds}s exceeded (last activity ${sinceAct}s ago)`);
+		} else {
+			taskDone = true;
+			runState.stop_kind = stop;
+			if (stop === "parent-cancel" || stop === "user-stop") runState.aborted = true;
+			liveAbort.abort(stop);
+			clearWatchdogTimers();
+			clearInterval(heartbeat);
+			writeOutputGuarded({
+				taskKey: meta.taskKey,
+				agenticdocRoot: meta.agenticdocRoot,
+				exitCode: 1,
+				summary: `Worker stopped (${stop}).`,
+				exitReason: stop,
+			});
+			recordEnd(1);
+			outputWritten = true;
+			killTrackedDetachedChildren();
+			process.exit(1);
+		}
+		return stop;
+	}
+
+	function persistUsage(): boolean {
+		const current = readRunState(taskDir);
+		if (!current || !isOwnedRunningRun(current) || current.aborted || !liveDeadline) return false;
+		current.live_deadline = liveDeadline;
+		return writeRunState(taskDir, current).ok;
+	}
 
 	function clearWatchdogTimers(): void {
 		if (idleTimer) clearInterval(idleTimer);
 		if (wallTimer) clearTimeout(wallTimer);
 		if (checkpointTimer) clearTimeout(checkpointTimer);
 		if (steerTimer) clearTimeout(steerTimer);
+		if (liveTimer) clearInterval(liveTimer);
 	}
 
 	/** Freshest in-flight tool (max lastActivityAt), or undefined when none. */
@@ -3917,6 +4265,8 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 
 	function timeoutExit(kind: "idle" | "wall", detail: string, modelExhausted = false): void {
 		taskDone = true;
+		if (kind === "wall") runState.stop_kind = "worker-deadline";
+		liveAbort.abort(runState.stop_kind);
 		clearWatchdogTimers();
 		clearInterval(heartbeat);
 		appendTimeout(meta.taskKey, meta.agenticdocRoot, kind, detail);
@@ -4071,7 +4421,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		pi.sendUserMessage(
 			checkpointSteerText({
 				elapsedMs,
-				budgetMs,
+				budgetMs: effectiveDeadline() - startedAt,
 				progressPath: path.join(taskDir, "progress.md"),
 				hasWriteTools: hasWriteTool,
 				narrowTool: WORKER_FILE_TOOL,
@@ -4090,18 +4440,38 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	}
 	scheduleCheckpoint(riskAnchorMs);
 
-	steerTimer = setTimeout(() => {
-		if (taskDone) return;
-		// deliverAs "steer": urgent — inject into the CURRENT turn so the model
-		// sees the wrap-up directive at its next opportunity, mid-turn.
-		pi.sendUserMessage(
-			`[mw deadline] 预算还剩约 ${formatHeartbeatAge(
-				budgetMs - steerAtMs(budgetMs),
-			)}。立即停止开始新工作：完成当前最小步骤后收尾，最终回复中列出已完成/未完成/后续建议（会被存为 output.md 摘要）。最终回复第一行必须是单行结论（状态 + 关键产出/卡点）。`,
-			{ deliverAs: "steer" },
+	function scheduleDeadlineTimers(): void {
+		const deadline = effectiveDeadline();
+		if (taskDone || deadline === scheduledDeadline) return;
+		scheduledDeadline = deadline;
+		if (wallTimer) clearTimeout(wallTimer);
+		if (steerTimer) clearTimeout(steerTimer);
+		const steerAt = startedAt + steerAtMs(deadline - startedAt);
+		steerTimer = setTimeout(
+			() => {
+				if (taskDone || enforceLiveStop(false)) return;
+				if (effectiveDeadline() !== deadline) return scheduleDeadlineTimers();
+				pi.sendUserMessage(
+					`[mw deadline] 预算还剩约 ${formatHeartbeatAge(
+						deadline - Date.now(),
+					)}。立即停止开始新工作：完成当前最小步骤后收尾，最终回复中列出已完成/未完成/后续建议（会被存为 output.md 摘要）。最终回复第一行必须是单行结论（状态 + 关键产出/卡点）。`,
+					{ deliverAs: "steer" },
+				);
+			},
+			Math.max(0, steerAt - Date.now()),
 		);
-	}, steerAtMs(budgetMs));
-	steerTimer.unref();
+		steerTimer.unref();
+		wallTimer = setTimeout(
+			() => {
+				if (!taskDone && !enforceLiveStop(false)) {
+					scheduledDeadline = undefined;
+					scheduleDeadlineTimers();
+				}
+			},
+			Math.max(0, Math.min(2_147_483_647, deadline - Date.now())),
+		);
+		wallTimer.unref();
+	}
 
 	idleTimer = setInterval(() => {
 		if (taskDone) return;
@@ -4171,13 +4541,6 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	}, 30_000);
 	idleTimer.unref();
 
-	wallTimer = setTimeout(() => {
-		if (taskDone) return;
-		const sinceAct = Math.round((Date.now() - lastActivityAt) / 1000);
-		timeoutExit("wall", `budget ${Math.round(budgetMs / 1000)}s exceeded (last activity ${sinceAct}s ago)`);
-	}, budgetMs);
-	wallTimer.unref();
-
 	// Phase state machine: track how many phases have been dispatched and completed.
 	// - initialSettled: true once the first agent_settled fires (after pi -p <task_content>)
 	// - nextPhaseIdx: index of the next phase prompt to send (or phases.length when all sent)
@@ -4198,6 +4561,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	// is read at tick time; unref'd so it never holds the event loop, cleared on
 	// every exit path below.
 	const heartbeat = setInterval(() => {
+		saveProgressActivity();
 		appendHeartbeat(
 			meta.taskKey,
 			meta.agenticdocRoot,
@@ -4205,10 +4569,20 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		);
 		// Same tick refreshes the product-carried liveness stamp: a reader that
 		// has only run.json can still tell a live run from a dead one (D-022).
+		const fresh = readRunState(taskDir);
+		if (!fresh || !isOwnedRunningRun(fresh)) return;
 		runState.last_heartbeat_at = new Date().toISOString();
-		writeRunState(taskDir, runState);
+		fresh.last_heartbeat_at = runState.last_heartbeat_at;
+		writeRunState(taskDir, fresh);
 	}, HEARTBEAT_INTERVAL_MS);
 	heartbeat.unref();
+	scheduleDeadlineTimers();
+	if (liveDeadline) {
+		liveTimer = setInterval(() => {
+			if (!enforceLiveStop(false)) scheduleDeadlineTimers();
+		}, 1_000);
+		liveTimer.unref();
+	}
 
 	function buildSummary(): string {
 		const base = lastAssistantText || "Task completed.";
@@ -4268,6 +4642,129 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	// The registered decision tool owns identity, preparation and the consumed receipt.
 	// The worker records an action only after it happens inside this run.
 	let blockedDecision: { reason: string; material: Record<string, unknown> } | undefined;
+	let pendingLocalAsk: { input: Record<string, unknown>; claimId: string | undefined } | undefined;
+	let localReachability:
+		| {
+				choice: "continue" | "investigate" | "terminate";
+				material: Record<string, unknown>;
+				claimId: string;
+				bindingVersion: string;
+				source?: string;
+				readCallId?: string;
+				readDeadline?: number;
+				blocked?: string;
+				observed: boolean;
+		  }
+		| undefined;
+	const consumedLocalRefs = new Set<string>();
+	// A stop/gap ends this continuation for the rest of the run, including
+	// repeated tool calls or a later turn. Never clear its only guard state.
+	let localContinuationBlock: string | undefined;
+	let localInvestigationUsed = false;
+	function currentOwnerClaim(): string | undefined {
+		try {
+			const rows = new IndexStore(meta.trueAgenticdocRoot)
+				.readAuthorityRows()
+				.filter((row) => normalizeKey(row.key) === normalizeKey(runState.owner_key));
+			return rows.length === 1 && rows[0]?.status === "active" ? rows[0].claimId : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+	/** Re-read the submit source before execution, before accepting even an error
+	 * result, and at settle. A gap is NOT parent-cancel, but is never a grant.
+	 * Use the frozen scope mapper: a service timeout does not end a worker. */
+	async function localContinuationFailure(): Promise<string | undefined> {
+		if (localContinuationBlock) return localContinuationBlock;
+		const active = localReachability;
+		const localRef = runState.local_reachability?.local_ref;
+		if (!active || !localRef) return "Local continuation authority gap: local selection binding";
+		try {
+			const input = {
+				agenticdocRoot: meta.trueAgenticdocRoot,
+				key: runState.owner_key,
+				taskKey: meta.taskKey,
+				runId: runState.run_id,
+				localRef,
+				claimId: active.claimId,
+				bindingVersion: active.bindingVersion,
+			};
+			const remaining = effectiveDeadline() - Date.now();
+			if (remaining <= 0) {
+				runState.stop_kind = "worker-deadline";
+				return "Original worker budget expired before continuation fact read (worker-deadline)";
+			}
+			let rejectStop: (() => void) | undefined;
+			let facts: ReturnType<typeof readRuntimeStopFacts>;
+			try {
+				facts = await Promise.race([
+					(options?.readLocalContinuationFacts ?? readRuntimeStopFacts)(input),
+					new Promise<never>((_resolve, reject) => {
+						rejectStop = () => reject(new Error("Worker execution stopped during host read"));
+						if (liveAbort.signal.aborted) rejectStop();
+						else liveAbort.signal.addEventListener("abort", rejectStop, { once: true });
+					}),
+				]);
+			} finally {
+				if (rejectStop) liveAbort.signal.removeEventListener("abort", rejectStop);
+			}
+			if (Date.now() >= effectiveDeadline()) {
+				runState.stop_kind = "worker-deadline";
+				return "Original worker budget expired during continuation fact read (worker-deadline)";
+			}
+			if (
+				!Array.isArray(facts.stop_signals) ||
+				!Array.isArray(facts.gaps) ||
+				!facts.gaps.every((gap) => typeof gap === "string" && gap.trim())
+			)
+				return "Local continuation authority/budget gap: malformed trusted facts";
+			for (const signal of facts.stop_signals) {
+				const scope = stopScopeForSignal(signal.kind);
+				if (scope === undefined || typeof signal.signal_ref !== "string" || !signal.signal_ref.trim())
+					return "Local continuation authority/budget gap: malformed trusted stop signal";
+				if (signal.kind === "parent-cancel" || signal.kind === "user-stop") runState.aborted = true;
+				if (signal.kind === "worker-deadline") runState.stop_kind = signal.kind;
+				if (scope === "user-global" || scope === "pm-or-key" || scope === "matter" || scope === "worker-run")
+					return `Host stop in force (${signal.kind}:${signal.signal_ref}; scope=${scope})`;
+			}
+			if (facts.gaps.length > 0) return `Local continuation authority/budget gap: ${facts.gaps.join(", ")}`;
+			if (!options?.readLocalContinuationFacts) {
+				// A valid replacement card + replacement envelope is still NOT the
+				// authorization that committed this selection. Compare the host's
+				// original binding, using A's same parser rather than a local SHA rule.
+				const authority = readRuntimeAuthority({ ...input, source: "worker-local", clockMs: Date.now() });
+				if (!authority.ok) return `Local continuation authority/budget gap: ${authority.gaps.join(", ")}`;
+				if (authority.value.bindingVersion !== active.bindingVersion || authority.value.claimId !== active.claimId)
+					return "Local continuation authority/budget gap: original host binding drift";
+				return "Local continuation authority/budget gap: live host continuation source is not wired";
+			}
+		} catch {
+			if (runState.stop_kind === "worker-deadline" || Date.now() >= effectiveDeadline()) {
+				runState.stop_kind = "worker-deadline";
+				return "Original worker budget expired during continuation fact read (worker-deadline)";
+			}
+			return "Local continuation authority/budget gap: trusted fact reader unavailable";
+		}
+		// Recheck AFTER an asynchronous host read too: a newer run/terminal state
+		// cannot be overwritten or counted as activity by this old closure.
+		if (!localBindingCurrent(active.claimId)) {
+			if (!runState.stop_kind && Date.now() >= effectiveDeadline()) runState.stop_kind = "worker-deadline";
+			return "Original worker budget expired, binding changed or request cancelled";
+		}
+		return undefined;
+	}
+
+	function localBindingCurrent(claimId: string): boolean {
+		const current = readRunState(taskDir);
+		return (
+			!taskDone &&
+			!lastAssistantAborted &&
+			Date.now() < effectiveDeadline() &&
+			current !== undefined &&
+			isOwnedRunningRun(current) &&
+			currentOwnerClaim() === claimId
+		);
+	}
 	let reachability:
 		| {
 				choice: "continue" | "investigate";
@@ -4302,11 +4799,11 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 			},
 		};
 		const withinBudget: LifecycleRunner = (request) => {
-			const remaining = startedAt + budgetMs - Date.now();
+			const remaining = effectiveDeadline() - Date.now();
 			if (remaining <= 0) return Promise.resolve({ status: null, stdout: "", stderr: "", timedOut: true });
 			return (options?.reachabilityLifecycleRunner ?? runLifecycleMw)({
 				...request,
-				timeoutMs: Math.min(request.timeoutMs, remaining),
+				timeoutMs: Math.min(request.timeoutMs, liveDeadline ? liveDeadline.ceiling - Date.now() : remaining),
 			});
 		};
 		const executed = await writeDecisionLifecycle(
@@ -4345,6 +4842,21 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		reason: string,
 	): boolean {
 		if (taskDone) return false;
+		const current = readRunState(taskDir);
+		if (!current || !isOwnedRunningRun(current)) {
+			taskDone = true;
+			clearWatchdogTimers();
+			clearInterval(heartbeat);
+			// This closure no longer owns a running record. Preserve disk status,
+			// exit, budget origin and products, including unknown stop statuses.
+			// Disable the crash writer too; it must not overwrite the newer run.
+			outputWritten = true;
+			process.exitCode = 1;
+			appendTrace(meta.taskKey, meta.agenticdocRoot, `[REACHABILITY] no terminal overwrite: ${reason}`);
+			return false;
+		}
+		Object.assign(runState, current);
+		if (localContinuationBlock && runState.local_reachability) runState.local_reachability.activity = false;
 		taskDone = true;
 		clearWatchdogTimers();
 		clearInterval(heartbeat);
@@ -4398,13 +4910,212 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	}
 
 	pi.on("tool_result", async (event, ctx) => {
-		if (taskDone) return;
+		if (taskDone || enforceLiveStop(false)) return;
+		if (localReachability) {
+			const reason = await localContinuationFailure();
+			if (reason !== undefined) {
+				localContinuationBlock = reason;
+				finishUnreachable(null, null, localReachability.material, reason);
+				ctx.abort();
+				ctx.shutdown();
+				return {
+					content: [
+						...event.content,
+						{ type: "text", text: `${reason}; this result was not recorded as local activity.` },
+					],
+				};
+			}
+		}
 		if (event.isError) {
 			if (event.toolName === ASK_DECISION_TOOL && event.input.dp === "dp-w-check-task") {
 				blockedDecision = {
 					reason: "Worker reachability action blocked: decision tool error",
 					material: asPlainRecord(event.input.material) ?? {},
 				};
+			}
+			return;
+		}
+		if (nativeReviewPipe && event.toolName === WORKER_FILE_TOOL && event.input.file === "report.md") {
+			authoredReviewReport =
+				event.input.mode === "write" && typeof event.input.content === "string"
+					? Buffer.from(event.input.content)
+					: undefined;
+		}
+		if (event.toolName === SUBMIT_DECISION_HANDOFF_TOOL) {
+			const handle = options?.submitHandle?.();
+			// Only the real registered submit execution can populate this host map.
+			const committed = handle?.readCommittedSelection(event.toolCallId);
+			const pending = pendingLocalAsk;
+			if (!committed || !pending?.claimId || !blockedDecision || !localBindingCurrent(pending.claimId)) return;
+			const { record } = committed;
+			const binding = record.host_binding;
+			const input = pending.input;
+			const material = asPlainRecord(input.material);
+			const preparation = asPlainRecord(input.preparation);
+			if (!material || !preparation) return;
+			const { prepared_at: _preparedAt, ...preparedFacts } = preparation;
+			const before = asPlainRecord(input.task_before);
+			const beforeFacts = before
+				? Object.fromEntries(Object.entries(before).filter(([key]) => key !== "observed_at"))
+				: null;
+			const matter = decisionMatterRef({
+				version: decisionMatterVersion(),
+				owner: runState.owner_key,
+				role: initiatorRoleFromWorkerTask(taskPath),
+				key: runState.owner_key,
+				task_key: meta.taskKey,
+				run_id: runState.run_id,
+				claim_id: null,
+				dp: "dp-w-check-task",
+				question: input.question ?? null,
+				note: input.note ?? null,
+				material,
+				preparation: preparedFacts,
+				context: input.context ?? null,
+				task_before: beforeFacts,
+			});
+			const hash = (value: unknown) => createHash("sha256").update(canonicalStateJson(value)).digest("hex");
+			const expected = handle?.hostExpectedFor(committed.localRef);
+			if (
+				record.source !== "worker-local" ||
+				record.kind !== "local-selection" ||
+				record.action_state !== "planned" ||
+				record.business_completed !== false ||
+				binding.role !== initiatorRoleFromWorkerTask(taskPath) ||
+				binding.key !== runState.owner_key ||
+				binding.owner !== pending.claimId ||
+				binding.claim_id !== pending.claimId ||
+				binding.task_key !== meta.taskKey ||
+				binding.run_id !== runState.run_id ||
+				committed.toolCallId !== event.toolCallId ||
+				committed.offerId !== event.input.offer_id ||
+				committed.choice !== event.input.choice ||
+				committed.basisId !== event.input.basis_id ||
+				record.local_ref !== committed.localRef ||
+				record.selected_action !== committed.choice ||
+				record.selected_basis_id !== committed.basisId ||
+				record.matter_version !== SUBMIT_MATTER_VERSION ||
+				record.matter_ref !== hash({ v: SUBMIT_MATTER_VERSION, m: matter }).slice(0, 32) ||
+				record.material_digest !== hash({ material, context: input.context ?? null }) ||
+				record.basis_digest !== hash({ basis_catalog: preparation.basis_catalog }) ||
+				!expected ||
+				expected.matter_ref !== record.matter_ref ||
+				expected.material_digest !== record.material_digest ||
+				expected.basis_digest !== record.basis_digest ||
+				!["continue", "investigate", "terminate"].includes(committed.choice) ||
+				consumedLocalRefs.has(committed.localRef)
+			)
+				return;
+			const choice = committed.choice as "continue" | "investigate" | "terminate";
+			const previous = localReachability;
+			if (
+				(choice === "investigate" && localInvestigationUsed) ||
+				(previous?.choice === "investigate" && choice === "continue" && !previous.observed)
+			) {
+				blockedDecision = {
+					reason:
+						"Local investigation permits one bounded read per run; continue requires its actual successful result, otherwise terminate with fresh facts.",
+					material,
+				};
+				return;
+			}
+			const fresh = readRunState(taskDir);
+			if (!fresh || !isOwnedRunningRun(fresh)) return;
+			Object.assign(runState, fresh);
+			consumedLocalRefs.add(committed.localRef);
+			localReachability = {
+				choice,
+				material,
+				claimId: pending.claimId,
+				bindingVersion: binding.binding_version,
+				observed: false,
+			};
+			reachability = undefined;
+			blockedDecision = undefined;
+			runState.local_reachability = { source: "worker-local", local_ref: record.local_ref, choice, activity: false };
+			writeRunState(taskDir, runState);
+			if (choice === "terminate") {
+				finishUnreachable(null, null, material, "Worker-local selection: cannot finish within the original limits");
+				ctx.abort();
+				ctx.shutdown();
+				return;
+			}
+			if (choice === "continue") return;
+			localInvestigationUsed = true;
+			const plan = asPlainRecord(material.investigation);
+			const active = localReachability;
+			const allowance =
+				typeof plan?.budget === "string"
+					? /^(\d+(?:\.\d+)?)\s*(milliseconds?|ms|seconds?|s|minutes?|m)\b/i.exec(plan.budget.trim())
+					: null;
+			const duration = allowance
+				? Number(allowance[1]) *
+					(/^(ms|millisecond)/i.test(allowance[2]) ? 1 : /^(s|second)/i.test(allowance[2]) ? 1000 : 60000)
+				: NaN;
+			if (
+				previous?.choice === "investigate" ||
+				!plan ||
+				!["unknown", "evidence_source", "budget", "stop_condition"].every(
+					(name) => typeof plan[name] === "string" && String(plan[name]).trim(),
+				) ||
+				!Number.isFinite(duration) ||
+				duration <= 0 ||
+				duration > effectiveDeadline() - Date.now()
+			) {
+				active.blocked =
+					"Investigation requires one readable source, an explicit stop condition and a finite allowance within the original remaining budget.";
+			} else {
+				try {
+					const target = path.resolve(ctx.cwd, String(plan.evidence_source));
+					const source = fs.realpathSync(target);
+					fs.accessSync(source, fs.constants.R_OK);
+					if (!fs.statSync(source).isFile() || !activeToolsForType(meta.type).includes("read")) throw new Error();
+					if (readScopeConfig) {
+						for (const candidate of [target, source])
+							if (!checkReadScopeCall(process.cwd(), readScopeConfig, readScopeState, "read", candidate).allowed)
+								throw new Error();
+					} else if (
+						![ctx.cwd, taskDir, process.cwd()].some((root) => isSameOrUnder(fs.realpathSync(root), source))
+					)
+						throw new Error();
+					active.source = source;
+					active.readDeadline = Date.now() + duration;
+				} catch {
+					active.blocked = "Investigation source is unreadable or outside the original read scope.";
+				}
+			}
+			return {
+				content: [
+					...event.content,
+					{
+						type: "text",
+						text:
+							active.blocked ??
+							"Read evidence_source once, then reassess dp-w-check-task with fresh facts; the original deadline still applies.",
+					},
+				],
+			};
+		}
+		if (event.toolName !== ASK_DECISION_TOOL && localReachability) {
+			const active = localReachability;
+			if (!localBindingCurrent(active.claimId) || !activeToolsForType(meta.type).includes(event.toolName)) return;
+			if (
+				active.choice === "continue" ||
+				(active.choice === "investigate" &&
+					active.readCallId === event.toolCallId &&
+					Date.now() < (active.readDeadline ?? 0))
+			) {
+				const fresh = readRunState(taskDir) as WorkerRunState | undefined;
+				if (
+					!fresh ||
+					!isOwnedRunningRun(fresh) ||
+					fresh.local_reachability?.local_ref !== runState.local_reachability?.local_ref
+				)
+					return;
+				if (fresh.local_reachability) fresh.local_reachability.activity = true;
+				if (!writeRunState(taskDir, fresh).ok) return;
+				active.observed = true;
+				runState.local_reachability = fresh.local_reachability;
 			}
 			return;
 		}
@@ -4420,7 +5131,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				} catch {
 					return;
 				}
-				if (actual !== active.source || Date.now() - startedAt >= budgetMs) return;
+				if (actual !== active.source || Date.now() >= effectiveDeadline()) return;
 				active.observed = true;
 				await receiptFor(active, "record", "Read the prepared evidence_source with the existing read tool.");
 				return {
@@ -4466,6 +5177,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 			return;
 		}
 		blockedDecision = undefined;
+		localReachability = undefined;
 		const role = initiatorRoleFromWorkerTask(taskPath);
 		if (role === "unknown" || role === "pm") return;
 		const local: DecisionToolMeta = {
@@ -4505,7 +5217,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 			!["unknown", "evidence_source", "budget", "stop_condition"].every(
 				(field) => typeof plan[field] === "string" && String(plan[field]).trim(),
 			) ||
-			Date.now() - startedAt >= budgetMs
+			Date.now() >= effectiveDeadline()
 		)
 			blocked = "Investigation requires a viable evidence_source, remaining budget and stop condition.";
 		else {
@@ -4544,7 +5256,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	 * final assistant message to stdout (captured as worker.log), flush, and
 	 * exit with its own code. Exiting here was why worker.log stayed empty:
 	 * process.exit truncates the pending stdout flush. */
-	function finishSuccess(): void {
+	async function finishSuccess(): Promise<void> {
 		// AC-010②: a second settle in the same process is a no-op — without this the
 		// append-only writer (output-writer.ts D-117) adds a second harness block,
 		// a second `[END]` and (for an NC run) a second no-product alarm.
@@ -4727,6 +5439,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		}
 		recordEnd(exitCode);
 		outputWritten = true;
+		if (exitCode === 0) await deliverNativeReview();
 	}
 
 	/** T-05/I1 (AC-004): the pre-settle self-check. On the final settle attempt
@@ -4739,7 +5452,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	 * file on disk — a writeless run whose reply IS its deliverable gets one
 	 * chance to fix a substantive gap; an undelivered (no-product) settle keeps
 	 * the immediate no-product verdict (AC-006/C5 alarm is never delayed). */
-	function settleOrSelfCheck(): void {
+	async function settleOrSelfCheck(): Promise<void> {
 		if (judgedType !== undefined && (isWritelessRole(meta.type) || hasReportProduct(taskDir))) {
 			const summary = buildSummary();
 			const missing = currentRecoveryMissing({
@@ -4808,7 +5521,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				return;
 			}
 		}
-		finishSuccess();
+		await finishSuccess();
 	}
 
 	/** AC-004 chain: every model the launcher moved through plus the current one.
@@ -4915,7 +5628,36 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		killTrackedDetachedChildren();
 	});
 
-	pi.on("agent_settled", (_event, ctx) => {
+	pi.on("tool_call", (event) => {
+		const stop = enforceLiveStop(true);
+		if (stop || (liveDeadline && taskDone)) return { block: true, reason: stop ?? "Worker run has ended" };
+		if (!liveDeadline) return;
+		if (chargedTools.has(event.toolCallId)) return { block: true, reason: "Duplicate worker tool call" };
+		const view = liveView();
+		if (view && "budget" in view && view.budget && chargedTools.size >= view.budget.noProgress) {
+			return { block: true, reason: "No-progress allowance is reserved by in-flight calls" };
+		}
+		liveDeadline.usage.steps++;
+		liveDeadline.usage.cost++;
+		if (!persistUsage()) return { block: true, reason: "Worker budget accounting is unavailable" };
+		chargedTools.add(event.toolCallId);
+	});
+	pi.on("tool_execution_end", (event) => {
+		if (!liveDeadline || !chargedTools.delete(event.toolCallId) || taskDone || enforceLiveStop(false)) return;
+		const evidence = deadlineEvidence(taskDir, runState.run_id, Date.now())?.version;
+		liveDeadline.usage.evidenceVersions ??= [];
+		const seen = liveDeadline.usage.evidenceVersions;
+		if (evidence && !seen.includes(evidence)) {
+			seen.push(evidence);
+			liveDeadline.usage.noProgress = 0;
+		} else {
+			liveDeadline.usage.noProgress++;
+		}
+		persistUsage();
+	});
+
+	pi.on("agent_settled", async (_event, ctx) => {
+		if (liveDeadline && !taskDone && enforceLiveStop(false)) return;
 		try {
 			// AC-010②: this handler is the settle entry point; once finishSuccess has
 			// run (taskDone), later settles must not re-write phase files, re-emit
@@ -4966,6 +5708,29 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				finishUnreachable(null, null, blockedDecision.material, blockedDecision.reason);
 				return;
 			}
+			if (localReachability) {
+				const reason = await localContinuationFailure();
+				if (reason !== undefined) {
+					localContinuationBlock = reason;
+					finishUnreachable(null, null, localReachability.material, reason);
+					return;
+				}
+			}
+			if (
+				localReachability &&
+				(localReachability.choice !== "continue" ||
+					!localReachability.observed ||
+					!localBindingCurrent(localReachability.claimId))
+			) {
+				finishUnreachable(
+					null,
+					null,
+					localReachability.material,
+					localReachability.blocked ??
+						"Worker-local choice did not converge through authorized activity and a fresh conclusion within the original budget",
+				);
+				return;
+			}
 			if (reachability?.choice === "investigate") {
 				finishUnreachable(
 					reachability.id,
@@ -4986,7 +5751,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 					return;
 				}
 				// No phases — self-check, then write output and let pi exit naturally
-				settleOrSelfCheck();
+				await settleOrSelfCheck();
 				return;
 			}
 
@@ -5019,7 +5784,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 			}
 
 			// All phases done (or no phases after initial settle)
-			settleOrSelfCheck();
+			await settleOrSelfCheck();
 		} catch (err) {
 			taskDone = true;
 			clearWatchdogTimers();
@@ -5161,7 +5926,13 @@ type WorkerRunState = RunState & {
 	claims?: ClaimCounts;
 	context_policy_code?: string;
 	context_policy_details?: Record<string, unknown>;
-	aborted?: boolean;
+	/** Display-only local observation; never a DP id or an execution proof. */
+	local_reachability?: {
+		source: "worker-local";
+		local_ref: string;
+		choice: "continue" | "investigate" | "terminate";
+		activity: boolean;
+	};
 	reachability?: {
 		decision_id: string | null;
 		choice: "terminate" | "investigate" | null;

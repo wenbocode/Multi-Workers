@@ -32,6 +32,8 @@ import json
 import os
 import pathlib
 import re
+import sys
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
@@ -123,6 +125,7 @@ MACHINE_LINE_NAMES = (
     "transport",
     "model",
     "confidence_source",
+    "decision_source",
 )
 
 _LOGICAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:+@-]{0,127}$")
@@ -1093,11 +1096,155 @@ class SignoffValidation:
             "basis_version": self.basis_version,
             "basis_sha256": self.basis_sha256,
             "native_basis_verified": self.native_basis_verified,
+            "decision_source": self.decision_source,
         }
 
 
 def _invalid(reason: str, **fields: Any) -> SignoffValidation:
     return SignoffValidation(valid=False, reason=reason, **fields)
+
+
+def read_local_signoff_proof(
+    key_dir: pathlib.Path, key: str, proof_id: object, nonce: object = None,
+    *, prepared_snapshot: str | None = None, published_snapshot: str | None = None,
+) -> dict | None:
+    """Read an attestation only from the native pipe of this key's live PM."""
+    if sys.platform != "win32" or not isinstance(proof_id, str) or not re.fullmatch(r"[a-f0-9]{32}", proof_id):
+        return None
+    if nonce is not None and (not isinstance(nonce, str) or not re.fullmatch(r"[a-f0-9]{32}", nonce)):
+        return None
+    snapshot = prepared_snapshot if prepared_snapshot is not None else published_snapshot
+    if prepared_snapshot is not None and published_snapshot is not None:
+        return None
+    if snapshot is not None and (nonce is None or not _SHA256_RE.fullmatch(snapshot)):
+        return None
+    import _winapi
+    from multiprocessing.connection import PipeConnection
+    from autopilot import state
+    from review_observation import _pipe_peer
+
+    rows = [row for row in state.read_index(key_dir.parent.parent) if row.get("key") == key]
+    if len(rows) != 1 or rows[0].get("status") != "active":
+        return None
+    claim = rows[0].get("claim_id") or ""
+    if state.claim_state(claim) != state.CLAIM_LIVE:
+        return None
+    try:
+        pid = int(claim.rsplit(":", 1)[1])
+        if nonce is not None and pid != os.getppid():
+            return None
+        address = rf"\\.\pipe\mw-local-sign-{pid}-{proof_id}"
+        handle = _winapi.CreateFile(
+            address, _winapi.GENERIC_READ | _winapi.GENERIC_WRITE,
+            0, _winapi.NULL, _winapi.OPEN_EXISTING, _winapi.FILE_FLAG_OVERLAPPED, _winapi.NULL,
+        )
+        with PipeConnection(handle) as conn:
+            if _pipe_peer(conn.fileno(), server=True) != pid:
+                return None
+            if prepared_snapshot is not None:
+                request = f"prepare:{nonce}:{prepared_snapshot}\n"
+            elif published_snapshot is not None:
+                request = f"publish:{nonce}:{published_snapshot}\n"
+            else:
+                request = f"write:{nonce}\n" if nonce is not None else "read\n"
+            conn.send_bytes(request.encode("ascii"))
+            data = bytearray()
+            deadline = time.monotonic() + 2
+            while len(data) < 65_536 and conn.poll(max(0, deadline - time.monotonic())):
+                data.extend(conn.recv_bytes(65_536 - len(data)))
+                if data.endswith(b"\n"):
+                    proof = json.loads(data)
+                    if isinstance(proof, dict) and proof.get("key") == key and proof.get("claim_id") == claim:
+                        return proof
+                    return None
+                if time.monotonic() >= deadline:
+                    break
+    except (OSError, EOFError, ValueError, IndexError):
+        return None
+    return None
+
+
+def capture_local_signoff(key_dir: pathlib.Path, key: str, proof_id: str, proof: dict) -> dict:
+    """Bind the private current followup and QG to the native key snapshot."""
+    import decide_signoff
+
+    followup = proof.get("followup")
+    material = proof.get("material")
+    problems = signoff_material_problems(material)
+    if problems:
+        raise SignoffResultError("; ".join(problems))
+    assert isinstance(material, dict)
+    verification = material["verification_evidence"]
+    if (
+        not isinstance(followup, dict)
+        or followup.get("verified_source") != "local"
+        or followup.get("local_progress") != "verified"
+        or not followup.get("qg_refs")
+        or verification["unverified"]
+        or material["unfinished_impact"]
+        or verification["verified"] != followup["qg_refs"]
+    ):
+        raise SignoffResultError("current independent QG or verified followup is incomplete")
+    basis = capture_native_basis(key_dir)
+    if issues := basis_usable_now(basis):
+        raise SignoffResultError("; ".join(issues))
+    facts = decide_signoff.collect(key_dir, key)
+    if not facts.chain_ok:
+        raise SignoffResultError("decision archive chain is broken")
+    closure_evidence = _local_closure_evidence(key_dir, followup)
+    material_sha, evidence_sha = digest_material(material)
+    record = {
+        "record_version": 3,
+        "product_type": PRODUCT_TYPE,
+        "decision_source": "pm-evidence",
+        "key": key,
+        "logical_id": proof_id,
+        "local_ref": followup["ref"],
+        "review_run_id": followup["review_run_id"],
+        "review_artifact_sha256": _check_hash("review_artifact_sha256", followup.get("review_artifact_sha256")),
+        "conclusion": "finalize",
+        "basis_version": basis.version,
+        "basis_sha256": basis.digest(),
+        "material_sha256": material_sha,
+        "evidence_sha256": evidence_sha,
+        "rows_sha256": facts.sha256,
+        "counted_rows": len(facts.rows),
+        "followup_sha256": canonical_sha256(followup),
+        "closure_evidence_sha256": closure_evidence,
+        "claim_id": proof["claim_id"],
+    }
+    record["snapshot_sha256"] = canonical_sha256(record)
+    return record
+
+
+def _local_closure_evidence(key_dir: pathlib.Path, followup: dict) -> str:
+    """Bind the whole-key QG and achieved artifacts to the attested reviewer."""
+    from autopilot import gates
+    from autopilot.conductor import _md_section
+
+    for gate in gates.enumerate(key_dir.parent / "_autopilot" / "gates"):
+        if gate.key == key_dir.name and gate.status == "pending" and gate.authorizes:
+            raise SignoffResultError("current key still has an external authorization gate")
+    ref = followup.get("review_artifact_ref")
+    if not isinstance(ref, str) or not re.fullmatch(r"workers/[\w.-]+/report\.md", ref):
+        raise SignoffResultError("independent review artifact reference is invalid")
+    artifact = _assert_safe_target(key_dir, key_dir / ref)
+    report = _safe_read_text(key_dir, artifact)
+    if hashlib.sha256(artifact.read_bytes()).hexdigest() != followup.get("review_artifact_sha256"):
+        raise SignoffResultError("independent review artifact changed")
+    qg = _md_section(report, "## Quality Gate Report")
+    achieved = _md_section(report, "## Achieved")
+    if not qg or not achieved:
+        raise SignoffResultError("the independent review did not verify whole-key closure")
+    _require_complete_local_qg(key_dir, qg)
+    actual_achieved = _safe_read_text(key_dir, key_dir / "achieved.md")
+    if actual_achieved.rstrip() != achieved.rstrip():
+        raise SignoffResultError("achieved.md does not match the independent closure review")
+    for candidate in sorted((key_dir / "evidence").glob("quality-gate-report-*.md")):
+        text = _safe_read_text(key_dir, candidate)
+        if _md_section(text, "## Quality Gate Report") == qg:
+            return canonical_sha256({"qg": text, "achieved": actual_achieved})
+    raise SignoffResultError("the current reviewed quality-gate report is missing")
 
 
 def _require_complete_local_qg(key_dir: pathlib.Path, report: str) -> None:
@@ -1358,27 +1505,38 @@ def prepare_reviewed_done(key_dir: pathlib.Path, key: str) -> dict:
     raise SignoffResultError(f"no current independent closure review{': ' + detail if detail else ''}")
 
 
-def _validate_reviewed_signoff(
+def _validate_local_signoff(
     key_dir: pathlib.Path, key: str, text: str, lines: dict[str, str],
     expected_logical_id: str | None, expected_snapshot: str | None,
 ) -> SignoffValidation:
     path = str(signoff_path(key_dir))
+    logical_id = lines.get("logical_id")
+    durable = lines.get("record_version") == "4"
     try:
-        current = capture_reviewed_signoff(key_dir, key, lines.get("review_task", ""), lines.get("review_source", ""))
+        if durable:
+            current = capture_reviewed_signoff(key_dir, key, lines.get("review_task", ""), lines.get("review_source", ""))
+            published = True
+        else:
+            proof = read_local_signoff_proof(key_dir, key, logical_id)
+            if proof is None or logical_id is None:
+                return _invalid("current PM evidence attestation is unavailable", path=path)
+            current = capture_local_signoff(key_dir, key, logical_id, proof)
+            published = proof.get("publication_sha256") == current["snapshot_sha256"]
         matches = local_signoff_matches_disk(key_dir, current, text)
     except (OSError, ValueError, RuntimeError) as exc:
         return _invalid(str(exc), path=path)
     if (
         not matches
-        or (expected_logical_id is not None and current["logical_id"] != expected_logical_id)
+        or not published
+        or (expected_logical_id is not None and logical_id != expected_logical_id)
         or (expected_snapshot is not None and current["snapshot_sha256"] != expected_snapshot)
     ):
-        return _invalid("reviewed evidence no longer matches the signed product", path=path)
+        return _invalid("PM evidence snapshot no longer matches the signed product", path=path)
     return SignoffValidation(
-        valid=True, reason="", path=path, logical_id=current["logical_id"], conclusion="finalize",
+        valid=True, reason="", path=path, logical_id=logical_id, conclusion="finalize",
         snapshot_sha256=current["snapshot_sha256"], evidence_sha256=current["evidence_sha256"],
         material_sha256=current["material_sha256"], basis_version=current["basis_version"],
-        basis_sha256=current["basis_sha256"], record_version=4, product_type=PRODUCT_TYPE,
+        basis_sha256=current["basis_sha256"], record_version=current["record_version"], product_type=PRODUCT_TYPE,
         file_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         native_basis_verified=True, decision_source="pm-evidence",
     )
@@ -1430,8 +1588,8 @@ def validate_signoff(
         return _invalid(str(exc), path=str(path))
     file_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
     lines = parse_machine_lines(text)
-    if lines.get("record_version") == "4" and lines.get("decision_source") == "pm-evidence":
-        return _validate_reviewed_signoff(
+    if lines.get("decision_source") == "pm-evidence":
+        return _validate_local_signoff(
             pathlib.Path(key_dir), key or pathlib.Path(key_dir).name, text, lines,
             expected_logical_id, expected_snapshot,
         )
@@ -1681,6 +1839,7 @@ class KeySignoffValidation:
     closes_stage: bool = False
     second_approval: int = 0
     problems: tuple[str, ...] = ()
+    decision_source: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1705,6 +1864,7 @@ class KeySignoffValidation:
             "closes_stage": self.closes_stage,
             "second_approval": self.second_approval,
             "problems": list(self.problems),
+            "decision_source": self.decision_source,
         }
 
 
@@ -1762,6 +1922,7 @@ def validate_key_signoff(
         "record_version": validation.record_version,
         "basis_sha256": validation.basis_sha256,
         "native_basis_verified": validation.native_basis_verified,
+        "decision_source": validation.decision_source,
     }
     if not validation.valid:
         return _key_signoff_invalid(key, validation.reason, **common)
@@ -1807,6 +1968,11 @@ def validate_key_signoff(
     if current_digest != validation.evidence_sha256:
         return _key_signoff_invalid(
             key, "current evidence does not match the signed evidence", **common
+        )
+    if validation.decision_source == "pm-evidence":
+        return KeySignoffValidation(
+            product_type=PRODUCT_TYPE, valid=True, reason="", key=key,
+            signs_key=True, writes_signoff=True, **common,
         )
     try:
         record = read_result(key_dir, validation.logical_id or "")

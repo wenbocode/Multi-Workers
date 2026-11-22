@@ -141,6 +141,17 @@ def timestamp(value: object) -> datetime | None:
     return None
 
 
+def run_progress(folder: Path, run_id: object) -> dict | None:
+    file = folder / "run-progress.json"
+    try:
+        if not isinstance(run_id, str) or not file.is_file() or local(file).stat().st_size > 64 * 1024:
+            return None
+        progress = json.loads(body(file))
+        return progress if isinstance(progress, dict) and progress.get("run_id") == run_id else None
+    except (OSError, ValueError):
+        return None
+
+
 def run_facts(key_dir: Path, task: str, status: str) -> dict:
     folder = local(key_dir / "workers" / identifier(task))
     try:
@@ -155,6 +166,16 @@ def run_facts(key_dir: Path, task: str, status: str) -> dict:
     started, ended = raw.get("started_at"), raw.get("ended_at")
     rid = raw.get("run_id")
     category = status
+    deadline = (
+        status == raw.get("status") == "failed"
+        and raw.get("stop_kind") == "worker-deadline"
+        and raw.get("task_key") == task
+        and raw.get("owner_key") == key_dir.name
+        and isinstance(rid, str) and rid.startswith(task + "@")
+        and timestamp(rid.partition("@")[2]) is not None
+    )
+    if deadline:
+        category = "wall-timeout"
     elapsed = None
     start, end = timestamp(started), timestamp(ended)
     if start and end and end >= start:
@@ -187,10 +208,13 @@ def run_facts(key_dir: Path, task: str, status: str) -> dict:
                     stream.seek(max(0, log.stat().st_size - 4096))
                     if b"[launcher] spawn failed" in stream.read(4096):
                         category = "spawn-failed"
+    progress = run_progress(folder, rid) if deadline else None
     return {"task": task, "run_id": rid, "status": status, "category": category,
+            **({"stop_kind": "worker-deadline", "progress_digest": digest(progress) if progress else None}
+               if deadline else {}),
             "elapsed_seconds": elapsed, "timeout_minutes": timeout,
             "card": card, "started": started, "ended": ended,
-            "artifacts": [p for p in ("output.md", "report.md", "progress.md", "run.json", "trace.log")
+            "artifacts": [p for p in ("output.md", "report.md", "progress.md", "run-progress.json", "run.json", "trace.log")
                           if (folder / p).is_file()], "output_digest": digest(output),
             "exit_reason": output.partition("## Exit Reason")[2].split("\n## ")[0].strip()[:1600]}
 
@@ -326,10 +350,7 @@ def text_list(value: object) -> bool:
 
 def plan_face(project: Path, markdown: str):
     entries = cards._card_write_face_entries({"extras": cards.extract_card_extras(markdown)})
-    roots = cards.write_face_roots(project)
-    return write_face.parse_write_face(cards.render_write_face_line(entries or []), base=str(project),
-                                       roots=roots, case_insensitive=os.name == "nt",
-                                       canonicalize=cards.canonical_write_face_path if roots else None)
+    return cards.parse_workspace_write_face(project, cards.render_write_face_line(entries or []))
 
 
 def preview(project: Path, key_dir: Path, current: dict, plan: dict) -> dict:
@@ -380,7 +401,7 @@ def preview(project: Path, key_dir: Path, current: dict, plan: dict) -> dict:
         graph[stem] = set(unit["depends_on"])
         faces[stem] = plan_face(project, md)
         if isinstance(faces[stem], write_face.Refused):
-            raise ValueError(f"{stem}: invalid write face")
+            raise ValueError(f"{stem}: invalid write face: {faces[stem].code}: {faces[stem].detail}")
         resources[stem] = unit.get("resources")
         coverage.update(unit["covers"])
     structured = current["closure"] or any(not item.startswith("AC-") for item in current["coverage"])
@@ -433,9 +454,7 @@ def preview(project: Path, key_dir: Path, current: dict, plan: dict) -> dict:
                        if r["state"] == "applied" for u in r["plan"]["units"]}
     for live in current["live_workers"]:
         head = body(key_dir / "workers" / identifier(live) / "task.md")
-        roots = cards.write_face_roots(project)
-        face = write_face.parse_write_face(head, base=str(project), case_insensitive=os.name == "nt",
-                                           roots=roots, canonicalize=cards.canonical_write_face_path if roots else None)
+        face = cards.parse_workspace_write_face(project, head)
         held = known_resources.get(card_identity(mw_common.read_task_header_scalar(head, "card_path") or ""))
         for stem in ordered:
             if (not isinstance(face, write_face.WriteFace) or not isinstance(faces[stem], write_face.WriteFace)
@@ -578,8 +597,13 @@ def execute(project: Path, req: dict) -> dict:
             worker = key_dir / "workers" / facts["task"]
             references = {name: worker / name for name in facts.get("artifacts", [])}
             references.update({"card": key_dir / facts["card"], "task.md": worker / "task.md"})
+            progress = run_progress(worker, facts.get("run_id"))
+            if progress is None:
+                references.pop("run-progress.json", None)
             return {"issue": result["issue"], "snapshot": result["snapshot"], "state": result["state"],
-                    "facts": {field: facts[field] for field in ("task", "status", "category")},
+                    "facts": {field: facts[field] for field in ("task", "status", "category", "run_id", "stop_kind")
+                              if field in facts},
+                    **({"progress": progress} if progress is not None else {}),
                     "acceptance": result["acceptance"], "coverage": result["coverage"],
                     "evidence_refs": {name: file.relative_to(project).as_posix()
                                       for name, file in references.items() if file.is_file() and file.resolve() == file}}
@@ -704,6 +728,192 @@ def unit_dependencies(by_card: dict, record: dict, unit: dict) -> set[str]:
     return dependencies
 
 
+def deadline_successor(project: Path, owner: str, task: str, card_ref: str, pin: str, parent: str) -> dict:
+    """Verify a frozen PM replan against the exact timed-out run and its live claim."""
+    key_dir = local(project / ".agenticdoc" / identifier(owner))
+    if identifier(task) == parent.partition("@")[0]:
+        raise ValueError("deadline successor must use a new task")
+    source_task = identifier(parent.partition("@")[0])
+    card = source_card(key_dir, card_ref)
+    markdown = body(card)
+    if (not markdown or cards.card_digest(card) != pin
+            or mw_common.read_task_header_scalar(markdown, "parent_worker_run") != parent):
+        raise ValueError("deadline successor card or parent pin changed")
+    rows = worker_rows(project, owner)
+    old = next((r for r in rows if r["task_key"] == source_task and r["status"] == "failed"), None)
+    if old is None or Path(old["task_path"]).resolve() != key_dir / "workers" / source_task / "task.md":
+        raise ValueError("deadline source has no failed queue row")
+    source = run_facts(key_dir, source_task, "failed")
+    source["dispatch_time"] = old.get("dispatched_at")
+    if source.get("stop_kind") != "worker-deadline" or source.get("run_id") != parent:
+        raise ValueError("deadline source identity changed")
+    seen = {task}
+    ancestor = parent
+    while ancestor:
+        ancestor_task = identifier(ancestor.partition("@")[0])
+        if ancestor_task in seen:
+            raise ValueError("invalid deadline successor ancestry")
+        seen.add(ancestor_task)
+        folder = key_dir / "workers" / ancestor_task
+        run = json.loads(body(folder / "run.json"))
+        if run.get("run_id") != ancestor or run.get("owner_key") != owner or run.get("task_key") != ancestor_task:
+            raise ValueError("deadline successor ancestor identity changed")
+        if run.get("aborted") is True or run.get("status") in {"canceled", "stopped", "failed-by-stop"}:
+            raise ValueError(f"parent-cancel: {ancestor}")
+        envelope_parent = mw_common.read_task_header_scalar(body(folder / "task.md"), "parent_worker_run")
+        if "parent_worker_run" in run and run["parent_worker_run"] != envelope_parent:
+            raise ValueError("deadline successor ancestor binding changed")
+        ancestor = envelope_parent
+    matches = [(record, unit) for record in records(key_dir) if record.get("state") == "applied"
+               and record.get("key") == owner and record.get("source") == source
+               for unit in record["plan"]["units"] if card_ref == f"tasks/{unit['id']}.md"]
+    if len(matches) != 1:
+        raise ValueError("deadline successor requires an applied replan for this run and card")
+    record, unit = matches[0]
+    current = source_context(key_dir, source)
+    if markdown != card_text(record, unit) or current["snapshot"] != record["snapshot"]:
+        raise ValueError("deadline successor card or source evidence changed")
+    proofs = retained_proof(project, key_dir, {**current, "facts": source}, record["plan"].get("retained", {}))
+    version_fields = [record["id"], current["snapshot"], record["plan"]]
+    if proofs:
+        version_fields.append(proofs)
+    version = digest(version_fields)
+    if record["version"] != version or record["plan"]["action"] not in {"narrow", "split"}:
+        raise ValueError("deadline successor plan version changed")
+    decision_ref = record["decision_id"]
+    action = record["plan"]["action"]
+    _, events = decision(project, owner, source, {"action": action, "basis_id": "replan-" + version[:24]}, decision_ref)
+    index = [r for r in state.read_index(project) if r["key"].casefold() == owner.casefold()]
+    if (len(index) != 1 or index[0]["key"] != owner or index[0]["status"] != "active"
+            or index[0]["phase"] != "EXECUTE"):
+        raise ValueError("deadline successor requires a current PM claim in EXECUTE")
+    claim = index[0]["claim_id"]
+    if not claim or claim in {"—", "-"}:
+        raise ValueError("deadline successor PM claim is unavailable")
+    for stage, prefix in (("executed", "replan-exec-"), ("settled", "replan-settle-")):
+        if sum(e.get("kind") == "lifecycle" and e.get("lifecycle") == stage
+               and e.get("actor") == {"kind": "system", "id": "pm:" + claim}
+               and e.get("event_id") == prefix + version[:24]
+               for e in events) != 1:
+            raise ValueError("deadline successor PM decision receipt is missing or belongs to another claim")
+    return {"project": str(project), "key": owner, "parent": parent, "decision": decision_ref,
+            "version": version, "claim": claim}
+
+
+def deadline_budget(project: Path, owner: str, task: str, card_ref: str, pin: str,
+                    approval: dict, envelope: str) -> dict:
+    """Read the fixed allocation and recheck the PM authority and durable budget event."""
+    if not re.fullmatch(r"[0-9a-f]{64}", pin):
+        raise ValueError("invalid deadline successor card pin")
+    root = project / ".agenticdoc"
+    file = local(root / "_runtime" / "fixed-child-budgets" / owner / f"deadline-{pin}.json")
+    child_run = local(root / owner / "workers" / identifier(task) / "run.json")
+    if (Path(str(file) + ".cancelled")).exists():
+        raise ValueError("user-stop: deadline successor allocation cancelled")
+    if not file.is_file() or local(Path(str(file) + ".started")).exists() or child_run.exists():
+        raise ValueError("deadline successor allocation is missing or already started")
+    grant = json.loads(body(file))
+    if (grant.get("approval") != approval or grant.get("task") != task or grant.get("card") != card_ref
+            or grant.get("pin") != pin):
+        raise ValueError("deadline successor allocation binding mismatch")
+    now = datetime.now().astimezone()
+    deadline = timestamp(grant["deadline"])
+    if (deadline is None or now >= deadline or type(grant.get("steps")) is not int or grant["steps"] < 1
+            or type(grant.get("cost")) is not int or grant["cost"] < grant["steps"]):
+        raise ValueError("deadline successor allocation expired or invalid")
+    authority = grant["authority"]
+    channel = local(Path(authority["channel"]))
+    channel_id = hashlib.sha256(os.path.normcase(str(project)).encode("utf-8")).hexdigest()
+    if channel != Path.home().resolve() / ".mw-pm-channel" / channel_id:
+        raise ValueError("deadline successor channel belongs to another project")
+    request_path, receipt_path = (local(channel / authority[name]) for name in ("request", "receipt"))
+    if (not request_path.is_relative_to(channel) or not receipt_path.is_relative_to(channel)
+            or request_path.parent != receipt_path.parent
+            or request_path.name != f"{authority['event_id']}.request.json"
+            or receipt_path.name != f"{authority['event_id']}.receipt.json"):
+        raise ValueError("deadline successor channel references are invalid")
+    request_bytes = deadline_authority_path(request_path).read_bytes()
+    if hashlib.sha256(request_bytes).hexdigest() != authority["request_sha256"]:
+        raise ValueError("deadline successor stage request changed")
+    request = json.loads(request_bytes)
+    receipt = json.loads(deadline_authority_path(receipt_path).read_bytes())
+    binding = request["binding"]
+    for record in (request, receipt):
+        if (record.get("id") != authority["event_id"] or record.get("key") != owner
+                or record.get("claim") != approval["claim"] or record.get("binding") != binding):
+            raise ValueError("deadline successor stage binding changed")
+    stage = request["stage"]
+    stage_deadline = timestamp(stage["deadline"])
+    if (stage.get("project_ref") != channel_id or stage.get("key") != owner
+            or stage.get("card_path") != authority["stage_card"] or stage.get("card_sha256") != authority["stage_pin"]
+            or receipt.get("state") != "started" or receipt.get("session") != authority["session_id"]
+            or receipt.get("stage_digest") != authority["grant_digest"] or stage_deadline is None
+            or deadline > stage_deadline or grant["steps"] > stage["max_steps"]
+            or grant["cost"] > stage["remaining_cost"]):
+        raise ValueError("deadline successor PM stage revoked or exhausted")
+    child_card = body(source_card(root / owner, card_ref))
+    targets = cards._card_write_face_entries({"extras": cards.extract_card_extras(child_card)})
+    if targets is None or not set(targets) <= set(stage["write_face"]):
+        raise ValueError("deadline successor write scope exceeds the authorized PM stage")
+    if cards.parse_workspace_write_face(project, envelope) != plan_face(project, child_card):
+        raise ValueError("deadline successor envelope write scope differs from its frozen card")
+    if "duty" in request:
+        duty = request["duty"]
+        shift = duty["shift"]
+        if not isinstance(shift, str) or not re.fullmatch(r"[a-z0-9-]{1,80}", shift):
+            raise ValueError("invalid deadline successor duty reference")
+        folder = local(root / owner / "duty" / shift)
+        current = local(folder / "current.json")
+        stop_hash = hashlib.sha256(current.read_bytes()).hexdigest() if current.is_file() else "missing"
+        if (now.timestamp() * 1000 >= duty["until"] or (folder / "STOP").exists() or stop_hash != duty["stopHash"]):
+            raise ValueError("user-stop: deadline successor duty revoked")
+    stage_card = local(root / owner / authority["stage_card"])
+    if (not stage_card.is_relative_to(root / owner / "tasks") or not stage_card.is_file()
+            or cards.card_digest(stage_card) != authority["stage_pin"]):
+        raise ValueError("deadline successor PM stage card changed")
+    session = deadline_authority_path(local(Path(authority["session"])))
+    if session.stat().st_size > 64 * 1024 * 1024:
+        raise ValueError("deadline successor budget journal exceeds read bound")
+    reservation = "deadline:" + json.dumps([owner, pin], separators=(",", ":"))
+    reservations = []
+    with session.open(encoding="utf-8") as lines:
+        header = json.loads(next(lines, "{}"))
+        if header.get("type") != "session" or header.get("id") != authority["session_id"]:
+            raise ValueError("deadline successor budget session changed")
+        for line in lines:
+            point = json.loads(line)
+            if point.get("type") != "custom" or point.get("customType") != "mw-runtime-budget-v1":
+                continue
+            data = point["data"]
+            if data.get("unit") != authority["unit"] or data.get("kind") != "event":
+                continue
+            event = data["event"]
+            reserved = event["request"]
+            if reserved.get("reservation_id") != reservation:
+                continue
+            if (data.get("key") != owner or data.get("claim_id") != approval["claim"]
+                    or data.get("source_pin") != authority["stage_pin"] or event.get("kind") != "reserve-child"):
+                raise ValueError("deadline successor budget reservation changed or settled")
+            reservations.append(reserved)
+    if (len(reservations) != 1 or reservations[0].get("deadline") != grant["deadline"]
+            or reservations[0].get("cost") != grant["cost"]
+            or min(reservations[0]["steps"], reservations[0]["cost"]) != grant["steps"]):
+        raise ValueError("deadline successor budget reservation is missing or mismatched")
+    return {"steps": grant["steps"], "deadline": grant["deadline"]}
+
+
+def deadline_authority_path(file: Path) -> Path:
+    # Channel paths include a project hash and two UUIDs. A long profile path
+    # can exceed Win32 MAX_PATH even when the files were created by Node.
+    if os.name != "nt" or len(str(file)) < 260:
+        return file
+    absolute = str(file)
+    prefix = "\\\\?\\"
+    if absolute.startswith("\\\\"):
+        return Path(prefix + "UNC\\" + absolute[2:])
+    return Path(prefix + absolute)
+
+
 def admission(project: Path, owner: str, task: str, ref: str, *, attempt: int = 1,
               card_hash: str | None = None, supersedes: str | None = None) -> str | None:
     """Called under workers.lock before any dispatch writes. No nested lock."""
@@ -803,6 +1013,12 @@ def main() -> None:
             reason = admission(project, req["key"], req["task"], req["card"], card_hash=req.get("card_hash"),
                                supersedes=req.get("supersedes"))
             result = {"ok": reason is None, "reason": reason}
+        elif req["operation"] == "deadline-successor":
+            result = {"ok": True, "approval": deadline_successor(
+                project, req["key"], req["task"], req["card"], req["card_hash"], req["parent"])}
+            if req.get("budget") is True:
+                result["allocation"] = deadline_budget(
+                    project, req["key"], req["task"], req["card"], req["card_hash"], result["approval"], req["envelope"])
         else:
             result = {"ok": True, **execute(project, req)}
     except (OSError, ValueError, KeyError, TypeError, RuntimeError, CycleError) as exc:

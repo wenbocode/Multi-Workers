@@ -570,6 +570,9 @@ class DecisionConfig:
 # ---------------------------------------------------------------------------
 
 _CRED_ENV_SUFFIXES = ("_API_KEY", "_TOKEN", "_KEY", "_SECRET", "_PASSWORD")
+# In prose, "Bearer header" can run directly into Chinese text. Exempt only
+# the complete terminology (and its historical placeholder). An explicit
+# Authorization assignment must still redact every value, including "header".
 _BEARER_RE = re.compile(
     r"""
     (

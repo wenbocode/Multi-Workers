@@ -726,6 +726,8 @@ def write_signoff(
     project_dir: pathlib.Path | str,
     key: str,
     text: str,
+    *,
+    replace: bool = True,
 ) -> pathlib.Path:
     """Write ``<key>/evidence/review/sign-final.md`` (parents created, atomic).
 
@@ -748,4 +750,4 @@ def write_signoff(
             raise SignoffError(
                 "refusing to write a key sign-off that is not finalize"
             )
-    return decision_signoff_result.write_signoff_text(key_dir(project_dir, key), text)
+    return decision_signoff_result.write_signoff_text(key_dir(project_dir, key), text, replace=replace)

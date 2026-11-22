@@ -184,9 +184,6 @@ def extract_contract(spec_text: str, design_text: str) -> ContractIdentity:
     )
 
 
-# --- Freeze sidecar -----------------------------------------------------------
-
-
 def function_flow_identities(design_text: str) -> dict[str, str]:
     """Hash the original Function Flow row for each ID before later cross-references."""
     entries: dict[str, str] = {}
@@ -1186,11 +1183,14 @@ def contract_publication_lock(key_dir: pathlib.Path | str):
     """Serialize H08 adoption and current proof publication; never transport."""
     key_dir = pathlib.Path(key_dir).resolve()
     path = key_dir.parent.parent / ".mw" / f"contract-publication-{key_dir.name}.lock"
-    mw_common.acquire_lock(path, retries=600, base_delay=0.01, deadline_s=30)
+    fd = mw_common.acquire_lock(path, retries=600, base_delay=0.01, deadline_s=30, delete_on_close=os.name == "nt")
     try:
         yield
     finally:
-        mw_common.release_lock(path)
+        if fd is None:
+            mw_common.release_lock(path)
+        else:
+            os.close(fd)
 
 
 def adoption_log_path(key_dir: pathlib.Path | str) -> pathlib.Path:

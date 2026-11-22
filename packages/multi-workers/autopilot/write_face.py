@@ -583,6 +583,7 @@ def _compile_normalized(norm: str) -> tuple[list[CompiledGlob] | None, str | Non
 def _normalize_entry(
     raw: str, *, base: str, case_insensitive: bool, roots: Sequence[str] | None = None,
     canonicalize: Callable[[str], str] | None = None,
+    external_root: Callable[[str], str | None] | None = None,
 ) -> tuple[list[CompiledGlob] | None, str | None, str | None]:
     """Normalize + compile one entry.
 
@@ -614,9 +615,9 @@ def _normalize_entry(
              if _to_relative(absolute, value, case_insensitive) is not None),
             key=len, reverse=True,
         )
-        if not matches:
+        root = matches[0] if matches else external_root(absolute) if external_root else None
+        if root is None:
             return None, None, WRITE_FACE_OUTSIDE_BASE
-        root = matches[0]
         entry = _to_relative(absolute, root, case_insensitive) or ""
     elif _is_absolute(entry):
         rel = _to_relative(entry, base, case_insensitive)
@@ -714,8 +715,10 @@ def _glob_intersects(glob: CompiledGlob, protected: CompiledGlob, ci: bool) -> b
 def parse_write_face(
     text: str, *, base: str, case_insensitive: bool = False, roots: Sequence[str] | None = None,
     canonicalize: Callable[[str], str] | None = None,
+    external_root: Callable[[str], str | None] | None = None,
     read_only_roots: Sequence[str] = (),
     read_only_allowed_roots: Sequence[str] = (),
+    read_only_allows: Callable[[str, str], bool] | None = None,
 ) -> WriteFace | ParseResult:
     """Parse the `write_face:` head of a task.md.
 
@@ -761,7 +764,8 @@ def parse_write_face(
     # - the verdict is therefore independent of the entry order.
     for raw in raw_entries:
         entry_globs, norm, refusal = _normalize_entry(
-            raw, base=base, case_insensitive=case_insensitive, roots=roots, canonicalize=canonicalize
+            raw, base=base, case_insensitive=case_insensitive, roots=roots, canonicalize=canonicalize,
+            external_root=external_root,
         )
         if refusal is not None:
             return Refused(refusal, detail=f"entry {raw!r}", entry=raw)
@@ -778,7 +782,8 @@ def parse_write_face(
         raw_deny = list(deny_head.block) if deny_head.block is not None else _split_single_line(deny_head.value)
         for raw in raw_deny:
             _, norm, refusal = _normalize_entry(
-                raw, base=base, case_insensitive=case_insensitive, roots=roots, canonicalize=canonicalize
+                raw, base=base, case_insensitive=case_insensitive, roots=roots, canonicalize=canonicalize,
+                external_root=external_root,
             )
             if refusal is not None:
                 return Refused(refusal, detail=f"deny entry {raw!r}", entry=raw)
@@ -812,7 +817,9 @@ def parse_write_face(
                 if not _glob_intersects(glob, protected, case_insensitive):
                     continue
                 if not any(_literal_prefix(glob.segments, allowed, case_insensitive)
-                           for allowed in allowed_prefixes):
+                           for allowed in allowed_prefixes) and not (
+                    read_only_allows and read_only_allows(root, glob.entry)
+                ):
                     return Refused(WRITE_FACE_READ_ONLY, detail=f"read-only root '{root}'")
     return face
 

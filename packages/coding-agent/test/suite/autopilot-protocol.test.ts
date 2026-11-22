@@ -35,6 +35,7 @@ import { WorkerStore } from "../../src/extensions/agent-team-loop/shared/worker-
 import { goalMtime } from "../../src/extensions/agent-team-loop/worker/phase-runner.ts";
 import { WORKER_FILE_TOOL } from "../../src/extensions/agent-team-loop/worker/worker-file-tool.ts";
 import { parseTaskMd, workerModeActivate } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
+import { WORKER_PROGRESS_TOOL } from "../../src/extensions/agent-team-loop/worker/worker-progress-tool.ts";
 
 function mkdtemp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "ap-proto-"));
@@ -78,7 +79,8 @@ const PY_CODING_TOOLS = ["read", "write", "edit", "bash", "find", "grep", "ls"];
  * worker_file for writeless roles + mw_run_detached for bash-carrying roles
  * (commit 4980da301; deliberately outside TOOL_ALLOWLISTS / PY_REGISTRY). */
 function active(base: string[]): string[] {
-	let tools = base.includes("write") ? base : [...base, WORKER_FILE_TOOL];
+	let tools = [...base, WORKER_PROGRESS_TOOL];
+	if (!base.includes("write")) tools.push(WORKER_FILE_TOOL);
 	if (base.includes("bash")) tools = [...tools, MW_RUN_DETACHED_TOOL];
 	return tools;
 }
@@ -160,7 +162,7 @@ describe("dispatchNewTasks origin skip (D-104 / VC-023)", () => {
 		const raw = fs.readFileSync(path.join(root, "_workers.parallel"), "utf8");
 		expect(raw).not.toContain("ap-goal-ap-t99");
 		expect(raw).not.toContain("ap-goal-ap-crlf");
-		fs.rmSync(root, { recursive: true, force: true });
+		fs.rmSync(project, { recursive: true, force: true });
 	});
 
 	it("D-104: an owner with only conductor tasks burns no docs-gate warning", async () => {
@@ -251,17 +253,17 @@ describe("typed tool allowlists (D-107 / VC-023)", () => {
 	it("VC-023: the 5 autopilot types resolve to per-type tool sets exactly equal to the Python REGISTRY", async () => {
 		const root = mkdtemp();
 		const cases: Array<{ type: string; expected: string[]; extra?: string[] }> = [
-			{ type: "roadmap-writer", expected: PY_REGISTRY["roadmap-writer"] },
+			{ type: "roadmap-writer", expected: active(PY_REGISTRY["roadmap-writer"]) },
 			{ type: "phase-writer", expected: active(PY_REGISTRY["phase-writer"]) },
 			// Read-only types additionally carry the narrow write channel
 			// (D-101/D-104/D-106): the Python REGISTRY tuples stay unchanged, so
 			// the parity assertion is the Python set plus the TS-only worker_file.
 			{
 				type: "verifier",
-				expected: [...PY_REGISTRY.verifier, WORKER_FILE_TOOL],
+				expected: active(PY_REGISTRY.verifier),
 				extra: ["read_scope:", "  - .agenticdoc/goal.md"],
 			},
-			{ type: "reviewer", expected: [...PY_REGISTRY.reviewer, WORKER_FILE_TOOL] },
+			{ type: "reviewer", expected: active(PY_REGISTRY.reviewer) },
 			{ type: "repair", expected: active(PY_REGISTRY.repair) },
 		];
 		try {
@@ -357,7 +359,7 @@ describe("typed tool allowlists (D-107 / VC-023)", () => {
 		try {
 			const cases: Array<{ taskKey: string; md: string; expected: string[] }> = [
 				{ taskKey: "m-coding", md: "type: coding\n\nwork\n", expected: active(PY_CODING_TOOLS) },
-				{ taskKey: "m-review", md: "type: review\n\nwork\n", expected: [...PY_REVIEW_TOOLS, WORKER_FILE_TOOL] },
+				{ taskKey: "m-review", md: "type: review\n\nwork\n", expected: active(PY_REVIEW_TOOLS) },
 				{
 					taskKey: "m-research",
 					md: "type: research\n\nwork\n",
@@ -379,7 +381,7 @@ describe("typed tool allowlists (D-107 / VC-023)", () => {
 			// contract for unmarked tasks is unchanged).
 			const { worker } = await activateWorker(root, "goal-ap", "m-verifier", "type: verifier\n\nwork\n");
 			worker.emit("before_agent_start");
-			expect(worker.activeTools()).toEqual([...PY_REVIEW_TOOLS, WORKER_FILE_TOOL]);
+			expect(worker.activeTools()).toEqual(active(PY_REVIEW_TOOLS));
 			expect(exitSpy).not.toHaveBeenCalled();
 		} finally {
 			exitSpy.mockRestore();

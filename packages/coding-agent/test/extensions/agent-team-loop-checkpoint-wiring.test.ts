@@ -32,6 +32,13 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { MW_RUN_DETACHED_TOOL } from "../../src/extensions/agent-team-loop/shared/run-detached.ts";
+import {
+	PROGRESS_STALE_MS,
+	RUN_PROGRESS_FILE,
+	readRunProgress,
+	recordRunProgress,
+} from "../../src/extensions/agent-team-loop/shared/run-progress.ts";
+import { readRunState } from "../../src/extensions/agent-team-loop/shared/run-store.ts";
 import { appendProgressLine } from "../../src/extensions/agent-team-loop/worker/output-writer.ts";
 import { WORKER_FILE_TOOL } from "../../src/extensions/agent-team-loop/worker/worker-file-tool.ts";
 import {
@@ -40,6 +47,7 @@ import {
 	toolsForType,
 	workerModeActivate,
 } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
+import { WORKER_PROGRESS_TOOL } from "../../src/extensions/agent-team-loop/worker/worker-progress-tool.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 
 function verify(line: string): void {
@@ -314,7 +322,8 @@ describe("checkpoint steer role split (VC-004)", () => {
  * base carries `bash` (spawn surface; deliberately outside the frozen
  * TOOL_ALLOWLISTS table — see worker-mode.ts and commit 4980da301). */
 function expectedActiveTools(base: string[]): string[] {
-	let tools = base.includes("write") ? base : [...base, WORKER_FILE_TOOL];
+	let tools = [...base, WORKER_PROGRESS_TOOL];
+	if (!base.includes("write")) tools.push(WORKER_FILE_TOOL);
 	if (base.includes("bash")) tools = [...tools, MW_RUN_DETACHED_TOOL];
 	return tools;
 }
@@ -365,10 +374,14 @@ interface ToolResultLike {
 
 /** Boot a real AgentSession whose only extension is worker-mode, anchored at a
  * temp task dir (type: review → worker_file registered + active). */
-async function createWorkerHarness(root: string, taskKey: string): Promise<{ harness: Harness; taskDir: string }> {
+async function createWorkerHarness(
+	root: string,
+	taskKey: string,
+	role = "review",
+): Promise<{ harness: Harness; taskDir: string }> {
 	const taskDir = path.join(root, "key-a", "workers", taskKey);
 	fs.mkdirSync(taskDir, { recursive: true });
-	fs.writeFileSync(path.join(taskDir, "task.md"), "type: review\n\nreview\n", "utf8");
+	fs.writeFileSync(path.join(taskDir, "task.md"), `type: ${role}\n\nreview\n`, "utf8");
 	process.env.PI_WORKER_TASK = path.join(taskDir, "task.md");
 	const harness = await createHarness({
 		extensionFactories: [
@@ -393,6 +406,79 @@ function resultText(result: ToolResultLike): string {
 		.map((part) => part.text)
 		.join("\n");
 }
+
+describe("run-scoped Worker progress", () => {
+	it.each(["coding", "review"])("%s reports a milestone with evidence", async (role) => {
+		const root = path.join(mkdtemp(), ".agenticdoc");
+		const { harness, taskDir } = await createWorkerHarness(root, "progress-case", role);
+		const evidence = ".agenticdoc/key-a/workers/progress-case/report.md";
+		fs.writeFileSync(path.join(taskDir, "report.md"), "AC-001 PASS");
+		const milestone = {
+			completed: [{ acceptance: "AC-001", evidence }],
+			current: "Checking output",
+			remaining: "AC-002",
+			blocker: "",
+			next: "Run verification",
+		};
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall(WORKER_PROGRESS_TOOL, milestone)], { stopReason: "toolUse" }),
+			fauxAssistantMessage(
+				[
+					fauxToolCall(WORKER_PROGRESS_TOOL, {
+						...milestone,
+						completed: [{ acceptance: "AC-002", evidence: "../outside.md" }],
+					}),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("Done"),
+		]);
+		await harness.session.prompt("Record progress");
+		const runId = readRunState(taskDir)?.run_id ?? "";
+		const snapshot = readRunProgress(taskDir, runId);
+		expect(snapshot).toMatchObject({ status: "current", run_id: runId, milestone });
+		expect(readRunProgress(taskDir, runId, Date.now() + PROGRESS_STALE_MS)).toMatchObject({ status: "stale" });
+		expect(readRunProgress(taskDir, "different-run")).toEqual({ status: "other-run" });
+		expect(
+			harness.session.messages.flatMap((message) =>
+				message.role === "toolResult" && message.toolName === WORKER_PROGRESS_TOOL ? [message.isError] : [],
+			),
+		).toEqual([false, true]);
+	});
+
+	it("reports in-flight activity separately and preserves it at the wall deadline", async () => {
+		const root = mkdtemp();
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+		vi.useFakeTimers();
+		try {
+			const { taskDir, worker } = await startWorker(root, "t-live", "type: review\ntimeout: 1\n\nreview\n");
+			const runId = readRunState(taskDir)?.run_id ?? "";
+			worker.emit("tool_execution_start", { toolCallId: "held", toolName: "read", args: { path: "report.md" } });
+			await vi.advanceTimersByTimeAsync(10_000);
+			worker.emit("tool_execution_update", { toolCallId: "held" });
+			expect(readRunProgress(taskDir, runId)).toMatchObject({
+				status: "missing",
+				activity: { source: "tool_update", tools: [{ name: "read" }] },
+			});
+			const milestone = {
+				at: new Date().toISOString(),
+				completed: [],
+				current: "Reading report",
+				remaining: "Validate AC-001",
+				blocker: "",
+				next: "Compare the report with the expected output",
+			};
+			expect(recordRunProgress(taskDir, runId, { milestone })).toBe(true);
+			await vi.advanceTimersByTimeAsync(50_000);
+			expect(readRunState(taskDir)).toMatchObject({ status: "failed", stop_kind: "worker-deadline", run_id: runId });
+			expect(readRunProgress(taskDir, runId)).toMatchObject({ milestone, activity: { tools: [{ name: "read" }] } });
+			expect(recordRunProgress(taskDir, runId, { milestone })).toBe(false);
+		} finally {
+			vi.useRealTimers();
+			exitSpy.mockRestore();
+		}
+	});
+});
 
 describe("worker_file trace evidence (VC-005/VC-006)", () => {
 	it("VC-005: a legal call appends to progress.md and lands [TOOL] worker_file in trace.log", async () => {
@@ -476,7 +562,7 @@ describe("worker_file trace evidence (VC-005/VC-006)", () => {
 		// agent_end, so the raw directory set is not compared.)
 		expect(fs.readFileSync(path.join(taskDir, "task.md"), "utf8")).toBe("type: review\n\nreview\n");
 		const after = fs.readdirSync(taskDir).sort();
-		expect(after.filter((name) => name !== "output.md")).toEqual(before);
+		expect(after.filter((name) => name !== "output.md" && name !== RUN_PROGRESS_FILE)).toEqual(before);
 		verify("[VERIFY] VC-006: schema_rejection_ok=true tool_err_line=true");
 	});
 });

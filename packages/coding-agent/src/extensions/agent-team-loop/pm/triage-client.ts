@@ -165,7 +165,6 @@ export type TriageState = Record<string, unknown>;
 
 /** Structured DP advice (design D-003 response projection). */
 export interface TriageResult {
-	material_issues?: MaterialIssue[];
 	available: boolean;
 	reason?: string;
 	triage_type?: string;
@@ -183,6 +182,8 @@ export interface TriageResult {
 	/** Required-field names that failed the check — names only (L0), never
 	 * values. */
 	missing_fields?: string[];
+	/** Exact local material constraint failures, without submitted values. */
+	material_issues?: MaterialIssue[];
 	/** Field names dropped/shrunk by the ≤2000B truncation — names only. */
 	dropped_fields?: string[];
 	/** `<dp>:<trigger_id>` of the authorization row the child archived (design

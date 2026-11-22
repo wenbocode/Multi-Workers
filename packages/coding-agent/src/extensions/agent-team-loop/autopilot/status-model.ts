@@ -1667,6 +1667,13 @@ export interface WorkerReachabilityReport {
 	remaining: string;
 	blockers: string;
 	evidence: string;
+	/** Optional display observation, never authority or a DP receipt. */
+	local?: {
+		source: "worker-local";
+		localRef: string;
+		choice: "continue" | "investigate" | "terminate";
+		activity: boolean;
+	};
 }
 
 /** Project only a terminal observation from the worker's own run. Legacy
@@ -1708,7 +1715,31 @@ export function readWorkerReachability(
 					!/^dp-w-check-task:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(decisionId)
 		)
 			return undefined;
-		return { taskKey, decisionId, choice, reason, completed, remaining, blockers, evidence };
+		const observed = run.local_reachability;
+		const local: WorkerReachabilityReport["local"] =
+			observed?.source === "worker-local" &&
+			typeof observed.local_ref === "string" &&
+			observed.local_ref.trim() &&
+			["continue", "investigate", "terminate"].includes(observed.choice) &&
+			typeof observed.activity === "boolean"
+				? {
+						source: "worker-local",
+						localRef: observed.local_ref,
+						choice: observed.choice,
+						activity: observed.activity,
+					}
+				: undefined;
+		return {
+			taskKey,
+			decisionId,
+			choice,
+			reason,
+			completed,
+			remaining,
+			blockers,
+			evidence,
+			...(local === undefined ? {} : { local }),
+		};
 	} catch {
 		return undefined;
 	}

@@ -25,6 +25,11 @@ export function canPmSelectType(input: {
 		claimedPmKey(input.projectDir, input.key) !== input.key ||
 		![
 			"disabled",
+			// r2 T04A zero-network pre-transport fact: a missing/unconfigured
+			// `.mw/decide.json` is a KNOWN off state, not an unknown reply. The
+			// same claim/role/material/preparation checks still apply; this adds
+			// no dispatch permission and never accepts an arbitrary reason.
+			"unconfigured",
 			"entry-unavailable",
 			"provider-unavailable",
 			"timeout",

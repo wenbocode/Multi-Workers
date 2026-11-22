@@ -20,6 +20,159 @@ export interface DutyEnvelope {
 	stopHash: string;
 }
 
+/** T15-J: sender-origin TYPED metadata. A private channel request carrying this
+ *  closed object is a candidate machine direction; the receipt binds its digest.
+ *  It is explicitly a user-delegated DUTY-PM direction, never a direct-user
+ *  signature, DP approval, human-only capability or P0 authority. */
+export interface PmStageProducerHistory {
+	matter_ref: string;
+	steps_consumed: number;
+	deadline: string;
+	expired: true;
+	source_ref: string;
+}
+export interface PmStageGrantV1 {
+	kind: "mw:pm-stage-grant-v1";
+	authority: "user-delegated-duty-pm";
+	project_ref: string;
+	key: string;
+	stage_id: string;
+	scope_ref: string;
+	matter_ref: string;
+	parent_matter_ref?: string;
+	card_path: string;
+	card_sha256: string;
+	write_face: string[];
+	max_steps: number;
+	remaining_cost: number;
+	no_progress_limit: number;
+	deadline: string;
+	qg_consumer: "local-qg-consumer-v1";
+	allowed_disposition: "repair-required";
+	producer_history?: PmStageProducerHistory;
+}
+
+const STAGE_GRANT_FIELDS = [
+	"kind",
+	"authority",
+	"project_ref",
+	"key",
+	"stage_id",
+	"scope_ref",
+	"matter_ref",
+	"parent_matter_ref",
+	"card_path",
+	"card_sha256",
+	"write_face",
+	"max_steps",
+	"remaining_cost",
+	"no_progress_limit",
+	"deadline",
+	"qg_consumer",
+	"allowed_disposition",
+	"producer_history",
+] as const;
+
+function stableJson(value: unknown): string {
+	if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+	const record = value as Record<string, unknown>;
+	return `{${Object.keys(record)
+		.sort()
+		.map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+		.join(",")}}`;
+}
+
+export function grantDigest(grant: PmStageGrantV1): string {
+	return createHash("sha256").update(stableJson(grant)).digest("hex");
+}
+
+function canonicalIso(value: unknown): value is string {
+	if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) return false;
+	const ms = Date.parse(value);
+	return (
+		Number.isSafeInteger(ms) &&
+		(new Date(ms).toISOString() === value || new Date(ms).toISOString().replace(".000Z", "Z") === value)
+	);
+}
+
+/** Closed strict parse. Unknown/DP-shaped keys are refused, never ignored. */
+export function parsePmStageGrant(value: unknown): { ok: true; value: PmStageGrantV1 } | { ok: false; gaps: string[] } {
+	const gaps: string[] = [];
+	if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false, gaps: ["stage.shape"] };
+	const record = value as Record<string, unknown>;
+	for (const key of Object.keys(record))
+		if (!(STAGE_GRANT_FIELDS as readonly string[]).includes(key)) gaps.push(`stage.${key}`);
+	if (record.kind !== "mw:pm-stage-grant-v1") gaps.push("stage.kind");
+	if (record.authority !== "user-delegated-duty-pm") gaps.push("stage.authority");
+	if (typeof record.project_ref !== "string" || !/^[a-f0-9]{64}$/.test(record.project_ref))
+		gaps.push("stage.project_ref");
+	if (keyNameRefusal(typeof record.key === "string" ? record.key : "") !== null) gaps.push("stage.key");
+	if (typeof record.stage_id !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(record.stage_id))
+		gaps.push("stage.stage_id");
+	if (typeof record.scope_ref !== "string" || !/^[a-z0-9][a-z0-9._-]{0,79}$/.test(record.scope_ref))
+		gaps.push("stage.scope_ref");
+	if (typeof record.matter_ref !== "string" || !record.matter_ref.trim()) gaps.push("stage.matter_ref");
+	if (
+		record.parent_matter_ref !== undefined &&
+		(typeof record.parent_matter_ref !== "string" || !record.parent_matter_ref.trim())
+	)
+		gaps.push("stage.parent_matter_ref");
+	if (
+		typeof record.card_path !== "string" ||
+		!/^tasks\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.md$/.test(record.card_path)
+	)
+		gaps.push("stage.card_path");
+	if (typeof record.card_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(record.card_sha256))
+		gaps.push("stage.card_sha256");
+	const face = record.write_face;
+	const seen = new Set<string>();
+	if (!Array.isArray(face) || face.length === 0) gaps.push("stage.write_face");
+	else
+		for (const entry of face) {
+			if (
+				typeof entry !== "string" ||
+				!entry ||
+				path.posix.normalize(entry) !== entry ||
+				path.posix.isAbsolute(entry) ||
+				entry.split("/").some((part) => !part || part === "." || part === ".." || /\\/.test(part)) ||
+				seen.has(entry)
+			) {
+				gaps.push("stage.write_face.entry");
+				break;
+			}
+			seen.add(entry);
+		}
+	for (const field of ["max_steps", "remaining_cost", "no_progress_limit"] as const)
+		if (typeof record[field] !== "number" || !Number.isSafeInteger(record[field]) || (record[field] as number) < 1)
+			gaps.push(`stage.${field}`);
+	if (!canonicalIso(record.deadline)) gaps.push("stage.deadline");
+	if (record.qg_consumer !== "local-qg-consumer-v1") gaps.push("stage.qg_consumer");
+	if (record.allowed_disposition !== "repair-required") gaps.push("stage.allowed_disposition");
+	const history = record.producer_history;
+	if (history !== undefined) {
+		if (!history || typeof history !== "object" || Array.isArray(history)) gaps.push("stage.producer_history");
+		else {
+			const h = history as Record<string, unknown>;
+			for (const key of Object.keys(h))
+				if (!["matter_ref", "steps_consumed", "deadline", "expired", "source_ref"].includes(key))
+					gaps.push(`stage.producer_history.${key}`);
+			if (typeof h.matter_ref !== "string" || !h.matter_ref.trim() || h.matter_ref !== record.parent_matter_ref)
+				gaps.push("stage.producer_history.matter_ref");
+			if (
+				typeof h.steps_consumed !== "number" ||
+				!Number.isSafeInteger(h.steps_consumed) ||
+				(h.steps_consumed as number) < 0
+			)
+				gaps.push("stage.producer_history.steps_consumed");
+			if (!canonicalIso(h.deadline)) gaps.push("stage.producer_history.deadline");
+			if (h.expired !== true) gaps.push("stage.producer_history.expired");
+			if (typeof h.source_ref !== "string" || !h.source_ref.trim()) gaps.push("stage.producer_history.source_ref");
+		}
+	}
+	return gaps.length ? { ok: false, gaps } : { ok: true, value: record as unknown as PmStageGrantV1 };
+}
+
 export function currentDutyRequest(cwd: string, key: string, value: unknown) {
 	if (!value || typeof value !== "object") return false;
 	const { shift, until, stopHash } = value as Partial<DutyEnvelope>;
@@ -121,14 +274,28 @@ export class PmChannel {
 		return windowFile(this.dir, key, claim);
 	}
 
-	send(key: string, binding: string, id: string, text: string, duty?: DutyEnvelope, source?: PmChannelSource) {
+	send(
+		key: string,
+		binding: string,
+		id: string,
+		text: string,
+		duty?: DutyEnvelope,
+		stage?: PmStageGrantV1,
+		source?: PmChannelSource,
+	) {
 		if (source !== undefined && source !== MW_FOLLOWUP_SOURCE) throw new Error("Invalid PM channel source");
-		if (source !== undefined && duty !== undefined)
-			throw new Error("MW follow-up source cannot be combined with a duty envelope");
+		if (source !== undefined && (duty !== undefined || stage !== undefined))
+			throw new Error("MW follow-up source cannot be combined with duty or stage envelopes");
 		const state = this.status(key);
 		if (!state.connected || state.binding !== binding)
 			throw new Error("PM receiver unavailable or binding changed; refresh status");
 		if (!text.trim() || Buffer.byteLength(text) > 16_384) throw new Error("Message must contain 1–16384 UTF-8 bytes");
+		let typedStage: PmStageGrantV1 | undefined;
+		if (stage !== undefined) {
+			const parsed = parsePmStageGrant(stage);
+			if (!parsed.ok) throw new Error(`Invalid typed stage grant: ${parsed.gaps.join(",")}`);
+			typedStage = parsed.value;
+		}
 		const file = this.messagePath(key, binding, id, "request");
 		const message = {
 			id,
@@ -137,6 +304,7 @@ export class PmChannel {
 			binding,
 			text,
 			duty,
+			...(typedStage === undefined ? {} : { stage: typedStage }),
 			...(source === undefined ? {} : { source }),
 			at: Date.now(),
 		};
@@ -150,7 +318,7 @@ export class PmChannel {
 				old.claim !== state.claim ||
 				old.binding !== binding ||
 				JSON.stringify(old.duty) !== JSON.stringify(duty) ||
-				old.stage !== undefined ||
+				stableJson(old.stage) !== stableJson(typedStage) ||
 				old.source !== source
 			)
 				throw new Error("Message ID conflict");
@@ -170,7 +338,9 @@ export function registerPmChannel(pi: ExtensionAPI, home?: string) {
 	if (process.env.PI_WORKER_TASK !== undefined) return;
 	let timer: NodeJS.Timeout | undefined;
 	let active: { key: string; binding: string; session: string; spool: PmChannel } | undefined;
-	let processing: { id: string; file: string; inContext: boolean; receivedAt: number } | undefined;
+	let processing:
+		| { id: string; file: string; inContext: boolean; receivedAt: number; stageDigest?: string }
+		| undefined;
 	let heartbeatFailureSince: number | undefined;
 	let lastHeartbeatWarning = 0;
 	const claim = `${os.hostname()}:${process.pid}`;
@@ -227,11 +397,20 @@ export function registerPmChannel(pi: ExtensionAPI, home?: string) {
 			if (fs.existsSync(file)) continue;
 			const req = readJson(path.join(dir, name));
 			if (
-				req.stage !== undefined ||
-				(req.source !== undefined && (req.source !== MW_FOLLOWUP_SOURCE || req.duty !== undefined))
+				req.source !== undefined &&
+				(req.source !== MW_FOLLOWUP_SOURCE || req.duty !== undefined || req.stage !== undefined)
 			) {
 				writeJson(file, { id, key, binding, state: "rejected" }, true);
 				continue;
+			}
+			let stageDigest: string | undefined;
+			if (req.stage !== undefined) {
+				const parsed = parsePmStageGrant(req.stage);
+				if (!parsed.ok) {
+					writeJson(file, { id, key, binding, state: "rejected" }, true);
+					continue;
+				}
+				stageDigest = grantDigest(parsed.value);
 			}
 			if (
 				req.id !== id ||
@@ -259,10 +438,11 @@ export function registerPmChannel(pi: ExtensionAPI, home?: string) {
 					claim,
 					state: "received",
 					receivedAt,
+					...(stageDigest === undefined ? {} : { stage_digest: stageDigest }),
 				},
 				true,
 			);
-			processing = { id, file, receivedAt, inContext: false };
+			processing = { id, file, receivedAt, inContext: false, ...(stageDigest === undefined ? {} : { stageDigest }) };
 			pi.sendMessage(
 				{
 					customType: KIND,
@@ -320,6 +500,7 @@ export function registerPmChannel(pi: ExtensionAPI, home?: string) {
 			state: failed ? "failed" : "started",
 			receivedAt: processing.receivedAt,
 			observedAt: Date.now(),
+			...(processing.stageDigest === undefined ? {} : { stage_digest: processing.stageDigest }),
 			observation:
 				observed?.type === "toolCall"
 					? observed.name
@@ -340,6 +521,7 @@ export function registerPmChannel(pi: ExtensionAPI, home?: string) {
 			receivedAt: processing.receivedAt,
 			state: "unconfirmed",
 			observedAt: Date.now(),
+			...(processing.stageDigest === undefined ? {} : { stage_digest: processing.stageDigest }),
 		});
 		processing = undefined;
 	});
