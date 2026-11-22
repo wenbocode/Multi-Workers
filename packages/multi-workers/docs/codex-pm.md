@@ -46,6 +46,21 @@ python $pm claim --project $project --key $key
 
 ## 2. Codex 直接执行和验证
 
+完整 SDD key 在 `VERIFY` 阶段调用 MW PM 的 `advance_phase` 进入 Done 时，交互式 PM 和 autopilot 会先检查已有签收，或从原工作区已成功终止的独审 Worker 复用证据。若逐项验收和结案摘要保存在单独文件中，Worker 报告须用反引号引用 key 内的证据路径。证据或人工批准存在缺口时，流程会停在 Done 门禁。
+
+需要指定独审时，可以直接调用正式签收 CLI。
+
+```powershell
+$request = @{
+    decision_source = 'pm-evidence'
+    review_task = 'release-review'
+    review_source = 'workers/release-review/report.md'
+}
+$request | ConvertTo-Json -Compress | python $mw decide sign $key --project $project --stdin --json
+```
+
+该入口重新验证当前冻结合同、逐项证据哈希、独审终态、`achieved.md` 及正式批准。签收后使用完整 SDD 的正式 Done 入口。签收及后续校验可在 PM 交接后执行。
+
 Codex 按主记录实施，把关键决定、进度和下一步直接记回本页。实现者自验与另一执行者的复核分别说明；只有自验时如实记录。
 
 进入验收后，用 `check` 保存与 AC 对应的真实命令及结果；同一命令可重复提供 `--ac` 覆盖多个验收标准：

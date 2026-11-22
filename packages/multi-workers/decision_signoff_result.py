@@ -133,7 +133,7 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _MACHINE_LINE_RE = re.compile(
     r"^(product_type|record_version|dp|basis_version|basis_sha256|logical_id|decision_id|material_sha256"
     r"|evidence_sha256|rows_sha256|snapshot_sha256|initiator_role|retry_of|transport"
-    r"|model|confidence_source):\s*(.*?)\s*$",
+    r"|model|confidence_source|decision_source|review_task|review_source):\s*(.*?)\s*$",
     re.MULTILINE,
 )
 _MAX_RESULT_BYTES = 256 * 1024
@@ -639,7 +639,7 @@ def _fsync_dir(path: pathlib.Path) -> None:
 
 
 def _atomic_write_text(
-    key_dir: pathlib.Path | str, target: pathlib.Path, text: str
+    key_dir: pathlib.Path | str, target: pathlib.Path, text: str, *, replace: bool = True
 ) -> pathlib.Path:
     """Safe temp write + file fsync + atomic replace under the key directory."""
     path = _assert_safe_target(key_dir, target)
@@ -657,7 +657,10 @@ def _atomic_write_text(
             os.fsync(fd)
         finally:
             os.close(fd)
-        os.replace(tmp, path)
+        if replace:
+            os.replace(tmp, path)
+        else:
+            os.link(tmp, path)
     finally:
         if tmp.exists():
             try:
@@ -1070,6 +1073,7 @@ class SignoffValidation:
     basis_version: int | None = None
     basis_sha256: str | None = None
     native_basis_verified: bool = False
+    decision_source: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1094,6 +1098,273 @@ class SignoffValidation:
 
 def _invalid(reason: str, **fields: Any) -> SignoffValidation:
     return SignoffValidation(valid=False, reason=reason, **fields)
+
+
+def _require_complete_local_qg(key_dir: pathlib.Path, report: str) -> None:
+    """Require an independently reported pass and evidence ref for each applicable ID."""
+    spec = _safe_read_text(key_dir, key_dir / "spec.md")
+    design = _safe_read_text(key_dir, key_dir / "design.md")
+    goal = _safe_read_text(key_dir.parent, key_dir.parent / GOAL_FILE_NAME)
+    contract = contract_guard.extract_contract(spec, design)
+    flows = contract_guard.function_flow_identities(design)
+    if not contract.acs or not contract.vcs or not flows or not goal.strip():
+        raise SignoffResultError("the current spec, design or project goal is incomplete")
+    frozen = contract_guard.read_freeze(key_dir)
+    if (
+        frozen is None
+        or frozen.get("decision_signoff") != "required"
+        or frozen.get("spec") != contract.acs
+        or frozen.get("design") != contract.vcs
+        or frozen.get("function_flows") != flows
+    ):
+        raise SignoffResultError("the current AC, VC or Function Flow differs from the frozen sign-off contract")
+    expected = set(contract.ids) | set(flows)
+    passed = set()
+    observed: dict[pathlib.Path, str] = {}
+    project = key_dir.parent.parent
+    for name, verdict, evidence in re.findall(
+        r"(?m)^\|\s*((?:AC|VC|FLOW)-\d{3})\s*\|([^|\r\n]*)\|([^|\r\n]*)\|", report
+    ):
+        ref = re.fullmatch(r"([A-Za-z0-9._/-]+)@([a-f0-9]{64})", evidence.strip())
+        if name not in expected or name in passed or verdict.strip() != "PASS" or ref is None:
+            raise SignoffResultError(f"independent closure review has an invalid outcome for {name}")
+        relative, digest = ref.groups()
+        if relative.startswith("/") or any(part in ("", ".", "..") for part in relative.split("/")):
+            raise SignoffResultError(f"invalid evidence path for {name}")
+        file = _assert_safe_target(project, project / relative)
+        if file not in observed:
+            if not file.is_file() or file.stat().st_size > _MAX_RESULT_BYTES:
+                raise SignoffResultError(f"current evidence is unavailable for {name}")
+            observed[file] = hashlib.sha256(file.read_bytes()).hexdigest()
+        if observed[file] != digest:
+            raise SignoffResultError(f"evidence bytes changed for {name}")
+        passed.add(name)
+    missing = sorted(expected - passed)
+    if missing:
+        raise SignoffResultError("independent closure review is missing " + ", ".join(missing))
+
+
+def capture_reviewed_signoff(key_dir: pathlib.Path, key: str, review_task: str, review_source: str) -> dict:
+    """Recheck durable independent review and approval evidence from the control workspace."""
+    import decide_signoff
+    import mw_common
+    from autopilot.conductor import _md_section
+
+    if not isinstance(review_task, str) or not re.fullmatch(r"[\w-]+[\w.-]*", review_task):
+        raise SignoffResultError("invalid independent review task")
+    if not isinstance(review_source, str) or not re.fullmatch(r"(?:evidence|workers)/[\w./-]+\.md", review_source):
+        raise SignoffResultError("invalid independent review source")
+    if any(part in ("", ".", "..") for part in review_source.split("/")):
+        raise SignoffResultError("invalid independent review source")
+    task_dir = key_dir / "workers" / review_task
+    envelope = task_dir / "task.md"
+    envelope_text = _safe_read_text(key_dir, envelope)
+    headers = dict(re.findall(r"(?m)^(type|card_path|card_sha256):[ \t]+([^\n]+)$", envelope_text.split("\n\n", 1)[0]))
+    card = headers.get("card_path", "")
+    if headers.get("type") != "review" or not re.fullmatch(r"tasks/(?:[\w-]+/)*[\w.-]+\.md", card):
+        raise SignoffResultError("independent review must have a dispatched review card")
+    card_path = _assert_safe_target(key_dir, key_dir / card)
+    if mw_common.sha256_eol_normalized(card_path) != headers.get("card_sha256"):
+        raise SignoffResultError("independent review card changed")
+    run_text = _safe_read_text(key_dir, task_dir / "run.json")
+    run = json.loads(run_text)
+    report_path = task_dir / "report.md"
+    report = _safe_read_text(key_dir, report_path)
+    queue = mw_common.parse_workers_queue(key_dir.parent / "_workers.parallel")
+    rows = [
+        row for row in queue["rows"]
+        if pathlib.Path(row["task_path"]) == envelope
+    ]
+    if (
+        len(rows) != 1 or rows[0]["status"] != "done" or rows[0]["task_key"] != review_task
+        or not isinstance(run, dict) or run.get("kind") != "review"
+        or run.get("task_key") != review_task or run.get("owner_key") != key
+        or run.get("status") != "done" or type(run.get("exit")) is not int or run["exit"] != 0
+        or not isinstance(run.get("started_at"), str) or not run.get("ended_at")
+        or run.get("run_id") != f"{review_task}@{run['started_at']}"
+        or not isinstance(run.get("artifacts"), list) or "report.md" not in run["artifacts"]
+    ):
+        raise SignoffResultError("independent review has no successful recorded terminal run")
+    if review_source != report_path.relative_to(key_dir).as_posix() and f"`{review_source}`" not in report:
+        raise SignoffResultError("terminal reviewer did not reference the selected evidence")
+    source = _safe_read_text(key_dir, key_dir / review_source)
+    qg = _md_section(source, "## Quality Gate Report")
+    achieved = _md_section(source, "## Achieved")
+    if not qg or not achieved:
+        raise SignoffResultError("independent review is missing whole-key acceptance or achieved")
+    _require_complete_local_qg(key_dir, qg)
+    if achieved.rstrip() != _safe_read_text(key_dir, key_dir / "achieved.md").rstrip():
+        raise SignoffResultError("achieved.md does not match the reviewed result")
+    if not any(
+        (_md_section(_safe_read_text(key_dir, candidate), "## Quality Gate Report") or "").rstrip() == qg.rstrip()
+        for candidate in (key_dir / "evidence").glob("quality-gate-report-*.md")
+    ):
+        raise SignoffResultError("the current reviewed quality-gate report is missing")
+    approvals = _reviewed_approvals(key_dir, key)
+    basis = capture_native_basis(key_dir)
+    if issues := basis_usable_now(basis):
+        raise SignoffResultError("; ".join(issues))
+    facts = decide_signoff.collect(key_dir, key)
+    if not facts.chain_ok:
+        raise SignoffResultError("decision archive chain is broken")
+    record = {
+        "record_version": 4, "product_type": PRODUCT_TYPE, "decision_source": "pm-evidence",
+        "key": key, "conclusion": "finalize", "review_task": review_task,
+        "review_run_id": run["run_id"], "review_source": review_source,
+        "basis_version": basis.version, "basis_sha256": basis.digest(),
+        "material_sha256": canonical_sha256({"achieved": achieved, "review": report}),
+        "evidence_sha256": canonical_sha256({
+            "source": source, "run": run_text, "envelope": envelope_text, "approvals": approvals,
+        }),
+        "rows_sha256": facts.sha256, "counted_rows": len(facts.rows),
+    }
+    record["logical_id"] = canonical_sha256(record)[:32]
+    record["snapshot_sha256"] = canonical_sha256(record)
+    return record
+
+
+def _reviewed_approvals(key_dir: pathlib.Path, key: str, *, explicit_only: bool = False) -> dict[str, str]:
+    from autopilot import gates
+
+    approvals = {}
+    for gate in gates.enumerate(key_dir.parent / "_autopilot" / "gates"):
+        if gate.key != key:
+            continue
+        requires_approval = gate.authorizes or (
+            not explicit_only and gate.kind in {"stage-confirm", "stage-close", "goal-change", "xkey-authorize"}
+        )
+        if not requires_approval:
+            continue
+        if gate.status != "approved" or (
+            not explicit_only and (not gate.answered_by or not gate.answered_at)
+        ):
+            raise SignoffResultError(f"required approval is unresolved: {gate.id}")
+        if gate.authorizes and (
+            gate.answer_source == "conductor-auto" or (gate.answered_by or "").startswith("conductor-auto:")
+        ):
+            raise SignoffResultError(f"required human authorization is unresolved: {gate.id}")
+        approvals[gate.id] = canonical_sha256(_safe_read_text(key_dir.parent, gate.path))
+    return approvals
+
+
+def local_signoff_text(record: Mapping) -> str:
+    return "# Key sign-off\n\n" + "".join(f"{name}: {value}\n" for name, value in record.items())
+
+
+def write_local_signoff_result(key_dir: pathlib.Path, record: Mapping) -> pathlib.Path:
+    target = result_path(key_dir, record["logical_id"])
+    return _atomic_write_text(key_dir, target, json.dumps(record, ensure_ascii=False) + "\n", replace=False)
+
+
+def local_signoff_matches_disk(key_dir: pathlib.Path, record: Mapping, text: str | None = None) -> bool:
+    stored = json.loads(_safe_read_text(key_dir, result_path(key_dir, record["logical_id"])))
+    if text is None:
+        text = _safe_read_text(key_dir, signoff_path(key_dir))
+    return stored == record and text == local_signoff_text(record)
+
+
+def publish_reviewed_signoff(
+    key_dir: pathlib.Path, key: str, review_task: str, review_source: str,
+) -> tuple[str, dict]:
+    """Validate and publish one immutable, retryable evidence snapshot."""
+    from autopilot import state
+
+    with contract_guard.contract_publication_lock(key_dir):
+        rows = [row for row in state.read_index(key_dir.parent.parent) if row["key"] == key]
+        if len(rows) != 1 or rows[0]["phase"].upper() not in {"VERIFY", "DONE"}:
+            raise SignoffResultError("reviewed evidence sign-off requires an unambiguous VERIFY or DONE key")
+        record = capture_reviewed_signoff(key_dir, key, review_task, review_source)
+        target = signoff_path(key_dir)
+        if target.exists():
+            if not local_signoff_matches_disk(key_dir, record):
+                raise SignoffResultError("existing sign-off differs from the current reviewed snapshot")
+            return "existing", record
+        if rows[0]["phase"].upper() != "VERIFY":
+            raise SignoffResultError("a new sign-off can only be published during VERIFY")
+        try:
+            write_local_signoff_result(key_dir, record)
+        except FileExistsError:
+            stored = _safe_read_text(key_dir, result_path(key_dir, record["logical_id"]))
+            if json.loads(stored) != record:
+                raise SignoffResultError("existing sign-off result differs from the reviewed snapshot")
+        if capture_reviewed_signoff(key_dir, key, review_task, review_source) != record:
+            raise SignoffResultError("reviewed evidence changed before sign-off publication")
+        write_signoff_text(key_dir, local_signoff_text(record), replace=False)
+        return "written", record
+
+
+def prepare_reviewed_done(key_dir: pathlib.Path, key: str) -> dict:
+    """Default Done preflight shared by interactive and conductor PMs."""
+    import decide_signoff
+    import decision
+
+    cfg, _ = decision.DecisionConfig.from_project(key_dir.parent.parent)
+    _reviewed_approvals(key_dir, key, explicit_only=True)
+    if cfg.signoff_error:
+        raise SignoffResultError(cfg.signoff_error)
+    if cfg.signoff == decision.SIGNOFF_DISABLE:
+        return {"signoff_status": "disabled"}
+    frozen = contract_guard.read_freeze(key_dir) or {}
+    spec = key_dir / "spec.md"
+    spec_text = _safe_read_text(key_dir, spec) if spec.is_file() else ""
+    required = (
+        frozen.get("decision_signoff") == "required"
+        or re.search(r"(?im)^\s*(?:>\s*)?Decision signoff:\s*required\s*$", spec_text)
+        or decide_signoff.collect(key_dir, key).rows
+    )
+    if not required:
+        return {"signoff_status": "not-required"}
+    if signoff_path(key_dir).exists():
+        _reviewed_approvals(key_dir, key)
+        validation = validate_signoff(key_dir, key)
+        if not validation.valid or not validation.native_basis_verified:
+            raise SignoffResultError(f"existing sign-off is not current: {validation.reason}")
+        return {"signoff_status": "existing", "logical_id": validation.logical_id}
+    candidates = sorted((key_dir / "workers").glob("*/report.md"))
+    failures = []
+    for candidate in candidates:
+        try:
+            report = _safe_read_text(key_dir, candidate)
+        except (OSError, ValueError) as exc:
+            failures.append(str(exc))
+            continue
+        refs = [candidate.relative_to(key_dir).as_posix()]
+        refs.extend(dict.fromkeys(re.findall(r"`(evidence/[\w./-]+\.md)`", report)))
+        for source in refs:
+            try:
+                status, record = publish_reviewed_signoff(key_dir, key, candidate.parent.name, source)
+            except (OSError, ValueError, RuntimeError) as exc:
+                failures.append(f"{candidate.parent.name}: {exc}")
+                continue
+            return {"signoff_status": status, "logical_id": record["logical_id"]}
+    detail = "; ".join(dict.fromkeys(failures[-5:]))
+    raise SignoffResultError(f"no current independent closure review{': ' + detail if detail else ''}")
+
+
+def _validate_reviewed_signoff(
+    key_dir: pathlib.Path, key: str, text: str, lines: dict[str, str],
+    expected_logical_id: str | None, expected_snapshot: str | None,
+) -> SignoffValidation:
+    path = str(signoff_path(key_dir))
+    try:
+        current = capture_reviewed_signoff(key_dir, key, lines.get("review_task", ""), lines.get("review_source", ""))
+        matches = local_signoff_matches_disk(key_dir, current, text)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return _invalid(str(exc), path=path)
+    if (
+        not matches
+        or (expected_logical_id is not None and current["logical_id"] != expected_logical_id)
+        or (expected_snapshot is not None and current["snapshot_sha256"] != expected_snapshot)
+    ):
+        return _invalid("reviewed evidence no longer matches the signed product", path=path)
+    return SignoffValidation(
+        valid=True, reason="", path=path, logical_id=current["logical_id"], conclusion="finalize",
+        snapshot_sha256=current["snapshot_sha256"], evidence_sha256=current["evidence_sha256"],
+        material_sha256=current["material_sha256"], basis_version=current["basis_version"],
+        basis_sha256=current["basis_sha256"], record_version=4, product_type=PRODUCT_TYPE,
+        file_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        native_basis_verified=True, decision_source="pm-evidence",
+    )
 
 
 def validate_signoff(
@@ -1142,6 +1413,11 @@ def validate_signoff(
         return _invalid(str(exc), path=str(path))
     file_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
     lines = parse_machine_lines(text)
+    if lines.get("record_version") == "4" and lines.get("decision_source") == "pm-evidence":
+        return _validate_reviewed_signoff(
+            pathlib.Path(key_dir), key or pathlib.Path(key_dir).name, text, lines,
+            expected_logical_id, expected_snapshot,
+        )
     if "logical_id" not in lines:
         return _invalid("legacy sign-off file has no logical_id", path=str(path), file_sha256=file_hash)
     product_type = lines.get("product_type")
@@ -1569,8 +1845,8 @@ def validate_key_signoff(
 
 
 def write_signoff_text(
-    key_dir: pathlib.Path | str, text: str | Sequence[str]
+    key_dir: pathlib.Path | str, text: str | Sequence[str], *, replace: bool = True
 ) -> pathlib.Path:
     """Write the sign-off file atomically (temp + fsync + replace) under the key."""
     body = text if isinstance(text, str) else "\n".join(text) + "\n"
-    return _atomic_write_text(key_dir, signoff_path(key_dir), body)
+    return _atomic_write_text(key_dir, signoff_path(key_dir), body, replace=replace)

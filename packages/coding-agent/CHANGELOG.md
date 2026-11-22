@@ -139,6 +139,8 @@
 
 ### Fixed
 
+- MW PM now reuses persisted independent review evidence when closing a task after a handoff. Done still checks the current evidence and required approvals.
+
 - Bounded automatic file lists in MW compaction context to 4 KiB by default, retaining recently accessed paths and evicting older ones. Configure with `/mw context set-file-history-max-bytes <bytes> --global|--project [--type TYPE]` (0 keeps lists local; `clear-file-history-max-bytes` restores inheritance). Re-summarization excludes old file lists; complete history remains in local session records.
 
 - Fixed three authority gaps in the new `/mw decide` window controls (mw-decide-window-controls): all five new commands now require a TUI window (`ctx.mode === "tui"`) plus `hasUI` before any runner call (RPC/print/json, mode-less and no-UI entries are refused with zero spawn) while legacy `show|sign` and the read-only forwards keep their headless behavior; `dp on|off` now accepts only a strict single top-level JSON object from `dp show --json` (array-wrapped, garbage-prefixed/suffixed, duplicate, null/primitive and corrupted payloads fail closed); and a P0 open requires two independent explicit confirmations (the second shows registry `p0_consequences`) with a non-empty consequence string, attaching `--i-understand-p0` only after both, while P1/P2 and P0 off stay single-confirm. Legal-but-unknown ids run only the fixed read-only pre-check with zero write, illegal syntax/malicious ids spawn nothing, and help/README scope the confirmation requirement to the four new write faces.

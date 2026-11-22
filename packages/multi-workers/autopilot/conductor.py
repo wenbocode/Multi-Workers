@@ -60,6 +60,7 @@ import decision
 import decision_blocked
 import decision_points
 import decision_policy
+import decision_signoff_result
 import decision_validity as validity
 import decision_wire
 import operator_authority
@@ -3565,6 +3566,10 @@ def _done_transaction(
             return "gated", "; ".join(problems)
         if _current_contract_reverification(project_root, key) != reverification:
             return "gated", "needs-rerun: contract verification changed before advance"
+        try:
+            decision_signoff_result.prepare_reviewed_done(key_dir, key)
+        except (OSError, ValueError, RuntimeError) as exc:
+            return "gated", str(exc)
         code, _out, err, ms = _timed_advance(
             key, "done", project_root, summary="autopilot L3 meets"
         )

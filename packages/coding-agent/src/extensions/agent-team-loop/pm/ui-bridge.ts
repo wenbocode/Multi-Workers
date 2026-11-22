@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "..
 import type { ModelRegistry } from "../../../core/model-registry.ts";
 import { validateRagEnabled } from "../rag/tools.ts";
 import type { AckStore } from "../shared/ack-store.ts";
-import { runAgenticScript } from "../shared/agentic-scripts.ts";
+import { runAgenticDone, runAgenticScript } from "../shared/agentic-scripts.ts";
 import { cardDigest } from "../shared/card-digest.ts";
 import { runProxyCommand } from "../shared/codex-local.ts";
 import { readConcurrencySnapshot, taskQueueStatus } from "../shared/concurrency-view.ts";
@@ -3986,7 +3986,10 @@ export function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: string, i
 			// bootstrap), and this window's own claim is untouched by the guard.
 			const crossKeyRefusal = foreignLiveClaimRefusal(indexStore, trimmedKey);
 			if (crossKeyRefusal) return { content: [{ type: "text", text: crossKeyRefusal }], details: undefined };
-			const result = runAgenticScript(projectDir, "advance_phase.py", args);
+			const result =
+				target === "done"
+					? await runAgenticDone(projectDir, args, _signal)
+					: runAgenticScript(projectDir, "advance_phase.py", args);
 			return { content: [{ type: "text", text: result.output }], details: undefined };
 		},
 	});

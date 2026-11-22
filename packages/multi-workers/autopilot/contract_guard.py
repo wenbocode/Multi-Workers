@@ -187,6 +187,18 @@ def extract_contract(spec_text: str, design_text: str) -> ContractIdentity:
 # --- Freeze sidecar -----------------------------------------------------------
 
 
+def function_flow_identities(design_text: str) -> dict[str, str]:
+    """Hash the original Function Flow row for each ID before later cross-references."""
+    entries: dict[str, str] = {}
+    for name, cells in re.findall(r"(?m)^\|\s*(FLOW-\d{3})\s*\|([^\r\n]+)$", design_text):
+        body = _FIELD_SEP.join(cell.strip() for cell in cells.rstrip().rstrip("|").split("|"))
+        entries.setdefault(name, canonical_sha(name, body))
+    return entries
+
+
+# --- Freeze sidecar -----------------------------------------------------------
+
+
 def freeze_path(key_dir: pathlib.Path | str) -> pathlib.Path:
     """``<key>/evidence/contract-freeze.json`` for an injected key root."""
     return pathlib.Path(key_dir) / FREEZE_DIR_NAME / FREEZE_FILE_NAME
@@ -206,7 +218,7 @@ def build_freeze(
 ) -> dict[str, object]:
     """Pure freeze payload (design D-015 shape) for the current text."""
     identity = extract_contract(spec_text, design_text)
-    return {
+    payload: dict[str, object] = {
         "schema": FREEZE_SCHEMA,
         "key": key,
         "frozen_at": frozen_at if frozen_at is not None else _iso_now(),
@@ -214,6 +226,11 @@ def build_freeze(
         "design": dict(sorted(identity.vcs.items())),
         "generator": generator,
     }
+    header = re.split(r"(?m)^#{1,6}[ \t]+", spec_text, maxsplit=2)
+    if len(header) > 1 and re.search(r"(?m)^> Decision signoff: required[ \t]*$", header[1]):
+        payload["decision_signoff"] = "required"
+        payload["function_flows"] = function_flow_identities(design_text)
+    return payload
 
 
 def read_freeze(key_dir: pathlib.Path | str) -> dict[str, object] | None:
@@ -251,8 +268,14 @@ def write_freeze(
     """Atomically write the sidecar (UTF-8, LF, LF-safe tmp + replace)."""
     path = freeze_path(key_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
+    previous = read_freeze(key_dir)
+    retained = dict(freeze)
+    if previous is not None and previous.get("decision_signoff") == "required":
+        retained["decision_signoff"] = "required"
+        if previous.get("function_flows"):
+            retained["function_flows"] = previous["function_flows"]
     content = json.dumps(
-        freeze, ensure_ascii=False, indent=2, sort_keys=True
+        retained, ensure_ascii=False, indent=2, sort_keys=True
     ) + "\n"
     tmp = pathlib.Path(str(path) + ".tmp")
     tmp.write_text(content, encoding="utf-8", newline="\n")

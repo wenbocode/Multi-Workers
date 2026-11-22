@@ -6245,6 +6245,31 @@ def _decide_sign_validate(
     return 0 if validation.signs_key else 2
 
 
+def _decide_sign_reviewed(
+    args: argparse.Namespace, key_dir: pathlib.Path, key: str, envelope: dict,
+) -> int:
+    """Publish the official sign-off from current, reusable review evidence."""
+    result = {"decision_source": "pm-evidence", "conclusion": "continue", "signoff_status": "refused"}
+    try:
+        if set(envelope) != {"decision_source", "review_task", "review_source"} or getattr(args, "retry_write", None):
+            raise ValueError("expected a review task and an independent evidence source")
+        if (os.environ.get("PI_WORKER_TASK") or "").strip():
+            raise ValueError("a worker cannot publish key sign-off")
+        status, record = decision_signoff_result.publish_reviewed_signoff(
+            key_dir, key, envelope["review_task"], envelope["review_source"],
+        )
+        result.update(
+            conclusion="finalize", signoff_status=status, logical_id=record["logical_id"],
+            signoff_path=str(decision_signoff_result.signoff_path(key_dir)),
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        result["problems"] = [str(exc)]
+        _decide_print(result, bool(args.json))
+        return 2
+    _decide_print(result, bool(args.json))
+    return 0
+
+
 def _decide_sign_finalize(
     args: argparse.Namespace,
     project_dir: pathlib.Path,
@@ -6290,6 +6315,8 @@ def _decide_sign_finalize(
         if err:
             return _decide_sign_refusal(key_dir_path, as_json, [err], logical_id=retry_id)
         assert payload is not None
+        if payload.get("decision_source") == "pm-evidence":
+            return _decide_sign_reviewed(args, key_dir_path, key, payload)
         evidence_refs = payload.get("evidence_refs")
         if "evidence_refs" in payload and not isinstance(evidence_refs, list):
             return _decide_sign_refusal(
@@ -7021,6 +7048,20 @@ def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
     if err:
         print(f"[mw decide sign] {err}", file=sys.stderr)
         return 2
+    if getattr(args, "for_done", False):
+        if any(getattr(args, name, None) for name in ("stdin", "retry_write", "validate", "auto", "disable", "dry_run")):
+            print("[mw decide sign] --for-done cannot be combined with another sign-off mode", file=sys.stderr)
+            return 2
+        if (os.environ.get("PI_WORKER_TASK") or "").strip():
+            print("[mw decide sign] a worker cannot prepare key Done", file=sys.stderr)
+            return 2
+        try:
+            result = decision_signoff_result.prepare_reviewed_done(key_dir_path, key)
+        except (OSError, ValueError, RuntimeError) as exc:
+            _decide_print({"signoff_status": "refused", "problems": [str(exc)]}, bool(args.json))
+            return 2
+        _decide_print(result, bool(args.json))
+        return 0
     if getattr(args, "validate", None) is not None:
         # Read-only typed validator: never a second approval, never a write.
         return _decide_sign_validate(args, key_dir_path, key)
@@ -15456,6 +15497,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     decide_sign_p.add_argument("--key", default=None,
                                help="AgenticTask key (default: the project dir name when it sits under .agenticdoc)")
+    decide_sign_p.add_argument("--for-done", action="store_true",
+                               help="Reuse current independent closure evidence for the default PM Done gate")
     decide_sign_p.add_argument("--auto", action="store_true",
                                help="Set signoff=auto in .mw/decide.json (default) and exit; "
                                     "it persists the mode only, never signs")
