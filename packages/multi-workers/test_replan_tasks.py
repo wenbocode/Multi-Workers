@@ -161,9 +161,25 @@ def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None):
     return run["run_id"], pin
 
 
-def deadline_grant(fixture, child, parent, pin):
+def replan_unstarted(project, source, successor, parent):
+    inspected = tool(project, "inspect", task=source)
+    assert inspected["facts"]["status"] == "unstarted"
+    args = {k: inspected[k] for k in ("issue", "snapshot")}
+    recovery = unit(successor, "AC-001 AC-002")
+    recovery["covers"] = ["AC-001", "AC-002"]
+    if parent:
+        recovery["markdown"] = f"parent_worker_run: {parent}\n" + recovery["markdown"]
+    recovery["markdown"] += "\n## 事项预算事实\n- `parent_matter_ref`: `stage`\n"
+    prepared = tool(project, "preview", **args, plan={
+        "action": "narrow", "reason": "Narrow the remaining work before dispatch", "units": [recovery],
+    })
+    ref = answer(project, prepared, choice="narrow", task=None)
+    tool(project, "apply", **args, version=prepared["version"], decision_id=ref)
+
+
+def deadline_grant(fixture, child, parent, pin, stem="recover"):
     project, key, _, _ = fixture
-    card_ref = "tasks/recover.md"
+    card_ref = f"tasks/{stem}.md"
     approval = rp.deadline_successor(project, "demo", child, card_ref, pin, parent)
     deadline = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     stage_path = key / "tasks/stage.md"
@@ -177,7 +193,7 @@ def deadline_grant(fixture, child, parent, pin):
     receipt = request.with_name("event.receipt.json")
     put(request, json.dumps({**binding, "stage": {"deadline": deadline, "max_steps": 2, "remaining_cost": 2,
                                                   "project_ref": channel_id, "key": "demo", "card_path": "tasks/stage.md",
-                                                  "card_sha256": stage_pin, "write_face": ["src/recover.py"]},
+                                                  "card_sha256": stage_pin, "write_face": [f"src/{stem}.py"]},
                              "duty": {"shift": "test", "until": 9_999_999_999_999, "stopHash": "missing"}}))
     put(receipt, json.dumps({**binding, "state": "started", "session": "session-a", "stage_digest": grant_hash}))
     session = project / "session.jsonl"
@@ -199,16 +215,32 @@ def deadline_grant(fixture, child, parent, pin):
 
 
 @pytest.mark.parametrize("cancel_before_recovery", [False, True])
-def test_deadline_successor_enqueues_once_and_recovers_the_same_reservation(fixture, monkeypatch, cancel_before_recovery):
+@pytest.mark.parametrize("depth", [0, 1, 3])
+def test_deadline_successor_enqueues_once_and_recovers_the_same_reservation(
+        fixture, monkeypatch, cancel_before_recovery, depth):
     project, key, folder, _ = fixture
     monkeypatch.setattr(rp.Path, "home", lambda: project)
-    parent, pin = deadline_plan(fixture)
+    parent, pin = deadline_plan(fixture, claim="host:previous" if depth else "host:1")
+    stem = "recover"
+    if depth:
+        put(key.parent / "_index.parallel", "| demo | active | EXECUTE | host:1 | | | now |\n")
+    for i in range(depth):
+        successor = f"narrowed-{i}"
+        replan_unstarted(project, stem, successor, parent)
+        stem = successor
+    pin = dispatch.card_digest(key / f"tasks/{stem}.md")
     before = (folder / "run.json").read_bytes()
+    records_before = {path: path.read_bytes() for path in (key / "evidence" / "replan").glob("*.json")}
     def send(_=None):
-        return dispatch.dispatch(project, "demo", "recover", "phase-writer", "check", loop="execute", attempt=1)
+        return dispatch.dispatch(project, "demo", stem, "phase-writer", "check", loop="execute", attempt=1)
     assert "allocation is missing" in send().reason
-    child = dispatch.task_key_for("demo", "recover")
-    file, _, session = deadline_grant(fixture, child, parent, pin)
+    child = dispatch.task_key_for("demo", stem)
+    file, _, session = deadline_grant(fixture, child, parent, pin, stem)
+    if depth:
+        approval = json.loads(rp.body(file))["approval"]
+        assert [edge["card"] for edge in approval["lineage"]] == [
+            "tasks/recover.md", *(f"tasks/narrowed-{i}.md" for i in range(depth))
+        ]
     original_budget = session.read_bytes()
     # Fail after the envelope is durable and before the worker row is published.
     with patch.object(mw_common, "upsert_worker_row", side_effect=OSError("interrupted")):
@@ -234,6 +266,58 @@ def test_deadline_successor_enqueues_once_and_recovers_the_same_reservation(fixt
     assert [r["task_key"] for r in mw_common.parse_workers_file(mw_common.workers_path(project))].count(child) == 1
     assert file.is_file() and session.read_bytes() == original_budget
     assert (folder / "run.json").read_bytes() == before
+    assert all(path.read_bytes() == content for path, content in records_before.items())
+
+
+@pytest.mark.parametrize("change,reason", [
+    ("missing-pin", "parent_worker_run must name"),
+    ("missing-edge", "requires an applied replan"),
+    ("edited-intermediate", "card or source evidence changed"),
+    ("broken-receipt", "decision receipt is missing"),
+    ("dispatched-intermediate", "no longer unstarted"),
+    ("superseded", "superseded"),
+    ("expired-budget", "expired or invalid"),
+])
+def test_deadline_successor_refuses_invalid_multihop_recovery(fixture, monkeypatch, change, reason):
+    project, key, _, row = fixture
+    monkeypatch.setattr(rp.Path, "home", lambda: project)
+    parent, _ = deadline_plan(fixture)
+    if change == "missing-pin":
+        with pytest.raises(ValueError, match=reason):
+            replan_unstarted(project, "recover", "leaf", None)
+        assert not (key / "tasks/leaf.md").exists()
+        return
+    replan_unstarted(project, "recover", "leaf", parent)
+    child = dispatch.task_key_for("demo", "leaf")
+    pin = dispatch.card_digest(key / "tasks/leaf.md")
+    file, _, _ = deadline_grant(fixture, child, parent, pin, "leaf")
+    if change == "missing-edge":
+        original = next(record for record in rp.records(key) if record["source"]["run_id"] == parent)
+        (key / "evidence" / "replan" / f"{original['id']}.json").unlink()
+    elif change == "edited-intermediate":
+        intermediate = key / "tasks/recover.md"
+        put(intermediate, rp.body(intermediate) + "changed")
+    elif change == "broken-receipt":
+        sink = decision_wire.production_lifecycle_sink(project)
+        retained = [line for line in rp.body(sink).splitlines() if not (
+            json.loads(line).get("lifecycle") == "settled" and json.loads(line).get("task_key") == "old")]
+        put(sink, "\n".join(retained) + "\n")
+    elif change == "dispatched-intermediate":
+        envelope = key / "workers" / "another-task" / "task.md"
+        put(envelope, "card_path: tasks/recover.md\n")
+        mw_common.upsert_worker_row(mw_common.workers_path(project), {
+            **row, "task_key": "another-task", "task_path": str(envelope), "status": "done",
+        })
+    elif change == "superseded":
+        replan_unstarted(project, "leaf", "replacement", parent)
+    elif change == "expired-budget":
+        grant = json.loads(rp.body(file))
+        grant["deadline"] = "2026-01-01T00:00:00.000Z"
+        put(file, json.dumps(grant))
+    card_data = dispatch.dispatch_card(project, "demo", "leaf")
+    envelope = dispatch.render_task_md("phase-writer", "check", loop="execute", attempt=1, card=card_data)
+    assert reason in dispatch.dispatch_parent_refusal(project, "demo", child, envelope, allocation={})
+    assert not (key / "workers" / child).exists()
 
 
 @pytest.mark.parametrize("change,reason", [

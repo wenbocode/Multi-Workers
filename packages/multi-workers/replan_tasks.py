@@ -353,6 +353,30 @@ def plan_face(project: Path, markdown: str):
     return cards.parse_workspace_write_face(project, cards.render_write_face_line(entries or []))
 
 
+def applied_lineage(known: list[dict], ref: str) -> list[tuple[dict, dict]]:
+    """Walk from a published card back through replans of unstarted cards."""
+    producers = {}
+    for record in known:
+        if record["state"] in {"applied", "publishing"}:
+            for unit in record["plan"]["units"]:
+                producers.setdefault(card_identity(f"tasks/{unit['id']}.md"), []).append((record, unit))
+    lineage, seen = [], set()
+    ref = card_identity(ref)
+    while ref in producers:
+        matches = producers[ref]
+        if ref in seen or len(matches) != 1:
+            raise ValueError("cyclic or ambiguous replan ancestry")
+        record, unit = matches[0]
+        if record["state"] != "applied" or record["plan"]["action"] not in {"narrow", "split"}:
+            raise ValueError("incomplete applied replan ancestry")
+        lineage.append((record, unit))
+        seen.add(ref)
+        if record["source"]["status"] != "unstarted":
+            break
+        ref = card_identity(record["source"]["card"])
+    return lineage
+
+
 def preview(project: Path, key_dir: Path, current: dict, plan: dict) -> dict:
     units = plan["units"]
     choice = plan["action"]
@@ -378,6 +402,12 @@ def preview(project: Path, key_dir: Path, current: dict, plan: dict) -> dict:
                     raise ValueError("a predecessor with dependents requires PASS evidence or successor coverage")
     coverage = set(retained)
     graph, faces, resources = {}, {}, {}
+    source = current["facts"]
+    if units and source["status"] == "unstarted":
+        lineage = applied_lineage(records(key_dir), source["card"])
+        if lineage:
+            source = lineage[-1][0]["source"]
+    deadline_parent = source["run_id"] if source.get("stop_kind") == "worker-deadline" else None
     for unit in units:
         stem = identifier(unit["id"])
         if stem.casefold() in {s.casefold() for s in graph} or stem == current["facts"]["task"]:
@@ -390,6 +420,8 @@ def preview(project: Path, key_dir: Path, current: dict, plan: dict) -> dict:
             if not isinstance(unit.get(field), str) or not unit[field].strip():
                 raise ValueError(f"{stem}: missing {field}")
         md = unit["markdown"].replace("\r\n", "\n").replace("\r", "\n")
+        if deadline_parent and mw_common.read_task_header_scalar(md, "parent_worker_run") != deadline_parent:
+            raise ValueError(f"{stem}: parent_worker_run must name the timed-out run {deadline_parent}")
         role = mw_common.read_task_header_scalar(md, "type")
         headings = ("上下文", "要求", "交付格式", *cards.PRODUCER_EXTRA_ITEMS.get(role, ()))
         if role not in {*cards.PRODUCER_EXTRA_ITEMS, *cards.REGISTRY} or any(
@@ -729,7 +761,7 @@ def unit_dependencies(by_card: dict, record: dict, unit: dict) -> set[str]:
 
 
 def deadline_successor(project: Path, owner: str, task: str, card_ref: str, pin: str, parent: str) -> dict:
-    """Verify a frozen PM replan against the exact timed-out run and its live claim."""
+    """Verify a frozen replan lineage against the exact timed-out run and live PM claim."""
     key_dir = local(project / ".agenticdoc" / identifier(owner))
     if identifier(task) == parent.partition("@")[0]:
         raise ValueError("deadline successor must use a new task")
@@ -764,25 +796,14 @@ def deadline_successor(project: Path, owner: str, task: str, card_ref: str, pin:
         if "parent_worker_run" in run and run["parent_worker_run"] != envelope_parent:
             raise ValueError("deadline successor ancestor binding changed")
         ancestor = envelope_parent
-    matches = [(record, unit) for record in records(key_dir) if record.get("state") == "applied"
-               and record.get("key") == owner and record.get("source") == source
-               for unit in record["plan"]["units"] if card_ref == f"tasks/{unit['id']}.md"]
-    if len(matches) != 1:
+    known = records(key_dir)
+    lineage = applied_lineage(known, card_ref)
+    if not lineage or lineage[-1][0]["source"] != source:
         raise ValueError("deadline successor requires an applied replan for this run and card")
-    record, unit = matches[0]
-    current = source_context(key_dir, source)
-    if markdown != card_text(record, unit) or current["snapshot"] != record["snapshot"]:
-        raise ValueError("deadline successor card or source evidence changed")
-    proofs = retained_proof(project, key_dir, {**current, "facts": source}, record["plan"].get("retained", {}))
-    version_fields = [record["id"], current["snapshot"], record["plan"]]
-    if proofs:
-        version_fields.append(proofs)
-    version = digest(version_fields)
-    if record["version"] != version or record["plan"]["action"] not in {"narrow", "split"}:
-        raise ValueError("deadline successor plan version changed")
-    decision_ref = record["decision_id"]
-    action = record["plan"]["action"]
-    _, events = decision(project, owner, source, {"action": action, "basis_id": "replan-" + version[:24]}, decision_ref)
+    if any(card_identity(record["source"]["card"]) == card_identity(card_ref)
+           and record["state"] in {"applied", "publishing"} and record["plan"]["action"] != "schedule"
+           for record in known):
+        raise ValueError("deadline successor was superseded by another replan")
     index = [r for r in state.read_index(project) if r["key"].casefold() == owner.casefold()]
     if (len(index) != 1 or index[0]["key"] != owner or index[0]["status"] != "active"
             or index[0]["phase"] != "EXECUTE"):
@@ -790,14 +811,47 @@ def deadline_successor(project: Path, owner: str, task: str, card_ref: str, pin:
     claim = index[0]["claim_id"]
     if not claim or claim in {"—", "-"}:
         raise ValueError("deadline successor PM claim is unavailable")
-    for stage, prefix in (("executed", "replan-exec-"), ("settled", "replan-settle-")):
-        if sum(e.get("kind") == "lifecycle" and e.get("lifecycle") == stage
-               and e.get("actor") == {"kind": "system", "id": "pm:" + claim}
-               and e.get("event_id") == prefix + version[:24]
-               for e in events) != 1:
-            raise ValueError("deadline successor PM decision receipt is missing or belongs to another claim")
-    return {"project": str(project), "key": owner, "parent": parent, "decision": decision_ref,
-            "version": version, "claim": claim}
+    dispatched_tasks = {row["task_key"] for row in rows}
+    dispatched_cards = {card_identity(mw_common.read_task_header_scalar(
+        body(key_dir / "workers" / identifier(row["task_key"]) / "task.md"), "card_path") or "") for row in rows}
+    verified = []
+    for record, unit in lineage:
+        facts = record["source"]
+        if facts["status"] == "unstarted" and (
+                facts["run_id"] is not None or facts["task"] in dispatched_tasks
+                or card_identity(facts["card"]) in dispatched_cards):
+            raise ValueError("deadline successor intermediate source is no longer unstarted")
+        produced = source_card(key_dir, f"tasks/{unit['id']}.md")
+        current = source_context(key_dir, facts)
+        if (record.get("key") != owner or body(produced) != card_text(record, unit)
+                or current["snapshot"] != record["snapshot"]):
+            raise ValueError("deadline successor card or source evidence changed")
+        proofs = retained_proof(project, key_dir, {**current, "facts": facts}, record["plan"].get("retained", {}))
+        version_fields = [record["id"], current["snapshot"], record["plan"]]
+        if proofs:
+            version_fields.append(proofs)
+        version = digest(version_fields)
+        if record["version"] != version:
+            raise ValueError("deadline successor plan version changed")
+        decision_ref = record["decision_id"]
+        _, events = decision(project, owner, facts, {
+            "action": record["plan"]["action"], "basis_id": "replan-" + version[:24]}, decision_ref)
+        actors = []
+        for stage, prefix in (("executed", "replan-exec-"), ("settled", "replan-settle-")):
+            matches = [e["actor"] for e in events if e.get("kind") == "lifecycle"
+                       and e.get("lifecycle") == stage and e.get("event_id") == prefix + version[:24]]
+            if (len(matches) != 1 or matches[0].get("kind") != "system"
+                    or not matches[0].get("id", "").startswith("pm:")):
+                raise ValueError("deadline successor PM decision receipt is missing or invalid")
+            actors.append(matches[0]["id"])
+        if actors[0] != actors[1] or (not verified and actors[0] != "pm:" + claim):
+            raise ValueError("deadline successor PM decision receipt belongs to another claim")
+        verified.append({"card": f"tasks/{unit['id']}.md", "decision": decision_ref, "version": version})
+    approval = {"project": str(project), "key": owner, "parent": parent, "decision": verified[0]["decision"],
+                "version": verified[0]["version"], "claim": claim}
+    if len(verified) > 1:
+        approval["lineage"] = list(reversed(verified))
+    return approval
 
 
 def deadline_budget(project: Path, owner: str, task: str, card_ref: str, pin: str,
@@ -954,6 +1008,14 @@ def admission(project: Path, owner: str, task: str, ref: str, *, attempt: int = 
     path = source_card(key_dir, ref)
     if body(path) != card_text(record, unit) or (card_hash and cards.card_digest(path) != card_hash):
         return "replan-card-drift"
+    try:
+        lineage = applied_lineage(known, ref)
+    except ValueError as exc:
+        return f"replan-lineage-invalid:{exc}"
+    source = lineage[-1][0]["source"]
+    if (source.get("stop_kind") == "worker-deadline"
+            and mw_common.read_task_header_scalar(body(path), "parent_worker_run") != source["run_id"]):
+        return f"replan-deadline-parent-required:{source['run_id']}"
     done, dispatched_cards = set(), set()
     for row in rows:
         folder = key_dir / "workers" / identifier(row["task_key"])
