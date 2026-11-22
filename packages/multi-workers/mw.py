@@ -10627,57 +10627,44 @@ def cmd_partition(args: argparse.Namespace) -> int:
 
 # ── Subcommand: model (dispatch model defaults) ──────────────────────────────
 
-def _dispatch_extra_keys(path: pathlib.Path) -> dict:
-    """Top-level dispatch.yml keys other than ``models`` (fallback_models, ...).
-
-    ``_model_write`` rewrites the whole file from a role->value mapping. Before
-    that rewrite we lift every other top-level key off the existing file so the
-    write cannot silently drop configuration it does not own (mw-model-error-
-    perception D5: the launcher reads the top-level `fallback_models` key). A
-    missing/unreadable/unparsable/non-mapping file contributes nothing — the
-    caller has already refused a write on an unusable file.
-    """
+def _dispatch_extra_keys(path: pathlib.Path, *, include_models: bool = False) -> dict:
+    """Read the YAML values the model command needs to preserve."""
     import yaml
 
-    if not path.exists():
-        return {}
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, yaml.YAMLError):
         return {}
     if not isinstance(data, dict):
         return {}
-    return {key: value for key, value in data.items() if key != "models"}
+    if not include_models:
+        data.pop("models", None)
+    return data
 
 
 def _model_write(
     project_dir: pathlib.Path,
-    models: dict[str, str],
+    models: dict[str, str] | None = None,
     fallback_models: dict[str, list[str]] | None = None,
+    *,
+    strict: bool | None = None,
 ) -> None:
-    """Write .mw/dispatch.yml from a complete role→value mapping.
-
-    Read-modify-write: untouched top-level keys (notably `fallback_models`) are
-    preserved verbatim, never replaced by a models-only dict."""
-
-# mw-model-fallback-cli: `fallback_models` is a task-type -> ordered-chain mapping.
-# None keeps the file's existing block verbatim; a mapping replaces it, and an
-# empty mapping drops the top-level key entirely (no leftovers after the last clear).
+    """Update supplied dispatch settings and preserve the other YAML values."""
     import yaml
 
     path = mw_common.dispatch_config_path(project_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = _dispatch_extra_keys(path)
+    data = _dispatch_extra_keys(path, include_models=models is None)
     if models:
         data["models"] = models
-    if fallback_models is not None:
-        if fallback_models:
-            data["fallback_models"] = fallback_models
-        else:
-            data.pop("fallback_models", None)
-    path.write_text(
+    if fallback_models:
+        data["fallback_models"] = fallback_models
+    elif fallback_models is not None:
+        data.pop("fallback_models", None)
+    if strict is not None:
+        data["strict"] = strict
+    _atomic_write_yml(
+        path,
         yaml.safe_dump(data, allow_unicode=True, default_flow_style=False, sort_keys=True),
-        encoding="utf-8",
     )
 
 
@@ -10687,11 +10674,25 @@ def cmd_thinking(args: argparse.Namespace) -> int:
 
 
 def cmd_model(args: argparse.Namespace) -> int:
-    """Dispatch model defaults: per-role models used when a task carries no
-    explicit `model:` (mw-dispatch-models). Resolution order per spawn:
-    task.md model: > dispatch.yml role > current window model > per-cli default."""
+    """Inspect and configure worker model defaults and override priority."""
     project_dir = pathlib.Path(args.project).resolve()
     action = args.model_action
+
+    if action == "strict":
+        existing, err = mw_common.load_dispatch_config(project_dir)
+        if err:
+            print(f"[mw model strict] Error: {err}", file=sys.stderr)
+            return 1
+        path = mw_common.dispatch_config_path(project_dir)
+        enabled = args.value == "on"
+        if existing.get("strict") is not enabled:
+            try:
+                _model_write(project_dir, strict=enabled)
+            except OSError as exc:
+                print(f"[mw model strict] Error writing {path}: {exc}", file=sys.stderr)
+                return 1
+        print(f"[mw model strict] {args.value} → {path}")
+        return 0
 
     if action == "set":
         role, value = args.role, args.value.strip()
@@ -10840,7 +10841,7 @@ def cmd_model(args: argparse.Namespace) -> int:
             return 1
         chain = cleaned[task_type]
         fallbacks[task_type] = chain
-        _model_write(project_dir, dict(existing.get("models", {})), fallback_models=fallbacks)
+        _model_write(project_dir, fallback_models=fallbacks)
         print(
             f"[mw model set-fallback] {task_type} = {', '.join(chain)} "
             f"({len(chain)} in order) → {mw_common.dispatch_config_path(project_dir)}"
@@ -10868,7 +10869,7 @@ def cmd_model(args: argparse.Namespace) -> int:
             print(f"[mw model clear-fallback] {task_type} is not configured")
             return 0
         del fallbacks[task_type]
-        _model_write(project_dir, dict(existing.get("models", {})), fallback_models=fallbacks)
+        _model_write(project_dir, fallback_models=fallbacks)
         print(
             f"[mw model clear-fallback] removed {task_type} → "
             f"{mw_common.dispatch_config_path(project_dir)}"
@@ -10882,6 +10883,7 @@ def cmd_model(args: argparse.Namespace) -> int:
     if err:
         print(f"Error: {err}")
         return 1
+    print(f"strict: {'on' if existing.get('strict') else 'off'}")
     window = mw_common.read_window_model(project_dir)
     print(f"window model: {window or '(none recorded)'}")
     for role in mw_common.DISPATCH_ROLES:
@@ -14785,7 +14787,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     model_p = sub.add_parser(
         "model",
-        help="Dispatch model defaults: per-role models used when a task carries no explicit model",
+        help="Configure dispatch model defaults, override priority and fallback chains",
     )
     model_sub = model_p.add_subparsers(dest="model_action", required=True)
     model_set_p = model_sub.add_parser("set", help="Set a role default (e.g. mw model set review timi/glm-5.3-air)")
@@ -14802,6 +14804,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                                help=f"One of: {', '.join(mw_common.DISPATCH_ROLES)} — or 'all'")
     model_show_p = model_sub.add_parser("show", help="Print the configured roles and the effective resolution")
     model_show_p.add_argument("--project", required=True, help="Project directory")
+    model_strict_p = model_sub.add_parser("strict", help="Set whether worker role models override task models")
+    model_strict_p.add_argument("--project", required=True, help="Project directory")
+    model_strict_p.add_argument("value", choices=("on", "off"))
     model_setfb_p = model_sub.add_parser(
         "set-fallback",
         help="Set a task type's ordered fallback chain (1..4 models, tried in order once the primary exhausts)",

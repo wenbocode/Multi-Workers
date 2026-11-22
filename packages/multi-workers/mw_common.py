@@ -262,7 +262,7 @@ def window_model_path(project_root: pathlib.Path) -> pathlib.Path:
 def load_dispatch_config(project_root: pathlib.Path) -> tuple[dict, str | None]:
     """Load .mw/dispatch.yml -> (config, error).
 
-    config is {"models": {role: "prefix/model"}}; a missing file is ({}, None)
+    config contains "models" and the optional boolean "strict"; a missing file is ({}, None)
     (nothing configured). Any parse/validation problem returns ({}, message):
     model defaults are a convenience and must never block dispatching — the
     launcher falls through to the window model / per-cli defaults and doctor
@@ -295,7 +295,10 @@ def load_dispatch_config(project_root: pathlib.Path) -> tuple[dict, str | None]:
         if not isinstance(value, str) or not value.strip():
             return {}, f"dispatch.yml models.{role} must be a non-empty string"
         cleaned[role] = value.strip()
-    return {"models": cleaned}, None
+    config = {"models": cleaned}
+    if isinstance(data.get("strict"), bool):
+        config["strict"] = data["strict"]
+    return config, None
 
 
 def read_window_model(project_root: pathlib.Path) -> str:
@@ -342,18 +345,21 @@ def resolve_dispatch_model(
     entry_model: str,
     config_models: dict,
     window_model: str,
+    strict: bool = False,
 ) -> tuple[str, str]:
     """Resolve the model for one spawn: (value, source).
 
     Chain: task.md `model:` (explicit, returned as-is) > dispatch.yml role
     default > current window model > "" (per-cli hardcoded default).
+    Strict mode puts a compatible role default ahead of the explicit model.
     The implicit layers (config/window) skip values incompatible with the
     entry cli (see model_value_compatible); the explicit entry model is NOT
     filtered here — the launcher fails it loudly instead of silently
     re-routing (an explicit codex_cli/... on a pi task is a caller bug).
     """
-    if entry_model.strip():
-        return entry_model.strip(), "task"
+    requested = entry_model.strip()
+    if requested and not strict:
+        return requested, "task"
     role = TASK_TYPE_TO_ROLE.get(task_type, "coding")
     candidate = config_models.get(role, "").strip()
     # mw-decision-substitution W8/W10: a `decide_prepare` worker is read-and-fill
@@ -366,6 +372,8 @@ def resolve_dispatch_model(
         candidate = config_models.get(role, "").strip()
     if candidate and model_value_compatible(cli, candidate):
         return candidate, f"config:{role}"
+    if requested:
+        return requested, "task"
     if window_model.strip() and model_value_compatible(cli, window_model):
         return window_model.strip(), "window"
     return "", "default"

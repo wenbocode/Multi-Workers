@@ -5256,6 +5256,24 @@ describe("/mw partition (partition-workspace config)", () => {
 });
 
 describe("/mw model (dispatch model defaults)", () => {
+	it("strict forwards on and off and rejects malformed commands", async () => {
+		const calls: Array<[string, string[]]> = [];
+		const ctx = fakeCmdCtx();
+		const runner = (projectDir: string, args: string[]): MwCliResult => {
+			calls.push([projectDir, args]);
+			return { ok: true, output: "" };
+		};
+		for (const args of ["strict on", "strict off", "strict", "strict maybe", "strict on extra"]) {
+			await runMwModelCommand(ctx.ctx, "/proj", args, runner);
+		}
+		expect(calls).toEqual([
+			["/proj", ["strict", "on"]],
+			["/proj", ["strict", "off"]],
+		]);
+		expect(ctx.notifications.slice(0, 2)).toEqual(["mw model strict: on", "mw model strict: off"]);
+		expect(ctx.notifications.slice(2)).toEqual(Array(3).fill("Usage: /mw model strict <on|off>"));
+	});
+
 	it("show forwards to mw.py model show with the control root as --project", async () => {
 		const calls: Array<[string, string[]]> = [];
 		const ctx = fakeCmdCtx();
@@ -5823,6 +5841,41 @@ describe("dispatch role + model override gate (mw-dispatch-role-escape)", () => 
 		expect(md).not.toContain("model:");
 		expect(r).toContain("requested value matches the configured default");
 		fs.rmSync(root.root, { recursive: true, force: true });
+	});
+
+	it("strict replaces an invalid PM model before checking the model or the override reason", async () => {
+		const fixture = await setupTool("\uFEFFstrict: true\nmodels: {review: 'timi/gpt-5.6-sol'}\n");
+		try {
+			const result = await fixture.execute(
+				{
+					task_key: "t1",
+					description: "work",
+					type: "review",
+					model: "timi/unknown",
+				},
+				TIMI(),
+			);
+			expect(result).toContain("strict mode replaced timi/unknown");
+			expect(taskMdOf(fixture.root, "t1")).not.toMatch(/^model(?:-reason)?:/m);
+			expect(new WorkerStore(fixture.root).readAll()[0]?.model).toBe("timi/gpt-5.6-sol");
+		} finally {
+			fs.rmSync(fixture.root, { recursive: true, force: true });
+		}
+	});
+
+	it("strict applies to /worker and off restores the PM override", async () => {
+		const yaml = "models:\n  review: timi/gpt-5.6-sol\n";
+		const enabled = await setupCommand(`strict: true\n${yaml}`);
+		const disabled = await setupCommand(`strict: false\n${yaml}`);
+		try {
+			const args = "pi --type review --model timi/gpt-5.6-luna --reason context --key k work";
+			expect((await enabled.run(args, TIMI())).join("\n")).toContain("strict mode replaced timi/gpt-5.6-luna");
+			expect((await disabled.run(args, TIMI())).join("\n")).toContain("model override: role default");
+			expect(new WorkerStore(enabled.root).readAll()[0]?.model).toBe("timi/gpt-5.6-sol");
+			expect(new WorkerStore(disabled.root).readAll()[0]?.model).toBe("timi/gpt-5.6-luna");
+		} finally {
+			for (const { root } of [enabled, disabled]) fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("VC-005: validateModelValue rejects unknown ids and unknown prefixes only", () => {

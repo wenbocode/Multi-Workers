@@ -559,8 +559,8 @@ def _resolve_entry_model(
 ) -> tuple[str, str]:
     """Resolve this spawn's model via the dispatch chain.
 
-    task.md `model:` > .mw/dispatch.yml role default > .mw/window-model > ""
-    (per-cli hardcoded default, applied in _build_command). Returns
+    Task model > role default > window model > per-CLI default. In strict
+    mode a compatible role default wins over the task model. Returns
     (model_value, source) with source for diagnostics. A broken dispatch.yml
     never blocks the spawn — it warns once per spawn on stderr (→ mw.log) and
     the chain falls through.
@@ -573,12 +573,29 @@ def _resolve_entry_model(
             file=sys.stderr,
         )
     task_type, task_model = _read_task_md_fields(entry["task_path"])
+    models = config.get("models", {})
+    strict = config.get("strict", False)
+    if strict and task_model and task_model == models.get("vision"):
+        # The dispatch planner pins its own image auto-route in the task
+        # header. It is a configured vision model, not a PM model override.
+        try:
+            content = pathlib.Path(entry["task_path"]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            content = ""
+        role = mw_common.TASK_TYPE_TO_ROLE.get(task_type, "coding")
+        reason = mw_common.read_task_header_scalar(content, "model-reason") or ""
+        route = f"auto-route: {role} -> vision"
+        if mw_common.read_task_header_scalar(content, "images") == "yes" and (
+            reason == route or reason.endswith(f"; {route}")
+        ):
+            strict = False
     return mw_common.resolve_dispatch_model(
         cli=entry["cli"].lower(),
         task_type=task_type,
         entry_model=task_model,
-        config_models=config.get("models", {}),
+        config_models=models,
         window_model=mw_common.read_window_model(project_dir),
+        strict=strict,
     )
 
 

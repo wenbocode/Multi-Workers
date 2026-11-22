@@ -34,7 +34,8 @@ import {
 	DISPATCHABLE_TYPES,
 	detectImageNeed,
 	modelImageCapability,
-	readRoleModel,
+	modelValueCompatible,
+	readDispatchModelConfig,
 	roleForTaskType,
 	validateModelValue,
 } from "../shared/dispatch-models.ts";
@@ -1886,12 +1887,16 @@ export function planDispatchFrontmatter(input: {
 	/** Host-owned task identity and the PM's prepared source material and basis. */
 	dp1?: Dp1DispatchFacts;
 }):
-	| { ok: true; frontmatter: string; echo: string; triage: DispatchTriage | null }
+	| { ok: true; frontmatter: string; echo: string; triage: DispatchTriage | null; strictModel?: string }
 	| { ok: false; message: string; triage?: DispatchTriage } {
 	const role = roleForTaskType(input.taskType);
-	const configured = readRoleModel(input.cwd, role) ?? "";
+	const { models, strict } = readDispatchModelConfig(input.cwd);
+	const configured = models[role] ?? "";
 	const requested = input.model.trim();
 	const reason = oneLineReason(input.modelReason);
+	const strictRole = role === "decide_prepare" && !configured ? "coding" : role;
+	const strictCandidate = models[strictRole] ?? "";
+	const strictModel = strict && requested && modelValueCompatible(input.cli, strictCandidate) ? strictCandidate : "";
 	// Image requirement (T-06, three-state, verbatim precedence): an explicit
 	// `images: "no"` short-circuits to "no image" WITHOUT calling the filesystem
 	// detector (the exemption is unconditional and must stay cheap); an explicit
@@ -1918,10 +1923,8 @@ export function planDispatchFrontmatter(input: {
 	if (input.phase !== undefined && input.phase.length > 0) headLines.push(`phase: ${input.phase}`);
 	if (imagesField !== undefined) headLines.push(`images: ${imagesField}`);
 
-	// The value that will actually run: an explicit request wins, else the
-	// configured role default (which the launcher would pick next). Either way
-	// it must name a model the pi route can resolve.
-	let effective = requested || configured;
+	// Validate the winning model, including a role model selected by strict mode.
+	let effective = strictModel || requested || configured;
 	if (effective) {
 		const validation = validateModelValue(input.registry, input.cli, input.provider, effective);
 		if (!validation.ok) return { ok: false, message: validation.message };
@@ -1939,7 +1942,7 @@ export function planDispatchFrontmatter(input: {
 	if (!requested && imagesRequested) {
 		const roleCapability = modelImageCapability(input.registry, input.cli, input.provider, effective);
 		if (roleCapability === "no") {
-			const visionValue = readRoleModel(input.cwd, "vision") ?? "";
+			const visionValue = models.vision ?? "";
 			if (visionValue && modelImageCapability(input.registry, input.cli, input.provider, visionValue) === "yes") {
 				effective = visionValue;
 				autoRouteSource = role;
@@ -1962,7 +1965,7 @@ export function planDispatchFrontmatter(input: {
 		}
 	}
 
-	if (requested && configured && requested !== configured && !reason) {
+	if (!strictModel && requested && configured && requested !== configured && !reason) {
 		return {
 			ok: false,
 			message:
@@ -2083,6 +2086,16 @@ export function planDispatchFrontmatter(input: {
 		};
 	}
 
+	if (strictModel && requested !== strictModel) {
+		return {
+			ok: true,
+			frontmatter: `${headLines.join("\n")}\n`,
+			echo: `model: dispatch.yml ${strictRole}=${strictModel} (strict mode replaced ${requested})`,
+			triage,
+			strictModel,
+		};
+	}
+
 	if (!requested) {
 		return {
 			ok: true,
@@ -2096,11 +2109,11 @@ export function planDispatchFrontmatter(input: {
 
 	// Requested value equals the configured default: leave the line out so the
 	// config stays the single source of truth (a later config change applies).
-	if (configured && requested === configured) {
+	if (strictModel || (configured && requested === configured)) {
 		return {
 			ok: true,
 			frontmatter: `${headLines.join("\n")}\n`,
-			echo: `model: dispatch.yml ${role}=${configured} (requested value matches the configured default; not pinned)`,
+			echo: `model: dispatch.yml ${strictModel ? strictRole : role}=${requested} (requested value matches the configured default; not pinned)`,
 			triage,
 		};
 	}
@@ -3340,7 +3353,7 @@ export function registerWorkerTools(
 			model: Type.Optional(
 				Type.String({
 					description:
-						"Optional model override for this worker (e.g. 'timi/gpt-5.6-sol'). Deviating from the configured .mw/dispatch.yml role default requires model_reason; a value equal to that default is not pinned (the config stays the source of truth).",
+						"Optional model override for this worker (e.g. 'timi/gpt-5.6-sol'). A compatible configured role model takes priority in strict mode. Otherwise a deviation from the configured role default requires model_reason. An equal value inherits the config.",
 				}),
 			),
 			model_reason: Type.Optional(
@@ -3612,7 +3625,14 @@ export function registerWorkerTools(
 			const taskMdPath = path.join(taskDir, "task.md");
 
 			const outcome = await dispatchTask(
-				{ taskKey: task_key, status: "pending", cli, provider, model: model ?? "", taskPath: taskMdPath },
+				{
+					taskKey: task_key,
+					status: "pending",
+					cli,
+					provider,
+					model: modelPlan.strictModel ?? model ?? "",
+					taskPath: taskMdPath,
+				},
 				workerStore,
 				{ modelRegistry: _context?.modelRegistry, publishCard: publish, card: cardGate },
 			);
@@ -4197,7 +4217,7 @@ export function registerWorkerCommands(
 
 			// Dispatch directly to _workers.parallel
 			const outcome = await dispatchTask(
-				{ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath },
+				{ taskKey, status: "pending", cli, provider, model: modelPlan.strictModel ?? model, taskPath: taskMdPath },
 				workerStore,
 				{ modelRegistry: ctx.modelRegistry, publishCard: publish, card: cardGate },
 			);
@@ -4623,6 +4643,19 @@ export async function runMwModelCommand(
 		);
 		return;
 	}
+	if (action === "strict") {
+		const mode = parts[1];
+		if ((mode !== "on" && mode !== "off") || parts.length !== 2) {
+			ctx.ui.notify("Usage: /mw model strict <on|off>", "warning");
+			return;
+		}
+		const r = runner(projectDir, [action, mode]);
+		ctx.ui.notify(
+			r.ok ? r.output || `mw model strict: ${mode}` : `mw model strict failed: ${r.error}`,
+			r.ok ? "info" : "error",
+		);
+		return;
+	}
 	if (action === "set-fallback" || action === "clear-fallback") {
 		const taskType = parts[1];
 		const expectsChain = action === "set-fallback";
@@ -4646,7 +4679,7 @@ export async function runMwModelCommand(
 		return;
 	}
 	ctx.ui.notify(
-		"Usage: /mw model show | set <role> <prefix/model> | clear <role|all> | set-fallback <task-type> <chain> | clear-fallback <task-type>",
+		"Usage: /mw model show | set <role> <prefix/model> | clear <role|all> | strict <on|off> | set-fallback <task-type> <chain> | clear-fallback <task-type>",
 		"warning",
 	);
 }

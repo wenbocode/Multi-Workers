@@ -15,17 +15,14 @@
 //   codex_cli / claude_cli                  (CLI executors, spawn-side only)
 //
 // The Python side owns resolution (mw_common.MODEL_PREFIX_TO_PI_PROVIDER +
-// launcher._effective_entry): task.md `model:` > .mw/dispatch.yml role >
-// .mw/window-model > per-cli default. This module only (a) records the
-// current window model into .mw/window-model so unset roles inherit it, and
-// (b) applies a configured `main` role to the PM window when the user has not
-// made an explicit model choice. The maps here mirror mw_common.py — keep
-// both sides in sync.
+// launcher._effective_entry). This module reads role defaults for pre-dispatch
+// validation and handles the PM window model. The maps mirror mw_common.py.
 
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
+import { parse } from "yaml";
 import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
 import type { ModelRegistry } from "../../../core/model-registry.ts";
 import { LOCAL_CODEX_PROVIDER } from "./codex-proxy.ts";
@@ -93,6 +90,15 @@ export function roleForTaskType(taskType: string): string {
  * registry validation must skip them. */
 const CLI_EXECUTOR_PREFIXES: readonly string[] = ["codex_cli", "claude_cli"];
 
+/** Whether the model can be applied without changing the worker's CLI. */
+export function modelValueCompatible(cli: string, value: string): boolean {
+	const { prefix } = parseModelValue(value);
+	if (!prefix) return true;
+	const workerCli = cli.toLowerCase();
+	if (Object.hasOwn(PREFIX_TO_PROVIDER_ID, prefix)) return workerCli === "pi";
+	return CLI_EXECUTOR_PREFIXES.includes(prefix) && prefix === `${workerCli}_cli`;
+}
+
 function dispatchYmlPath(cwd: string): string {
 	return path.join(cwd, ".mw", "dispatch.yml");
 }
@@ -120,38 +126,30 @@ export function recordWindowModel(cwd: string, model: Model<any> | undefined): v
 	}
 }
 
-/** One role's value out of .mw/dispatch.yml, or null.
- * Hand-parses the narrow mw-model-owned format (flat `models:` mapping
- * written by `mw model set`) — the file is machine-written, so a strict
- * reader keeps the bundle yaml-free. Missing file, missing role, and a role
- * outside the `models:` block all return null (the chain just falls through). */
-export function readRoleModel(cwd: string, role: string): string | null {
-	let text: string;
+/** Read the same worker model settings and role values as the launcher. */
+export function readDispatchModelConfig(cwd: string): { models: Record<string, string>; strict: boolean } {
+	const empty = { models: {}, strict: false };
 	try {
-		text = fs.readFileSync(dispatchYmlPath(cwd), "utf8");
+		const config: unknown = parse(fs.readFileSync(dispatchYmlPath(cwd), "utf8"), { version: "1.1" });
+		if (!config || typeof config !== "object" || Array.isArray(config)) return empty;
+		const { models = {}, strict } = config as { models?: unknown; strict?: unknown };
+		if (!models || typeof models !== "object" || Array.isArray(models)) return empty;
+		const roles = new Set(["main", ...Object.values(DISPATCH_ROLE_BY_TYPE)]);
+		const cleaned: Record<string, string> = {};
+		for (const [role, value] of Object.entries(models)) {
+			if (!roles.has(role) || typeof value !== "string" || !value.trim()) return empty;
+			cleaned[role] = value.trim();
+		}
+		return { models: cleaned, strict: strict === true };
 	} catch {
-		return null;
+		return empty;
 	}
-	// A UTF-8 BOM (Windows PowerShell `Set-Content -Encoding utf8`, some
-	// editors) would otherwise hide the first line: PyYAML accepts the BOM, so
-	// the Python resolver would honour the role while this reader saw no
-	// config at all — a silent fail-open of the override gate.
-	if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-	let inModels = false;
-	for (const raw of text.split(/\r?\n/)) {
-		const line = raw.trimEnd();
-		if (/^models:\s*$/.test(line)) {
-			inModels = true;
-			continue;
-		}
-		if (inModels) {
-			// End of the models block: a new top-level key (no indentation).
-			if (line && !/^\s/.test(line)) break;
-			const m = /^\s+([A-Za-z0-9_-]+):\s*(\S+)\s*$/.exec(line);
-			if (m && m[1] === role) return m[2];
-		}
-	}
-	return null;
+}
+
+/** One configured role's model, or null when unset. */
+export function readRoleModel(cwd: string, role: string): string | null {
+	const { models } = readDispatchModelConfig(cwd);
+	return Object.hasOwn(models, role) ? models[role] : null;
 }
 
 /** The configured `main` role from .mw/dispatch.yml, or null. */

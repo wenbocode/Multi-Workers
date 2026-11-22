@@ -153,6 +153,8 @@
 
 - Added a Codex PM CLI to dispatch AgenticTask coding cards through the existing MW worker queue, recover results by key and retain independent acceptance command logs for each verification attempt.
 
+- Added `/mw model strict on|off` to give compatible project-configured worker role models priority over PM model overrides. The setting defaults to off and appears in `/mw model show`.
+
 ### Changed
 
 - `mw review-split set on` now refuses the value instead of persisting a no-op: the `on` tier (dispatch k unit cards + merge) was cancelled with the negative verdict of `claim-driven-review-orchestration`, so a persisted `on` behaved exactly like `off`. The setter exits 2 with `mode 'on' is not wired` and writes nothing; `status` (text and `--json`) gained a `wired` field (`wired=no` for a pre-existing `on` config), so a stale file can no longer look like an active feature. Parsing is unchanged — `on` stays a legal value for a future implementation.

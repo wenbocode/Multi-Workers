@@ -292,6 +292,8 @@ python mw.py model clear-fallback --project . review
 
 PM 窗口里也可用 `/mw model`（转发到同一 CLI）：`/mw model show` · `/mw model set <role> <prefix/model>` · `/mw model clear <role|all>` · `/mw model set-fallback <task-type> <m1,m2>` · `/mw model clear-fallback <task-type>`。worker 角色下次 spawn 生效（无需重启 serve）；`main` 角色在窗口下次启动时套用。
 
+`/mw model strict on` 启用项目级严格模式。派发 worker 时，若 `.mw/dispatch.yml` 中有兼容当前 CLI 的角色模型，它优先于 PM 指定的模型。角色未配置或模型与 CLI 不兼容时，仍使用 PM 指定的值。`/mw model strict off` 恢复默认优先级，`/mw model show` 显示开关状态。CLI 也支持 `mw model strict on|off --project .`。
+
 `mw doctor` 的 `dispatch` 段展示配置状态；配置文件损坏仅降级为建议（不阻断派发，回退窗口模型/硬编码默认）。
 
 ### 模型故障降级（fallback_models，mw-model-error-perception）

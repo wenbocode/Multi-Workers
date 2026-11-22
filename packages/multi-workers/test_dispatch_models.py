@@ -97,6 +97,37 @@ def creds(monkeypatch: pytest.MonkeyPatch) -> dict:
 # ── config layer ──────────────────────────────────────────────────────────────
 
 
+def test_strict_cli_round_trip_preserves_other_config(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    def run(*tokens: str) -> int:
+        monkeypatch.setattr(sys, "argv", ["mw", "model", *tokens, f"--project={tmp_path}"])
+        return mw.cmd_model(mw._parse_args())
+
+    monkeypatch.setattr(mw_common, "model_images", lambda _value: "unknown")
+    assert run("show") == 0
+    assert "strict: off" in capsys.readouterr().out
+    path = mw_common.dispatch_config_path(tmp_path)
+    path.parent.mkdir()
+    original = {
+        "models": {"review": "timi/configured"},
+        "fallback_models": {"review": ["timi/fallback"]},
+        "thinking": {"default": "high"},
+    }
+    path.write_text(yaml.safe_dump(original), encoding="utf-8")
+    assert run("strict", "on") == 0
+    assert yaml.safe_load(path.read_text(encoding="utf-8")) == {**original, "strict": True}
+    assert run("show") == 0
+    assert "strict: on" in capsys.readouterr().out
+    assert run("set", "coding", "timi/new") == 0
+    original["models"]["coding"] = "timi/new"
+    assert yaml.safe_load(path.read_text(encoding="utf-8")) == {**original, "strict": True}
+    assert run("strict", "off") == 0
+    assert yaml.safe_load(path.read_text(encoding="utf-8")) == {**original, "strict": False}
+    assert run("show") == 0
+    assert "strict: off" in capsys.readouterr().out
+
+
 class TestLoadDispatchConfig:
     def test_missing_file_is_nothing_configured(self, tmp_path: pathlib.Path) -> None:
         config, err = mw_common.load_dispatch_config(tmp_path)
@@ -255,6 +286,35 @@ class TestResolveDispatchModel:
 
 
 class TestLauncherResolution:
+    @pytest.mark.parametrize(
+        ("strict", "models", "expected"),
+        [
+            (True, {"review": "codex/configured"}, ("codex/configured", "config:review")),
+            (False, {"review": "codex/configured"}, ("timi/requested", "task")),
+            (True, {"coding": "codex/configured"}, ("timi/requested", "task")),
+            (True, {"review": "codex_cli/incompatible"}, ("timi/requested", "task")),
+        ],
+    )
+    def test_strict_prefers_a_compatible_worker_role(
+        self, tmp_path: pathlib.Path, strict: bool, models: dict, expected: tuple[str, str],
+    ) -> None:
+        task = _task_file(tmp_path, "type: review\nmodel: timi/requested\n\nReview.\n")
+        path = mw_common.dispatch_config_path(tmp_path)
+        path.parent.mkdir()
+        path.write_text(yaml.safe_dump({"strict": strict, "models": models}), encoding="utf-8")
+        assert launcher._resolve_entry_model(_entry(task), tmp_path) == expected
+
+    def test_strict_keeps_the_planners_image_auto_route(self, tmp_path: pathlib.Path) -> None:
+        root = _project(
+            tmp_path,
+            task_body="type: review\nimages: yes\nmodel: timi/visual\nmodel-reason: auto-route: review -> vision\n\nReview.\n",
+            dispatch_yml="strict: true\nmodels:\n  review: timi/configured\n  vision: timi/visual\n",
+        )
+        task = root / ".agenticdoc" / "k" / "workers" / "t1" / "task.md"
+        assert launcher._resolve_entry_model(_entry(task), root) == ("timi/visual", "task")
+        task.write_text("type: review\nimages: yes\nmodel: timi/visual\n\nReview.\n", encoding="utf-8")
+        assert launcher._resolve_entry_model(_entry(task), root) == ("timi/configured", "config:review")
+
     def test_task_md_model_is_source_of_truth(self, tmp_path: pathlib.Path) -> None:
         # Even with a stale queue-row model (orphan reinsert writes ""),
         # the task.md model: line is explicit.
