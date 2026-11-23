@@ -40,10 +40,13 @@ def test_cli_records_paired_question_and_actual_source_snapshot(
     envelope = cli._envelope("dp-QG", "source-snapshot-1")
     envelope["material"]["review_evidence"] = ["review.md:1-3", "review.md:1-3"]
     envelope["material"]["review_findings"] = "F1 and F2 require source repairs; runtime remains unverified."
+    envelope["preparation"]["model_context"] = {"reasons": {
+        "F1": "Ordering assertion is absent.", "F2": "Line anchors are stale.",
+    }}
     envelope["preparation"]["basis_catalog"] = [
         {"id": "complete", "text": "If all applicable checks pass with independent evidence", "material_refs": ["review_requirements"], "applies_to": ["pass"]},
-        {"id": "fix-order", "text": "F1 ordering assertion is absent", "material_refs": ["review_findings"], "applies_to": ["fix"]},
-        {"id": "fix-both", "text": "F1 and F2 both require repair", "material_refs": ["review_findings"], "applies_to": ["fix"]},
+        {"id": "fix-order", "text": "F1 ordering assertion is absent", "material_refs": ["review_findings"], "applies_to": ["fix"], "finding_ids": ["F1"]},
+        {"id": "fix-both", "text": "F1 and F2 both require repair", "material_refs": ["review_findings"], "applies_to": ["fix"], "finding_ids": ["F1", "F2"]},
         {"id": "standard-conflict", "text": "If review verifies a substantive conflict in the acceptance standard", "material_refs": ["review_requirements"], "applies_to": ["reopen"]},
     ]
     calls = []
@@ -60,7 +63,7 @@ def test_cli_records_paired_question_and_actual_source_snapshot(
         assert "preparation" not in payload["state"]
         assert "F1: FAIL ordering assertion missing" in payload["state"]["evidence_sources"][0]["text"]
         [question] = payload["questions"].values()
-        assert list(question["criteria"]) == ["passA", "fixA", "fixB", "reopenA"]
+        assert list(question["criteria"]) == ["fixA", "fixB"]
         assert "F1 and F2 both require repair" in question["criteria"]["fixB"]
         response = BytesIO(response_bytes)
         response.status = 200

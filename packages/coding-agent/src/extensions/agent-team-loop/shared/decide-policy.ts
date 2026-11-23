@@ -613,6 +613,8 @@ export function preparationProblems(
 		}
 	}
 	if (dp === "dp-QG") {
+		const reasons = isRecord(preparation.model_context) ? preparation.model_context.reasons : undefined;
+		if (isRecord(reasons) && Object.keys(reasons).length === 0) covered.add("fix");
 		const missing = choices.filter((choice) => !covered.has(choice));
 		if (missing.length) {
 			const field = "preparation.basis_catalog";

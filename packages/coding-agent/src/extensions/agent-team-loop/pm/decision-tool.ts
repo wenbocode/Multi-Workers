@@ -10,6 +10,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { type TLiteral, Type } from "typebox";
+import { Check, Errors } from "typebox/value";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import {
 	type DecideConfigFacts,
@@ -342,7 +343,7 @@ export interface DecisionSignoffResult {
 export interface AskDecisionUnavailable {
 	available: false;
 	unavailable: string;
-	action: typeof ASK_DECISION_BLOCKED_ACTION | "pm-select-type";
+	action: typeof ASK_DECISION_BLOCKED_ACTION | "pm-select-type" | "repair-material";
 	/** The child's own escalation verdict (`decision_points.ESCALATED_REASONS`,
 	 * 7 values) passed through verbatim. `unavailable` keeps the frozen legacy
 	 * transport vocabulary; the two coexist, neither is folded into the other
@@ -380,6 +381,8 @@ export interface AskDecisionOutcome {
 	/** The local envelope meta this call minted (material path only). It is the
 	 * join key of every feedback row and is NEVER handed to the model. */
 	meta?: DecisionToolMeta;
+	/** A started local action whose child exited before returning a result. */
+	unconfirmedAction?: string;
 	/** INTERNAL ONLY. The verbatim untrusted observation captured BEFORE
 	 * `unavailable()` normalises a child reason into the frozen transport
 	 * vocabulary. Never serialised into the payload or the model text. */
@@ -872,15 +875,7 @@ function buildSelection(
 	return { question, id: value };
 }
 
-/** Read-only composition aid. A preview neither checks authority nor issues a ruling. */
-export function previewDecisionInput(
-	dp: string,
-	material: Record<string, unknown> = {},
-	preparation?: DecisionPreparation,
-	context?: Record<string, unknown>,
-	refs: readonly { field: string }[] = [],
-) {
-	const allowed_choices = decisionChoices(dp, material);
+function decisionEvidenceFields(material: Record<string, unknown>, preparation?: DecisionPreparation): string[] {
 	const evidence_fields: string[] = [];
 	function collect(value: unknown, field: string): void {
 		if (typeof value === "string") evidence_fields.push(field);
@@ -903,6 +898,19 @@ export function previewDecisionInput(
 				evidence_fields.push(`preparation.model_context.review.${name}.evidence`);
 		}
 	}
+	return evidence_fields;
+}
+
+/** Structural hints for a local refusal. The window preview uses host preparation. */
+export function previewDecisionInput(
+	dp: string,
+	material: Record<string, unknown> = {},
+	preparation?: DecisionPreparation,
+	context?: Record<string, unknown>,
+	refs: readonly { field: string }[] = [],
+) {
+	const allowed_choices = decisionChoices(dp, material);
+	const evidence_fields = decisionEvidenceFields(material, preparation);
 	const valid = validateDecisionMaterial(dp, material);
 	const issues: MaterialIssue[] = valid.ok ? [] : [...valid.issues];
 	const references: MaterialReferenceIssue[] = [];
@@ -1012,6 +1020,7 @@ export const DECISION_SIGNOFF_CONCLUSIONS: readonly string[] = ["finalize", "con
 
 /** One `mw decide sign <key> --stdin --json` invocation. */
 export interface SignRequest {
+	preparedSnapshot?: string;
 	projectDir: string;
 	key: string;
 	input: string;
@@ -1038,7 +1047,9 @@ export const runSignMw: SignRunner = async (request) => {
 	if (request.explicitEvidence && !(await probeDecisionCapabilities(mwPy)).explicitEvidence) {
 		return unsupportedEvidenceReply();
 	}
-	return spawnWithTimeout([PYTHON_EXE, ...buildSignArgv(mwPy, request.key, request.projectDir)], {
+	const argv = buildSignArgv(mwPy, request.key, request.projectDir);
+	if (request.preparedSnapshot) argv.push("--prepared-snapshot", request.preparedSnapshot);
+	return spawnWithTimeout([PYTHON_EXE, ...argv], {
 		timeoutMs: request.timeoutMs,
 		stdin: request.input,
 	});
@@ -1195,6 +1206,7 @@ export function spawnWithTimeout(argv: string[], options: SpawnWithTimeoutOption
 }
 
 export interface DecideRunRequest {
+	preparedSnapshot?: string;
 	projectDir: string;
 	dp: string;
 	/** Request JSON — piped on stdin (`viaStdin`) or written to a temp file. */
@@ -1218,6 +1230,7 @@ export type DecideRunner = (request: DecideRunRequest, signal?: AbortSignal) => 
  * list is platform-independent on purpose. */
 export function buildDecideArgv(mwPy: string, request: DecideRunRequest, requestFile?: string): string[] {
 	const routing = ["-X", "utf8", mwPy, "decide", "run", `--project=${request.projectDir}`, "--dp", request.dp];
+	if (request.preparedSnapshot) routing.push("--prepared-snapshot", request.preparedSnapshot);
 	if (request.viaStdin === true) return [...routing, "--stdin", "--json"];
 	return [...routing, "--request-file", requestFile ?? "", "--json"];
 }
@@ -1340,6 +1353,7 @@ export function terminalDirective(dp: string, blocks: number): string {
 // ── The one decision call ───────────────────────────────────────────────────
 
 export interface AskDecisionInput {
+	preparedSnapshot?: string;
 	/** Durable logical identity supplied by a registered PM, never by tool parameters. */
 	logicalId?: string;
 	projectDir: string;
@@ -1621,6 +1635,7 @@ async function runAskDecisionCore(input: AskDecisionInput): Promise<AskDecisionO
 		input.preparation,
 		input.context,
 		input.parentDecisionRef,
+		input.runner === undefined && dp !== SIGN_KEY_ID,
 	);
 	if (!prepared.ok) {
 		const refusal = unavailable(prepared.reason, dp, false, {
@@ -1630,7 +1645,7 @@ async function runAskDecisionCore(input: AskDecisionInput): Promise<AskDecisionO
 		});
 		if (prepared.material_issues?.some((issue) => issue.allowed_choices)) {
 			const preview = previewDecisionInput(dp, input.material, input.preparation, input.context, input.evidenceRefs);
-			refusal.text += `\nLOCAL PREFLIGHT: ${jsonText(preview)}\nRepair and repeat preview=true before submitting.`;
+			refusal.text += `\nLOCAL PREFLIGHT: ${jsonText(preview)}`;
 		}
 		return refusal;
 	}
@@ -1842,6 +1857,7 @@ async function runMaterialAskDecision(
 ): Promise<AskDecisionOutcome> {
 	const { material, preparation, meta } = envelope;
 	const request: DecideRunRequest = {
+		preparedSnapshot: input.preparedSnapshot,
 		projectDir: input.projectDir,
 		dp,
 		input: JSON.stringify(envelope),
@@ -1850,7 +1866,12 @@ async function runMaterialAskDecision(
 		...(envelope.evidence_refs === undefined ? {} : { explicitEvidence: true }),
 	};
 	const called = await callDecideChild(dp, request, input.runner ?? runDecideMw, input.signal);
-	if (!called.ok) return called.outcome;
+	if (!called.ok) {
+		if (called.outcome.observation?.stage === "child-timeout") {
+			called.outcome.unconfirmedAction = `${dp}:${meta.logical_id}`;
+		}
+		return called.outcome;
+	}
 	const response = called.response;
 	// Each LOCAL business-validation refusal keeps the child's verbatim service
 	// observation (raw JSON + mw-decide-run/service-reply origin) for feedback;
@@ -1936,6 +1957,7 @@ async function runSignoffAskDecision(
 	let raw: RawDecideResult;
 	try {
 		raw = await (input.signRunner ?? runSignMw)({
+			preparedSnapshot: input.preparedSnapshot,
 			projectDir: input.projectDir,
 			key: meta.key,
 			input: JSON.stringify(envelope),
@@ -1945,7 +1967,7 @@ async function runSignoffAskDecision(
 	} catch {
 		return unavailable("upstream-error", dp, true);
 	}
-	if (raw.timedOut) return unavailable("timeout", dp, true);
+	if (raw.timedOut) return { ...unavailable("timeout", dp, true), unconfirmedAction: `${dp}:${meta.logical_id}` };
 	if (raw.error !== undefined) return unavailable("upstream-error", dp, true);
 	const receipt = parseDecisionJson(raw.stdout);
 	if (receipt === undefined) return unavailable("bad-response", dp, true);
@@ -2202,6 +2224,7 @@ export type AskDecisionToolDetails = AskDecisionPayload & {
 	decision_feedback?: DecisionFeedback;
 	matter_suppressed?: true;
 	submit_offer?: SubmitOfferMetadata;
+	next?: { owner: DecisionInitiatorRole; action: "reconcile-action"; action_ref: string; done_when: string };
 };
 
 export interface AskDecisionToolHandle {
@@ -2369,7 +2392,7 @@ const PREPARATION_SCHEMA = Type.Optional(
 								),
 								pairs: Type.Array(
 									Type.Object({
-										candidates: Type.Tuple([Type.String(), Type.String()]),
+										candidates: Type.Array(Type.String(), { minItems: 2, maxItems: 2 }),
 										criterion: Type.String(),
 										reversal: Type.String(),
 									}),
@@ -2408,6 +2431,24 @@ const PREPARATION_SCHEMA = Type.Optional(
 export const ASK_DECISION_PARAMETERS = Type.Object(
 	{
 		dp: DP_ENUM_SCHEMA,
+		draft_ref: Type.Optional(
+			Type.String({
+				pattern: "^[a-f0-9]{32}$",
+				description: "Resume this bound draft; omit the original material.",
+			}),
+		),
+		recovery_approval: Type.Optional(
+			Type.String({ minLength: 1, maxLength: 128, description: "Existing human approval for this paused draft." }),
+		),
+		changes: Type.Optional(
+			Type.Array(
+				Type.Object(
+					{ repair_id: Type.String({ pattern: "^[a-f0-9]{64}$" }), value: Type.Unknown() },
+					{ additionalProperties: false },
+				),
+				{ maxItems: 64 },
+			),
+		),
 		preview: Type.Optional(
 			Type.Boolean({
 				description: "Inspect choices, reference paths and local input issues without requesting a decision.",
@@ -2720,11 +2761,21 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 		details: AskDecisionToolDetails;
 	} {
 		const blockedEventId = recordBlockedAttempt(dp, outcome.payload, outcome.decision_feedback, outcome.observation);
+		const next: AskDecisionToolDetails["next"] =
+			outcome.unconfirmedAction && !outcome.payload.available
+				? {
+						owner: initiatorRole,
+						action: "reconcile-action",
+						action_ref: outcome.unconfirmedAction,
+						done_when: "Look up the original decision or signed result before requesting another action.",
+					}
+				: undefined;
 		const details: AskDecisionToolDetails = {
 			...outcome.payload,
 			...(outcome.decision_feedback === undefined ? {} : { decision_feedback: outcome.decision_feedback }),
 			...(offer === undefined ? {} : { submit_offer: offer }),
 			...(blockedEventId === undefined ? {} : { blocked_event_id: blockedEventId }),
+			...(next === undefined ? {} : { next }),
 		};
 		const firstLine = jsonText(outcome.payload);
 		const suffix = outcome.text.startsWith(firstLine) ? outcome.text.slice(firstLine.length) : "";
@@ -2735,8 +2786,9 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 		// T04B: offer metadata is an INDEPENDENT field/line, never folded into the
 		// frozen first-line payload. Absent when no handle was shared in.
 		const offerLine = offer === undefined ? "" : `\n${jsonText({ submit_offer: offer })}`;
+		const nextLine = next === undefined ? "" : `\n${jsonText({ next })}`;
 		return {
-			content: [{ type: "text", text: `${firstLine}${feedbackLine}${offerLine}${suffix}` }],
+			content: [{ type: "text", text: `${firstLine}${feedbackLine}${offerLine}${nextLine}${next ? "" : suffix}` }],
 			details,
 		};
 	}
@@ -2880,6 +2932,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 		typeof ASK_DECISION_PARAMETERS,
 		| AskDecisionToolDetails
 		| ReturnType<typeof previewDecisionInput>
+		| { preparation: Record<string, unknown> }
 		| { available: false; gate_route: ReturnType<typeof resolvePmGateRoute> }
 	>({
 		name: ASK_DECISION_TOOL,
@@ -2900,33 +2953,34 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			"it is terminal for this round.",
 		promptSnippet:
 			"ask_decision(dp, trigger, material?, question?, note?) — ask the decision service before a gated action; " +
-			"gate_route gives local applicability and the next step; action=pm-select-type means PM chooses the dispatch type; otherwise available=false blocks that matter only " +
+			"gate_route gives local applicability and the next step; action=pm-select-type means PM chooses the dispatch type; a draft_ref continues material preparation; otherwise available=false blocks that matter only " +
 			"(decision_feedback carries the concrete facts), never the whole PM.",
 		promptGuidelines: [
-			"Include evidence_refs in new decisions. Use [] for inline evidence, or list existing files with field, path and optional inclusive lines. Leave planned outputs in the task text. Use input_diagnostics to correct local preparation failures.",
+			"Include evidence_refs in new decisions. Use [] for inline evidence, or cite the relevant inclusive lines of existing files. Leave planned outputs in the task text. Use input_diagnostics to fix all reported candidate and terminology gaps together.",
 			"Call ask_decision ONLY with a dp id from the enum and the trigger_id from your task context " +
 				"(<task_key>, <task_key>#ckpt<N>, or the existing framework gate ID for a gate lookup); never invent a dp id, trigger or question id.",
 			PM_TYPE_FALLBACK_DIRECTIVE,
 			PM_GATE_ROUTING_RULE,
-			'For decision failures other than action=pm-select-type, available=false closes THIS gated attempt only: report "blocked on decision <dp>" and the concrete ' +
+			'Follow the single next action when present. A paused material repair belongs only to its original matter. For decision failures without a recovery action, draft_ref or action=pm-select-type, available=false closes THIS gated attempt only: report "blocked on decision <dp>" and the concrete ' +
 				"decision_feedback gap, do not wait for a human as a general rule, and do not resend the same matter (a repeat returns matter_suppressed=true with zero DP traffic). " +
 				"Two service failures never terminate the whole PM: continue other ready, independently legal tools within the existing claim/role/write-face.",
 			"unavailable=input-incomplete reports material_issues for invalid material, including UTF-8 byte counts and declared limits; " +
 				"missing_fields lists absent material fields or preparation/metadata problems, never a supplied invalid material value. " +
 				"MATERIAL_REFS_DIAGNOSIS explains invalid references and lists allowed_fields in this request's material; " +
-				"correct the named fields and retry once only after a substantive correction; " +
+				"when a draft_ref is returned, continue with its field corrections; " +
 				"a missing field is never filled by inference. EXCEPT a claim_diagnosis refusal (a claim/key-binding " +
 				"failure): meta.key is NOT a material field to add — never supplement material, retry, preempt or " +
 				're-claim; report "blocked on decision <dp>" and stop, since available=false is terminal for this round.',
 			"note is an L0/L1 summary (<=600 bytes): no credentials, no user quotes, no absolute paths, no code.",
 			"mode=suggest only archives an advisory row; acted is the service's verdict and never your own " +
 				"inference from the mode.",
-			"Before submission, use preview=true on ask_decision. Correct local input issues and repeat preview before requesting a ruling. Preview never authorizes action or consumes an attempt.",
+			"Submit once to prepare and request a ruling. Set preview=true only to inspect without sending. For repairs reuse draft_ref with changes containing repair_id and value. Omit unchanged material. A review conflict concerns that field only.",
+			"Use the existing tool for the stated recovery action and check its result. When a matter is paused, take another ready action that is already authorized, if available.",
 			...Object.values(DECISION_MATERIAL_PROMPTS),
-			"For dp-QG include prepared criteria for pass, fix and reopen, supported by the current review material. Criteria describe when a branch applies. Keep concrete and unresolved findings separate. Run independent review of the applicable acceptance and verification criteria before asking.",
+			"For dp-QG prepare pass and reopen criteria from the current review. Put current unresolved findings in model_context.reasons. Use reasons: {} when there are none. Otherwise prepare fix criteria and list only the selected finding_ids; the host derives remaining_ids. Run independent review of the applicable criteria before asking.",
 			"Prepare material, a separately timestamped basis_catalog, and model_context. Summarize the goal, deviation, event and evidence in desc. Define acronyms in terminology. " +
 				"Define material codes in enum_meanings. Add named references with their text or an authorized file and inclusive line range. " +
-				"For dp-QG and dp-sign-key, list the current AC/VC results in review. Define cited finding_ids and remaining_ids in reasons. " +
+				"For dp-QG and dp-sign-key, list the current AC/VC results in review. " +
 				"For dp-auto, state the existing allowance in background.constraints (for example, remaining 300 seconds), provide the budget and reserve, " +
 				"a sourced priority, forward-only steps ending with null, and criterion and reversal evidence for every candidate pair. " +
 				"Each item's material_refs is a non-empty array of existing field paths in this request's material, " +
@@ -2990,16 +3044,6 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				);
 				return publicResult(params.dp, refused);
 			}
-			if (params.preview) {
-				const preview = previewDecisionInput(
-					params.dp,
-					params.material,
-					params.preparation,
-					params.context,
-					params.evidence_refs,
-				);
-				return { content: [{ type: "text", text: jsonText(preview) }], details: preview };
-			}
 			const bound = boundKey(params.key);
 			if (bound.key === undefined) {
 				// A window never decides under another key: the association must stay
@@ -3032,6 +3076,222 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				);
 				return publicResult(params.dp, refused);
 			}
+			const inspectDraft = async (lookup = false, holdAction?: string): Promise<Record<string, unknown>> => {
+				const {
+					dp,
+					trigger,
+					draft_ref,
+					changes,
+					material,
+					preparation,
+					context,
+					evidence_refs,
+					note,
+					question,
+					task_before,
+					recovery_approval,
+				} = params;
+				const meta = buildDecisionToolMeta({ key: bound.key, taskKey: requestedTask, initiatorRole });
+				const localIssues = (input: typeof params) => {
+					const envelope = prepareDecisionEnvelope(
+						dp,
+						input.material,
+						{ ...meta, ...(input.task_before ? { task_before: input.task_before } : {}) },
+						0,
+						input.preparation,
+						input.context,
+						undefined,
+						options.runner === undefined && dp !== SIGN_KEY_ID,
+					);
+					return envelope.ok
+						? []
+						: [
+								...(envelope.material_issues ?? []),
+								...(envelope.material_ref_issues ?? []),
+								...envelope.missing.map((field) => ({ field, issue: "required or invalid field" })),
+							];
+				};
+				const mwPy = findMwPy();
+				const request = async (fields: Record<string, unknown>): Promise<Record<string, unknown>> => {
+					if (mwPy) {
+						const raw = await spawnWithTimeout(
+							[PYTHON_EXE, "-X", "utf8", mwPy, "decide", "draft", `--project=${projectDir}`, "--dp", dp],
+							{
+								stdin: JSON.stringify({
+									meta,
+									trigger,
+									repair_loop: true,
+									host_stage_ref: stage?.scopeRef,
+									...fields,
+								}),
+								timeoutMs: options.timeoutMs ?? ASK_DECISION_TIMEOUT_MS,
+								signal,
+							},
+						);
+						const reply = parseDecisionJson(raw.stdout);
+						if (reply) return reply;
+					}
+					return { status: "unavailable", transport: "not-sent", detail: "Could not prepare or save the draft." };
+				};
+				const suppliedBook = { material, preparation, context, evidence_refs, note, question, task_before };
+				if (lookup) return request({ lookup: true, book: suppliedBook });
+				const reply = await request(
+					draft_ref
+						? { draft_ref, changes, recovery_approval, hold_action: holdAction }
+						: {
+								book: suppliedBook,
+								local_issues: localIssues(params),
+								hold_action: holdAction,
+							},
+				);
+				const { book, book_digest, ...info } = reply;
+				if (!draft_ref || !isRecord(book) || info.status === "review" || info.status === "paused") return info;
+				const candidate: unknown = {
+					...book,
+					dp,
+					trigger,
+					key: bound.key,
+					...(params.task_key === undefined ? {} : { task_key: params.task_key }),
+					draft_ref,
+					...(params.preview === undefined ? {} : { preview: params.preview }),
+				};
+				let issues: { field: string }[];
+				if (Check(ASK_DECISION_PARAMETERS, candidate)) {
+					params = candidate;
+					issues = localIssues(params);
+				} else {
+					issues = Errors(ASK_DECISION_PARAMETERS, candidate).map((error) => ({
+						field: error.instancePath
+							.slice(1)
+							.replace(/\/(\d+)(?=\/|$)/g, "[$1]")
+							.replaceAll("/", "."),
+						issue: error.message,
+					}));
+				}
+				if (!issues.length) return info;
+				const checked = await request({ draft_ref, book_digest, local_issues: issues });
+				const { book: _book, book_digest: _digest, ...diagnostics } = checked;
+				return diagnostics;
+			};
+			const draftResult = (preparation: Record<string, unknown>) => ({
+				content: [{ type: "text" as const, text: jsonText(preparation) }],
+				details: { preparation },
+			});
+			if (
+				((params.changes || params.recovery_approval) && !params.draft_ref) ||
+				(params.draft_ref &&
+					[
+						params.material,
+						params.preparation,
+						params.evidence_refs,
+						params.context,
+						params.task_before,
+						params.note,
+						params.question,
+					].some((v) => v !== undefined))
+			) {
+				return draftResult({
+					status: "needs-repair",
+					detail: "Use draft_ref with only changes and routing fields.",
+				});
+			}
+			let preparedSnapshot: string | undefined;
+			let draftSourceRevision: string | undefined;
+			let preparedDraftRef: string | undefined;
+			let recordedAction: string | undefined;
+			const facts = options.hostFacts;
+			const stop =
+				currentTrustedStop() ??
+				facts?.stop_signals?.find((s) => s.kind === "worker-deadline" || s.kind === "key-budget");
+			const budget = facts?.budget_facts?.[0];
+			if (
+				!params.preview &&
+				(stop || facts?.authority_gap || budget) &&
+				(params.draft_ref || !currentTrustedStop())
+			) {
+				const authority = facts?.authority_gap;
+				return draftResult({
+					status: "not-authorized",
+					transport: "not-sent",
+					draft_ref: params.draft_ref,
+					detail: stop?.kind ?? authority?.condition ?? "budget exhausted",
+					fact_ref: stop?.signal_ref ?? authority?.policy_ref ?? budget?.budget_ref,
+					...(!stop && authority
+						? {
+								next: {
+									owner: "user",
+									action: "confirm-authorization",
+									policy_ref: authority.policy_ref,
+									done_when: authority.condition,
+								},
+							}
+						: {}),
+				});
+			}
+			if (
+				!params.preview &&
+				!stop &&
+				!budget &&
+				!facts?.authority_gap &&
+				facts?.effect_unknown &&
+				(!facts.binding.key || facts.binding.key === bound.key) &&
+				(!facts.binding.task_key || facts.binding.task_key === requestedTask)
+			) {
+				const action = facts.effect_unknown.action_ref;
+				return draftResult({
+					status: "review",
+					transport: "not-sent",
+					draft_ref: params.draft_ref,
+					next: {
+						owner: initiatorRole,
+						action: "reconcile-action",
+						action_ref: action,
+						done_when: "Verify the original action against its actual queue entry or product.",
+					},
+				});
+			}
+			const existingRepair =
+				!params.preview &&
+				!stop &&
+				!params.draft_ref &&
+				!options.runner &&
+				!options.signRunner &&
+				params.dp !== "dp-gate-approve" &&
+				fs.existsSync(path.join(projectDir, ".mw", "decision-drafts"))
+					? await inspectDraft(true)
+					: undefined;
+			if (existingRepair?.status === "unavailable") return draftResult(existingRepair);
+			if (
+				params.preview ||
+				params.draft_ref ||
+				existingRepair?.status === "needs-repair" ||
+				existingRepair?.status === "paused" ||
+				existingRepair?.status === "effect-unknown" ||
+				existingRepair?.status === "recorded" ||
+				(existingRepair?.status === "ready" && existingRepair.matches === true)
+			) {
+				const info = await inspectDraft();
+				if (params.preview) {
+					const hints = params.material
+						? {
+								allowed_choices: info.choices ?? decisionChoices(params.dp, params.material),
+								evidence_fields: decisionEvidenceFields(params.material, params.preparation),
+							}
+						: {};
+					const preview = { ...hints, ...info, preview: true };
+					return {
+						content: [{ type: "text", text: jsonText(preview) }],
+						details: { ...preview, preparation: info },
+					};
+				}
+				if (info.status !== "ready" || typeof info.snapshot !== "string") return draftResult(info);
+				preparedSnapshot = info.snapshot;
+				if (typeof info.draft_ref === "string" && info.repair_history === true) preparedDraftRef = info.draft_ref;
+				if (typeof info.recorded_action === "string" && info.recorded_action.startsWith(`${params.dp}:`)) {
+					recordedAction = info.recorded_action;
+				}
+				if (typeof info.source_revision === "string") draftSourceRevision = info.source_revision;
+			}
 			const baseHostContext = hostContextFor(params, bound.key, requestedTask, bound.owner);
 			if (initiatorRole === "pm" && params.dp === "dp-gate-approve" && currentTrustedStop() === undefined) {
 				const details = {
@@ -3055,7 +3315,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				return result;
 			};
 			const baseMatterRef = baseHostContext.matterRef;
-			const sourceRevision = fileRevisions.get(baseMatterRef);
+			const sourceRevision = draftSourceRevision ?? fileRevisions.get(baseMatterRef);
 			let hostContext =
 				sourceRevision === undefined
 					? baseHostContext
@@ -3072,6 +3332,9 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			// zero-spawn replays; model strings never count as a stop fact and
 			// no-stop config recovery still runs once.
 			const cached = matterOutcomes.get(baseMatterRef);
+			if (cached?.details.next?.action_ref === recordedAction && recordedAction !== undefined) {
+				matterOutcomes.delete(baseMatterRef);
+			}
 			if (cached !== undefined && cached.configSignature !== configSignature) {
 				// A REAL config/policy change is a new fact: never keep returning
 				// an old disabled verdict. Only the readers can reach this branch.
@@ -3170,6 +3433,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 								replay.fileEvidence,
 							);
 				const offerLine = offer === undefined ? "" : `\n${jsonText({ submit_offer: offer })}`;
+				const nextLine = replay.details.next === undefined ? "" : `\n${jsonText({ next: replay.details.next })}`;
 				const blockedEventId = recordBlockedAttempt(params.dp, replayPayload, feedback, replay.observation);
 				const replayDetails: AskDecisionToolDetails = {
 					...replay.details,
@@ -3190,7 +3454,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 					content: [
 						{
 							type: "text",
-							text: `${jsonText(replayPayload)}${feedbackLine}${offerLine}${replay.directiveSuffix}`,
+							text: `${jsonText(replayPayload)}${feedbackLine}${offerLine}${nextLine}${nextLine ? "" : replay.directiveSuffix}`,
 						},
 					],
 					details: replayDetails,
@@ -3216,15 +3480,24 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				return publicResult(params.dp, attachDecisionFeedback(stopped, hostContext));
 			}
 			const matter = hostContext.matterRef;
+			const replayIdentity =
+				preparedDraftRef && preparedSnapshot
+					? decisionMatterRef({ draft: preparedDraftRef, snapshot: preparedSnapshot })
+					: !isolatedChild &&
+							initiatorRole === "pm" &&
+							params.dp !== "dp-sign-key" &&
+							hostContext.binding.owner !== undefined &&
+							hostContext.binding.owner === hostContext.binding.claim_id
+						? matter
+						: params.draft_ref && preparedSnapshot
+							? decisionMatterRef({ matter, draft: params.draft_ref, snapshot: preparedSnapshot })
+							: undefined;
 			const logicalId =
-				!isolatedChild &&
-				initiatorRole === "pm" &&
-				params.dp !== "dp-sign-key" &&
-				hostContext.binding.owner !== undefined &&
-				hostContext.binding.owner === hostContext.binding.claim_id
-					? `${matter.slice(0, 8)}-${matter.slice(8, 12)}-8${matter.slice(13, 16)}-8${matter.slice(17, 20)}-${matter.slice(20)}`
-					: undefined;
+				recordedAction?.slice(params.dp.length + 1) ??
+				(replayIdentity &&
+					`${replayIdentity.slice(0, 8)}-${replayIdentity.slice(8, 12)}-8${replayIdentity.slice(13, 16)}-8${replayIdentity.slice(17, 20)}-${replayIdentity.slice(20)}`);
 			let outcome = await runAskDecision({
+				preparedSnapshot,
 				projectDir,
 				logicalId,
 				dp: params.dp,
@@ -3249,6 +3522,51 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				hostFacts: options.hostFacts,
 			});
 			const childRaw = isRecord(outcome.observation?.raw) ? outcome.observation.raw : undefined;
+			if (outcome.unconfirmedAction && !options.runner && !options.signRunner) {
+				const held = await inspectDraft(false, outcome.unconfirmedAction);
+				if (held.status === "unavailable") outcome.text += `\n${jsonText({ reconciliation_status: held })}`;
+			}
+			if (
+				!outcome.payload.available &&
+				(outcome.payload.unavailable === "input-incomplete" ||
+					outcome.payload.unavailable === "input-oversize" ||
+					(outcome.payload.unavailable === "budget-exhausted" &&
+						outcome.payload.input_diagnostics?.transport === "not-sent")) &&
+				(childRaw?.attempts === 0 ||
+					childRaw?.model_called === false ||
+					!outcome.spawned ||
+					outcome.payload.input_diagnostics?.transport === "not-sent")
+			) {
+				const info = await inspectDraft();
+				if (preparedSnapshot && info.status === "ready" && info.snapshot === preparedSnapshot) {
+					return draftResult({
+						...info,
+						status: "review",
+						stage: "formal-material-check",
+						diagnostic: outcome.payload.input_diagnostics ?? outcome.payload,
+						next: {
+							owner: "framework-maintainer",
+							action: "review-validator-disagreement",
+							snapshot: preparedSnapshot,
+							done_when: "Compare both material checks for this snapshot and resolve the disagreement.",
+						},
+					});
+				}
+				if (info.status === "needs-repair" || info.status === "review" || info.status === "paused") {
+					const feedback = outcome.decision_feedback;
+					const blocked = recordBlockedAttempt(params.dp, outcome.payload, feedback, outcome.observation);
+					const details = {
+						...outcome.payload,
+						...info,
+						action: "repair-material" as const,
+						...(blocked ? { blocked_event_id: blocked } : {}),
+					};
+					return { content: [{ type: "text", text: jsonText(details) }], details };
+				}
+				if (info.status === "unavailable" && typeof info.detail === "string") {
+					outcome.text += `\n${jsonText({ draft_status: "unavailable", detail: info.detail })}`;
+				}
+			}
 			let fileEvidence = parseFileEvidence(childRaw);
 			const metadataRefused = fileEvidence === null || (fileEvidence === undefined && childRaw?.available === true);
 			if (metadataRefused) {

@@ -73,6 +73,7 @@ import { roleForTaskType } from "../shared/dispatch-models.ts";
 import { openFixedAllocation } from "../shared/fixed-child-budget.ts";
 import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.ts";
 import { IndexStore, normalizeKey } from "../shared/index-store.ts";
+import { appendKeyGoal } from "../shared/key-goal.ts";
 import { atomicWriteJson } from "../shared/local-selection-store.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
 import { MW_RUN_DETACHED_TOOL, registerRunDetachedTool } from "../shared/run-detached.ts";
@@ -3812,6 +3813,12 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 			return undefined;
 		});
 	}
+
+	pi.on("before_agent_start", (event) => {
+		const base = event?.systemPrompt ?? "";
+		const systemPrompt = appendKeyGoal(base, meta.trueAgenticdocRoot, runState.owner_key);
+		if (systemPrompt !== base) return { systemPrompt };
+	});
 
 	// Read-scope interceptor (D-106): read/ls/find/grep share one containment
 	// gate. ls/find/grep default to the cwd (= project root) when their path

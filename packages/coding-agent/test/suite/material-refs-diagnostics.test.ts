@@ -2,9 +2,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { Check } from "typebox/value";
 import { describe, expect, it, vi } from "vitest";
 import {
 	ASK_DECISION_PARAMETERS,
+	previewDecisionInput,
 	registerAskDecisionTool,
 	runAskDecision,
 } from "../../src/extensions/agent-team-loop/pm/decision-tool.ts";
@@ -13,6 +15,22 @@ import {
 	validateDecisionMaterial,
 } from "../../src/extensions/agent-team-loop/shared/decide-policy.ts";
 import { createHarness, getMessageText } from "./harness.ts";
+
+it("encodes a candidate pair with a single string item schema and exact cardinality", () => {
+	const pair =
+		ASK_DECISION_PARAMETERS.properties.preparation.properties.model_context.properties.auto_comparison.properties
+			.pairs.items.properties.candidates;
+	expect(JSON.parse(JSON.stringify(pair))).toEqual({
+		type: "array",
+		items: { type: "string" },
+		minItems: 2,
+		maxItems: 2,
+	});
+	expect(Check(pair, ["retry", "diagnose"])).toBe(true);
+	for (const invalid of [["retry"], ["retry", "diagnose", "stop"], ["retry", 2]]) {
+		expect(Check(pair, invalid)).toBe(false);
+	}
+});
 
 function qgRequest(refs: string[]) {
 	return {
@@ -29,12 +47,41 @@ function qgRequest(refs: string[]) {
 		},
 		preparation: {
 			prepared_at: "2026-11-13T03:00:00Z",
-			basis_catalog: [{ id: "evidence", text: "Review facts", material_refs: refs, applies_to: ["fix"] }],
+			basis_catalog: [
+				{ id: "evidence", text: "Review facts", material_refs: refs, applies_to: ["fix"] },
+				{
+					id: "pass-criterion",
+					text: "If current independent evidence covers all applicable checks",
+					material_refs: ["review_requirements"],
+					applies_to: ["pass"],
+				},
+				{
+					id: "reopen-criterion",
+					text: "If the review finds a substantive conflict in the acceptance standard",
+					material_refs: ["review_requirements"],
+					applies_to: ["reopen"],
+				},
+			],
 		},
 	};
 }
 
 describe("material_refs contract and local diagnosis", () => {
+	it("refuses an incomplete QG menu in preview and before spawning the decision CLI", async () => {
+		const request = qgRequest(["review_findings"]);
+		request.preparation.basis_catalog.pop();
+		const runner = vi.fn(async () => {
+			throw new Error("Incomplete criteria must not reach the CLI");
+		});
+		const preview = previewDecisionInput(request.dp, request.material, request.preparation);
+		expect(preview.issues).toMatchObject([
+			{ field: "preparation.basis_catalog", code: "missing", rule: "missing prepared criteria for reopen" },
+		]);
+		const result = await runAskDecision({ ...request, runner });
+		expect(result.payload).toMatchObject({ available: false, unavailable: "input-incomplete" });
+		expect(runner).not.toHaveBeenCalled();
+	});
+
 	it("describes field paths at the actual tool parameter", () => {
 		const refs =
 			ASK_DECISION_PARAMETERS.properties.preparation.properties.basis_catalog.items.properties.material_refs;
@@ -94,7 +141,10 @@ describe("material_refs contract and local diagnosis", () => {
 			const request = qgRequest(["review_evidence"]);
 			const preparation = {
 				...request.preparation,
-				basis_catalog: [{ ...request.preparation.basis_catalog[0], material_refs: refs }],
+				basis_catalog: [
+					{ ...request.preparation.basis_catalog[0], material_refs: refs },
+					...request.preparation.basis_catalog.slice(1),
+				],
 			};
 			expect(preparationProblems(request.dp, request.material, preparation, undefined)).toEqual([
 				"preparation.basis_catalog[0].material_refs",
@@ -159,7 +209,7 @@ describe("material_refs contract and local diagnosis", () => {
 				})),
 			};
 			const preparation = qgRequest([ref]).preparation;
-			preparation.basis_catalog[0].applies_to = ["inspect"];
+			preparation.basis_catalog = [{ ...preparation.basis_catalog[0], applies_to: ["inspect"] }];
 			expect(validateDecisionMaterial("dp-auto", material).ok).toBe(true);
 			expect(preparationProblems("dp-auto", material, preparation, undefined)).toEqual([]);
 		},

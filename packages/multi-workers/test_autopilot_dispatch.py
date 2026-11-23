@@ -6,6 +6,7 @@ Fixtures build their own project trees under tmp_path (queue file, lock dir,
 timeline). The tool-set expectations here are the Python half of the L0
 parity contract — T-17 locks them against the TS TOOL_ALLOWLISTS.
 """
+import json
 import pathlib
 import sys
 
@@ -15,6 +16,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import mw_common
 from autopilot import dispatch
+from autopilot import conductor
 from autopilot import timeline as timeline_mod
 
 
@@ -34,6 +36,45 @@ def _verify(tag: str, **kv) -> None:
 
 def true_str(b: bool) -> str:
     return "true" if b else "false"
+
+
+@pytest.mark.parametrize("stop", ["parent-cancel", "worker-deadline"])
+def test_stopped_parent_blocks_conductor_enqueue_and_orphan_recovery(tmp_path: pathlib.Path, stop: str) -> None:
+    project = tmp_path.resolve()
+    key_dir = project / ".agenticdoc" / "k1"
+    tasks = key_dir / "tasks"
+    tasks.mkdir(parents=True)
+    parent_dir = key_dir / "workers" / "cancelled-parent"
+    parent_dir.mkdir(parents=True)
+    started = "2026-11-21T05:50:00.000Z"
+    parent = f"cancelled-parent@{started}"
+    (parent_dir / "run.json").write_text(json.dumps({
+        "task_key": "cancelled-parent", "run_id": parent, "owner_key": "k1",
+        "status": "failed", "started_at": started,
+        **({"aborted": True} if stop == "parent-cancel" else {"stop_kind": stop}),
+    }), encoding="utf-8")
+    (tasks / "successor.md").write_text(f"parent_worker_run: {parent}\n\nReview the result.\n", encoding="utf-8")
+    timeline = timeline_mod.Timeline(timeline_mod.timeline_path(project))
+    result = dispatch.dispatch(project, "k1", "successor", "reviewer", "Review.", loop="l3:k1", attempt=1, timeline=timeline)
+    assert not result.ok and result.reason == f"{stop}: {parent}"
+    successor = key_dir / "workers" / result.task_key
+    assert not successor.exists()
+    assert not mw_common.parse_workers_file(mw_common.workers_path(project))
+
+    # Crash residue is recovered by a separate queue writer and must preserve
+    # the stop even if the original card has since disappeared or changed.
+    envelope = dispatch.render_task_md(
+        "reviewer", "Review.", loop="l3:k1", attempt=1, card=dispatch.dispatch_card(project, "k1", "successor"),
+    )
+    successor.mkdir()
+    (successor / "task.md").write_text(envelope, encoding="utf-8", newline="\n")
+    independent = dispatch.dispatch(project, "k1", "independent", "reviewer", "Independent work.", loop="l3:k1", attempt=1)
+    assert independent.ok
+    st = conductor.ConductorState(timeline, conductor.goal_mtime_ns(project))
+    conductor.reconcile_orphans(project, st)
+    (tasks / "successor.md").write_text("Parent binding removed after publication.\n", encoding="utf-8")
+    conductor.reconcile_orphans(project, st)
+    assert [row["task_key"] for row in mw_common.parse_workers_file(mw_common.workers_path(project))] == [independent.task_key]
 
 
 # ── registry (D-107 type table; parity source for T-17) ───────────────────────

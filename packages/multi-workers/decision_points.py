@@ -2010,20 +2010,48 @@ def prepared_model_request(
     options: Mapping,
     instruction_source: str | None = None,
     contract_root: pathlib.Path | str | None = None,
-    sign_quality_gate: Mapping | None = None, **source_options,
+    sign_quality_gate: Mapping | None = None,
+    coverage_issues: tuple[tuple[str, str], ...] = (), **source_options,
 ) -> dict:
     """Use the same context projection for preview and actual prepared sends."""
-    model_fields, context_refs = decision_model_context.project(dp_id, material, preparation, questions, options)
-    if dp_id == "dp-sign-key" and sign_quality_gate is not None:
-        model_fields["quality_gate"] = dict(sign_quality_gate)
-    state = decision_material_sources.prepare_source_state(
-        {"material": material, "preparation": preparation, **model_fields},
-        project_dir, questions=questions, context_refs=context_refs,
-        bind_criteria=lambda prepared: decision_model_context.resolve_criterion_references(
-            prepared, questions, preparation, root=contract_root or project_dir, key=key,
-        ), **source_options,
+    issues = [("preparation.basis_catalog", detail) for _, detail in coverage_issues]
+    diagnostics = [
+        {"field": field, "code": "missing-candidates",
+         "choices": detail.removeprefix("missing prepared criteria for ").split(", ")}
+        for field, detail in issues
+    ]
+    authored_terms = {}
+    state = None
+    failure = None
+    try:
+        model_fields, context_refs, authored_terms = decision_model_context.project(
+            dp_id, material, preparation, questions, options
+        )
+        if dp_id == "dp-sign-key" and sign_quality_gate is not None:
+            model_fields["quality_gate"] = dict(sign_quality_gate)
+        state = decision_material_sources.prepare_source_state(
+            {"material": material, "preparation": preparation, **model_fields},
+            project_dir, questions=questions, context_refs=context_refs,
+            bind_criteria=lambda prepared: decision_model_context.resolve_criterion_references(
+                prepared, questions, preparation, root=contract_root or project_dir, key=key,
+            ), **source_options,
+        )
+    except decision_material_sources.SourceMaterialError as exc:
+        failure = exc
+        issues.extend(exc.issues)
+        diagnostics.extend(exc.diagnostics)
+    term_issues, term_diagnostics = decision_model_context.terminology_issues(
+        state if state is not None else {"terminology": {}, "references": {}}, authored_terms, project_dir
     )
-    decision_model_context.complete_reference_terminology(state)
+    issues.extend(term_issues)
+    diagnostics.extend(term_diagnostics)
+    if issues:
+        raise decision_material_sources.SourceMaterialError(
+            tuple(issues), failure.file_evidence if failure else state.file_evidence,
+            diagnostics, truncated=bool(failure and failure.truncated),
+            allowed_fields=failure.allowed_fields if failure else None,
+        ) from failure
+    assert state is not None
     state.pair_map = copy.deepcopy(dict(options))
     state.field_trace = decision_model_context.field_trace(
         dp_id, material, preparation, state, options, key=key, instruction_source=instruction_source,
@@ -4190,6 +4218,8 @@ def basis_catalog_issues(
     material: Mapping | None = None,
     *,
     require_complete: bool = False,
+    model_context: object = None,
+    eligible_choices: tuple[str, ...] | None = None,
 ) -> tuple[tuple[str, str], ...]:
     """Validate the PM-prepared D012A basis catalog (independent of material).
 
@@ -4287,10 +4317,21 @@ def basis_catalog_issues(
                 else:
                     covered.add(target)
     if require_complete or dp_id == "dp-QG":
-        missing = [choice for choice in resolve_entry_choices(dp_id, material) if choice not in covered]
+        if dp_id == "dp-QG" and decision_model_context.qg_zero_findings(catalog, model_context):
+            covered.add("fix")
+        required = resolve_entry_choices(dp_id, material) if eligible_choices is None else eligible_choices
+        missing = [choice for choice in required if choice not in covered]
         if missing:
             issues.append((key, f"missing prepared criteria for {', '.join(missing)}"))
     return tuple(issues)
+
+
+def only_candidate_coverage_issues(issues: tuple[tuple[str, str], ...]) -> bool:
+    """Allow a well-formed partial catalog into local diagnostics, never transport."""
+    return bool(issues) and all(
+        field == "basis_catalog" and detail.startswith("missing prepared criteria for ")
+        for field, detail in issues
+    )
 
 
 def basis_selection_issues(
@@ -4333,6 +4374,7 @@ def preparation_issues(
     require_complete: bool = False,
     choice: object = None,
     basis_id: object = None,
+    eligible_choices: tuple[str, ...] | None = None,
 ) -> tuple[tuple[str, str], ...]:
     """Validate the separate D012A preparation block of one entry.
 
@@ -4375,7 +4417,8 @@ def preparation_issues(
                     )
                 )
     issues.extend(basis_catalog_issues(dp_id, preparation.get("basis_catalog"), material,
-                                      require_complete=require_complete))
+                                      require_complete=require_complete, model_context=preparation.get("model_context"),
+                                      eligible_choices=eligible_choices))
     if basis_id is not None:
         issues.extend(
             basis_selection_issues(
@@ -4393,6 +4436,7 @@ def prepared_request_issues(
     actor_role: object = None,
     choice: object = None,
     basis_id: object = None,
+    eligible_choices: tuple[str, ...] | None = None,
 ) -> tuple[tuple[str, str], ...]:
     """One pure gate for a prepared request: role -> material -> basis -> choice.
 
@@ -4409,7 +4453,8 @@ def prepared_request_issues(
     issues.extend(role_issues(dp_id, actor_role))
     issues.extend(entry_material_issues(dp_id, material))
     issues.extend(
-        preparation_issues(dp_id, preparation, material, choice=choice, basis_id=basis_id, require_complete=True)
+        preparation_issues(dp_id, preparation, material, choice=choice, basis_id=basis_id,
+                           require_complete=True, eligible_choices=eligible_choices)
     )
     if dp_id == "dp-auto" and not issues:
         issues.extend(decision_model_context.auto_issues(preparation.get("model_context"), material))

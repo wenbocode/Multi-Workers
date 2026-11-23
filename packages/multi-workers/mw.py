@@ -52,6 +52,7 @@ import decision
 import decision_backends
 import decision_blocked
 import decision_context
+import decision_drafts
 import decision_file_evidence
 import decision_lifecycle
 import decision_monitor
@@ -65,6 +66,7 @@ import operator_authority
 import operator_host
 import pm_state
 import rag_templates
+import replan_tasks
 import thinking_config
 import usage
 import worktree_cmd
@@ -78,6 +80,7 @@ from autopilot import config as _ap_config
 from autopilot import conductor as _ap_conductor
 from autopilot import decision_recovery as _ap_recovery
 from autopilot import contract_guard
+from autopilot import gates
 from autopilot import review_split as _review_split_module
 from autopilot import roadmap as _ap_roadmap
 from autopilot import state as mw_state
@@ -1751,6 +1754,17 @@ def _decide_replayed_payload(
     return result
 
 
+def _decide_qg_review(key_dir: pathlib.Path, key: str, preparation: object) -> tuple[frozenset[str], dict | None]:
+    context = preparation.get("model_context") if isinstance(preparation, Mapping) else None
+    review = context.get("review") if isinstance(context, Mapping) else None
+    if not isinstance(review, Mapping) or not all(
+        isinstance(item, Mapping) and item.get("status") == "met" for item in review.values()
+    ):
+        return frozenset(), None
+    scope = frozenset(review)
+    return scope, decision_signoff_result.current_scoped_qg_binding(key_dir, key, scope)
+
+
 def _decide_run_prepared(
     args: argparse.Namespace,
     project_dir: pathlib.Path,
@@ -1855,8 +1869,8 @@ def _decide_run_prepared(
             ),
         )
         return 0
-    # 4. Complete contract (material, preparation, role, context) before any
-    #    ledger write or model call. The registry is the single authority.
+    # 4. Validate the draft before the ledger. The request preparation combines
+    #    candidate coverage with hydrated evidence diagnostics before transport.
     stage = "input-validation"
     try:
         issues = tuple(
@@ -1877,7 +1891,7 @@ def _decide_run_prepared(
                 issues=tuple(("context", problem) for problem in context_problems),
                 detail="the engineered context does not satisfy the entry's slots; no request sent",
             )
-    if issues:
+    if issues and not decision_points.only_candidate_coverage_issues(issues):
         return refuse(
             "input-incomplete",
             issues=issues,
@@ -2003,13 +2017,7 @@ def _decide_run_prepared(
         wire_scope=scope,
     )
     key_dir = control_root / ".agenticdoc" / meta.key
-    qg_scope = frozenset()
-    qg_review = None
-    if dp == "dp-QG":
-        review = preparation.get("model_context", {}).get("review", {})
-        if isinstance(review, Mapping) and all(isinstance(item, Mapping) and item.get("status") == "met" for item in review.values()):
-            qg_scope = frozenset(review)
-            qg_review = decision_signoff_result.current_scoped_qg_binding(key_dir, meta.key, qg_scope)
+    qg_binding = _decide_qg_review(key_dir, meta.key, preparation) if dp == "dp-QG" else None
     stage = "request"
     try:
         request_result = client.request_prepared(
@@ -2021,6 +2029,8 @@ def _decide_run_prepared(
             **({"contract_root": control_root} if project_dir != control_root else {}),
             **({"source_references": book_meta.get("evidence")} if book_meta is not None else {}),
             **({"evidence_refs": evidence_refs} if evidence_refs is not None else {}),
+            **({"qg_review": qg_binding} if qg_binding is not None else {}),
+            **({"expected_snapshot": args.prepared_snapshot} if getattr(args, "prepared_snapshot", None) else {}),
         )
     except decision.DecisionInputError as exc:
         return refuse(
@@ -2037,11 +2047,9 @@ def _decide_run_prepared(
     if not isinstance(request_result, dict):
         return refuse("bad-response", detail="the transport returned no prepared result")
 
-    if dp == "dp-QG" and request_result.get("choice") == "pass":
-        prepared_state = client.last_prepared_state or {}
-        references = prepared_state.get("references", {})
-        referenced_criteria = frozenset(name for name, item in references.items()
-                                        if item.get("kind") in {"acceptance-criterion", "verification-criterion"})
+    if qg_binding is not None and request_result.get("choice") == "pass":
+        qg_scope, qg_review = qg_binding
+        referenced_criteria = decision_points.decision_model_context.reviewed_criterion_ids(client.last_prepared_state or {})
         if qg_review is None or referenced_criteria != qg_scope or (
             decision_signoff_result.current_scoped_qg_binding(key_dir, meta.key, qg_scope) != qg_review
         ):
@@ -6495,8 +6503,8 @@ def _decide_sign_finalize(
             )
         if issues:
             return _decide_sign_refusal(
-                key_dir_path, as_json, [f"{field}: {problem}" for field, problem in issues],
-                logical_id=admission_meta.logical_id,
+                key_dir_path, as_json, ["input-incomplete", *(f"{field}: {problem}" for field, problem in issues)],
+                logical_id=admission_meta.logical_id, model_called=False,
             )
     point = decision_points.require_active_dp(decision_signoff_result.DP_ID)
     mode, blocked_reason, _blocked_escalated = _decide_entry_mode(control_dir, point)
@@ -6738,6 +6746,7 @@ def _decide_sign_finalize(
                 actor_role="pm", logical_id=meta.logical_id,
                 **({"evidence_refs": evidence_refs} if evidence_refs is not None else {}),
                 sign_quality_gate=sign_quality_gate,
+                **({"expected_snapshot": args.prepared_snapshot} if getattr(args, "prepared_snapshot", None) else {}),
             )
         except decision.DecisionInputError as exc:
             return _decide_sign_refusal(
@@ -6767,6 +6776,7 @@ def _decide_sign_finalize(
                 key_dir_path, as_json, problems, logical_id=meta.logical_id,
                 file_evidence=file_evidence,
                 input_diagnostics=response.get("input_diagnostics"),
+                model_called=response["attempts"] > 0 if isinstance(response.get("attempts"), int) else None,
             )
         conclusion = response.get("choice")
         if conclusion not in decision_signoff_result.CONCLUSIONS:
@@ -6891,6 +6901,7 @@ def _decide_sign_refusal(
     file_evidence: list[dict] | None = None,
     input_diagnostics: dict | None = None,
     preparation_status: str | None = None,
+    model_called: bool | None = None,
 ) -> int:
     for problem in problems:
         print(f"[mw decide sign] {problem}", file=sys.stderr)
@@ -6903,6 +6914,7 @@ def _decide_sign_refusal(
         "signoff_path": None,
         "second_approval": 0,
         "problems": list(problems),
+        **({"model_called": model_called} if model_called is not None else {}),
         **({"file_evidence": file_evidence} if file_evidence else {}),
         **({"input_diagnostics": input_diagnostics} if input_diagnostics is not None else {}),
         **({"preparation_status": preparation_status} if preparation_status is not None else {}),
@@ -7350,6 +7362,187 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     return 1
 
 
+def _decision_repair_scope(control: pathlib.Path, binding: list) -> list:
+    dp, key, task, role, _, _ = binding
+    key_dir = control / ".agenticdoc" / key
+    if not task or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", task):
+        return [dp, key, role, None]
+    workers = replan_tasks.worker_rows(control, key)
+    matches = [row for row in workers if row["task_key"] == task]
+    card = f"tasks/{task}.md"
+    if len(matches) == 1:
+        card = f"tasks/{matches[0].get('card_id') or task}.md"
+    lineage = replan_tasks.applied_lineage(replan_tasks.records(key_dir), card)
+    if lineage:
+        source = lineage[-1][0]["source"]
+        return [dp, key, role, source.get("task") or source["card"]]
+    return [dp, key, role, task if len(matches) == 1 else None]
+
+
+def _decide_draft(args: argparse.Namespace, project: pathlib.Path) -> int:
+    request, error = _decide_read_envelope_json(args)
+    try:
+        if error:
+            raise ValueError(error)
+        meta, error = _decide_meta_from_payload(request.get("meta"))
+        if error:
+            raise ValueError(error)
+        control = _decide_control_root(project)
+        role, reason, detail = _decide_actor_binding(control, meta)
+        if role is None:
+            raise ValueError(detail or reason)
+        point = decision_points.require_active_dp(args.dp)
+        actor = _decide_protocol_actor_role(role)
+        if point.role_scope != actor:
+            raise ValueError("current role cannot prepare this decision")
+        sign = args.dp == decision_signoff_result.DP_ID
+        source_root = control if sign else project
+        cfg = _decide_config_snapshot(source_root)
+        if cfg is None:
+            raise ValueError("cannot read current decision configuration")
+        if sign:
+            policy = decision_points.resolve_policy(args.dp, decision_points.load_points_config(control).row(args.dp), cfg)
+            cfg = decision_points._apply_per_dp_budget(cfg, policy)
+        credentials = decision.credential_snapshot(cfg)
+        if credentials.frozen_known_values() is None:
+            raise ValueError("cannot verify draft credential redaction")
+        redactor = decision.known_secret_redactor(cfg, snapshot=credentials)
+        if role == "pm":
+            owner = next(row["claim_id"] for row in mw_state.read_index(control) if row["key"] == meta.key)
+        else:
+            run = pathlib.Path(os.environ["PI_WORKER_TASK"]).parent / "run.json"
+            owner = json.loads(run.read_bytes())["run_id"]
+        binding = [args.dp, meta.key, meta.task_key, role, owner, request["trigger"]]
+        if not isinstance(request["trigger"], str) or decision.secret_hit(json.dumps(binding), redactor):
+            raise ValueError("invalid draft binding")
+
+        def inspect(book):
+            material, prep = book.get("material", {}), book.get("preparation", {})
+            extra = {}
+            if sign:
+                key_dir = control / ".agenticdoc" / meta.key
+                review = decision_signoff_result.current_review_binding(key_dir, meta.key)
+                extra["sign_quality_gate"] = decision_signoff_result.model_quality_gate(key_dir, meta.key, review)
+            elif args.dp == "dp-QG":
+                extra["qg_review"] = _decide_qg_review(control / ".agenticdoc" / meta.key, meta.key, prep)
+            scope = decision_wire.WireScope(sink=control, project_id=str(control), key=meta.key, task_key=meta.task_key)
+            client = decision.DecisionClient(cfg, project_root=source_root, credential_snapshot=credentials, wire_scope=scope)
+            result = client.request_prepared(args.dp, material, prep, actor_role=actor, evidence_refs=book.get("evidence_refs"),
+                                             contract_root=control, preview_only=True, **extra)
+            diagnostics = result.get("input_diagnostics", {})
+            full_diagnostics = bool(diagnostics)
+            checks = []
+            if (not diagnostics and book.get("evidence_refs") and isinstance(material, dict)
+                    and result.get("reason") == decision.REASON_INPUT_INCOMPLETE and result.get("issues")
+                    and not client.last_prepared_state):
+                # A bad basis can prevent rendering the question. Explicit file selectors
+                # can still be inspected using the same scoped reader as a prepared send.
+                sources = decision_points.decision_material_sources
+                try:
+                    partial = sources.prepare_source_state(
+                        {"material": decision_points.model_state_for(args.dp, material), "preparation": prep},
+                        source_root, evidence_refs=book["evidence_refs"], max_state_bytes=cfg.max_state_bytes,
+                        max_total_tokens=cfg.max_total_tokens, max_state_plus_question_tokens=cfg.max_state_plus_question_tokens)
+                    client.last_file_evidence = partial.file_evidence
+                    checks.append("evidence")
+                except sources.SourceMaterialError as exc:
+                    client.last_file_evidence = exc.file_evidence
+                    diagnostics = {"issues": exc.diagnostics, "truncated": exc.truncated}
+                    if exc.allowed_fields is not None:
+                        diagnostics["allowed_fields"] = exc.allowed_fields
+                    result["issues"].extend({"field": field, "issue": detail} for field, detail in exc.issues)
+            issues = [dict(issue) for issue in diagnostics.get("issues", [])]
+            codes = {issue.get("code") for issue in issues}
+            if codes and codes <= {"evidence-range-out-of-bounds", "undefined-term", "criterion-reference-unresolved",
+                                   "criterion-reference-other-object", "missing-candidates"}:
+                checks.append("evidence")
+                if full_diagnostics:
+                    checks.append("authored-terminology")
+            if codes and codes <= {"undefined-term", "missing-candidates"}:
+                checks.append("terminology")
+            for issue in issues:
+                if issue["code"] == "evidence-range-out-of-bounds":
+                    issue["check"] = "evidence"
+                elif issue["code"] == "undefined-term":
+                    source = issue.get("source_field", "")
+                    issue["check"] = ("authored-terminology" if source.startswith(("material.", "preparation."))
+                                      else "terminology")
+            by_field = {issue["field"]: issue for issue in issues}
+            for issue in result.get("issues", []) or []:
+                if issue["field"] in by_field:
+                    by_field[issue["field"]].update(issue)
+                else:
+                    issues.append(dict(issue))
+            if book.get("context") is not None:
+                for problem in decision_context.validate_context(book["context"], args.dp):
+                    field, _, message = problem.partition(": ")
+                    issues.append({"field": field, "issue": message or problem})
+            if result.get("status") != "ready" and not issues:
+                issues.append({"field": "preparation", "issue": result.get("detail") or result.get("reason")})
+            response = {k: result[k] for k in ("snapshot", "choices", "criteria", "historical_references", "sources")
+                        if k in result}
+            response.update({k: diagnostics[k] for k in ("allowed_fields", "allowed_fields_truncated", "truncated") if k in diagnostics})
+            status = "needs-repair" if issues else "ready"
+            if result.get("reason") not in {None, decision.REASON_INPUT_INCOMPLETE, decision.REASON_BUDGET_EXHAUSTED}:
+                status = "unavailable"
+            response.update(status=status, issues=issues, checks=checks)
+            if issues:
+                response["unchecked"] = ["complete model request"] if diagnostics else [
+                    "rendered choices", "contract and terminology in the rendered material", "complete model request"]
+            if decision.secret_hit(json.dumps(response, ensure_ascii=False), redactor):
+                response = {"status": "unavailable", "issues": [{"field": "evidence_refs",
+                            "issue": "redact credential-looking evidence before preparing this matter"}]}
+            return response, {r["path"]: r.get("sha256") for r in client.last_file_evidence
+                              if not decision.secret_hit(r["path"], redactor)}
+
+        directory = control / ".mw" / "decision-drafts"
+        if directory.resolve() != directory:
+            raise ValueError("draft directory must belong to the control project")
+        tracked = request.get("repair_loop") is True
+        scope = _decision_repair_scope(control, binding) if tracked else None
+        stage_ref = request.get("host_stage_ref")
+        if tracked and stage_ref is not None:
+            if (role != "pm" or not isinstance(stage_ref, str) or not stage_ref.strip()
+                    or len(stage_ref) > 256 or decision.secret_hit(stage_ref, redactor)):
+                raise ValueError("invalid host stage scope")
+            scope = [args.dp, meta.key, role, "stage", stage_ref]
+        recovery = None
+        approval = request.get("recovery_approval")
+        if tracked and approval is not None:
+            requested_ref = request.get("draft_ref")
+            approvals = [gate for gate in gates.enumerate(_ap_conductor.gates_dir(control))
+                         if gate.id == approval and gate.key == meta.key and gate.status == "approved"
+                         and gate.kind == "stalled" and gate.answer_source in (None, "human") and gate.answered_at
+                         and gate.answered_by and not gate.answered_by.startswith("conductor-auto:") and not gate.decision_ref
+                         and f"decision-draft:{requested_ref}" in gate.context_refs]
+            if len(approvals) != 1:
+                raise ValueError("recovery requires an approved human gate for this draft")
+            gate = approvals[0]
+            approved_at = datetime.fromisoformat(gate.answered_at)
+            if approved_at.tzinfo is None:
+                raise ValueError("recovery approval lacks a trusted timestamp")
+            if gate.expires_at and datetime.now(timezone.utc) >= datetime.fromisoformat(gate.expires_at):
+                raise ValueError("recovery approval expired")
+            recovery = (gate.id, approved_at.astimezone(timezone.utc).isoformat())
+        def recorded(action_ref):
+            store = _decide_lifecycle_store(control, cfg, credentials)
+            return any(event.get("decision_id") == action_ref and event.get("key") == meta.key
+                       and (event.get("lifecycle") in {"signoff", "executed"} if sign else event.get("kind") == "request")
+                       for event in decision_lifecycle.read_lifecycle(store).events)
+
+        result = decision_drafts.operate(directory, binding, request, inspect, redactor,
+                                         scope=scope, recovery=recovery, recorded=recorded)
+        if not tracked and result["status"] in {"needs-repair", "review"}:
+            result.update(owner=role, stage="material-preparation", next_step=(
+                "Review the indicated change and resubmit this draft." if result["status"] == "review" else
+                "Correct the indicated fields and resubmit this draft with repair_id and value."))
+    except (ValueError, TypeError, KeyError, OSError, RuntimeError, StopIteration) as exc:
+        _decide_print({"status": "unavailable", "transport": "not-sent", "detail": str(exc)}, True)
+        return 2
+    _decide_print(result, True)
+    return 0
+
+
 def cmd_decide(args: argparse.Namespace) -> int:
     """Decision-service CLI (design D-001/D-003/D-007).
 
@@ -7366,6 +7559,8 @@ def cmd_decide(args: argparse.Namespace) -> int:
         _decide_print({"evidence_refs": 1, "input_diagnostics": 1}, True)
         return 0
     project_dir = pathlib.Path(args.project).resolve()
+    if action == "draft":
+        return _decide_draft(args, project_dir)
     if action == "run":
         return _decide_run(args, project_dir)
     if action == "lifecycle":
@@ -15491,6 +15686,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "run", help="Ask one decision point (JSON request on stdin or --request-file; state is never argv)"
     )
     decide_run_p.add_argument("--project", required=True, help="Project directory")
+    decide_run_p.add_argument("--prepared-snapshot", help="Only send material matching this preview")
+    draft_p = decide_sub.add_parser("draft", help="Inspect or repair local decision material without a model request")
+    draft_p.add_argument("--project", required=True)
+    draft_p.add_argument("--dp", required=True)
     decide_run_p.add_argument("--request-file", default=None, metavar="FILE",
                               help="JSON request file with 'state' and 'questions' (default: stdin)")
     decide_run_p.add_argument("--dp", default=None, metavar="NAME",
@@ -15693,6 +15892,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     decide_sign_p.add_argument("--project", default=".", help="Project directory (default: %(default)s)")
+    decide_sign_p.add_argument("--prepared-snapshot", help="Only send material matching this preview")
     decide_sign_p.add_argument(
         "key_pos",
         nargs="?",

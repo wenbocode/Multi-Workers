@@ -30,6 +30,7 @@ import {
 	keyStateDocPaths,
 	ownerEvidenceCurrent,
 } from "../shared/index-store.ts";
+import { appendKeyGoal } from "../shared/key-goal.ts";
 import { LocalSelectionStore } from "../shared/local-selection-store.ts";
 import {
 	findMwPy,
@@ -2486,6 +2487,7 @@ export const PARALLEL_PROTOCOL = [
 	"设计的 Function Flow 增加“### 必要功能路径”表，逐行列出 | FLOW-001 | 真实入口或触发 | 可观察结果 | 逗号分隔的 VC |，覆盖必要的正常和失败路径。",
 	"Plan 写完后对照 goal、AC 和设计，实际删除次要任务并合并重复项。plan.md 用“## 计划裁剪”写理由，用“## 保留任务”表列 | T-001-slug | 产出 |，用“## 闭环覆盖”表逐行列 | AC-001 或 FLOW-001 | 逗号分隔的保留任务 ID，或 existing: evidence/文件 | 逗号分隔的 VC |。逐条核对所有 AC 和 FLOW。引用已有能力前运行最小验证并留存命令与结果。通过 advance_phase 的 PLAN → TASKS 门禁后按保留任务拆卡。",
 	"规划 key 时写清可独立验收的结果、验收证据，以及下游实际依赖的接口或产物。可分别验收且能独立解锁下游或单独受阻的交付，拆成不同 key；端到端验收保留明确归属。",
+	"在 spec.md 的 §0 写 ### spec_goal，用两三句话写清本 key 的交付、与项目 goal 的关系和预期收益如何判定。随 spec 确认后，replan 沿用原文。",
 	"在 spec 阶段为各 key 分配验收标准，design 阶段按接口、共享资源和集成验收复核边界。执行阶段 replan 保留已确认的目标和原 AC，跨 key 的交付调整回到原规划流程。",
 	"正常接续 key、worker 成功或继续派发现有任务时沿用 pm-state 和现有计划，不例行调用 replan_tasks。只有剩余计划确需改变、重派被 replan-required 拒绝或用户要求重划/优化并行度时才使用；优先 inspect 具体 task，已有检查且证据未变时复用 issue/snapshot，不遍历目录或分页读完全部历史。后继卡走原派发入口；卡片类型明确时由派发入口直接采用，需比较多种合理类型时才准备 dp-w-type。",
 	"任务卡在已有“要求”和“交付格式”中写明首个可验证结果、取得它的命令或操作，以及预期证据。一次修改和它的定点自验放在同一卡；需要独立执行者或独立验收的工作另行拆卡。",
@@ -3567,8 +3569,13 @@ export function pmActivate(
 	// other extensions chained in before us.
 	pi.on("before_agent_start", (event) => {
 		const base = typeof event.systemPrompt === "string" ? event.systemPrompt : "";
-		if (base.includes(PARALLEL_PROTOCOL_MARKER)) return undefined;
-		return { systemPrompt: base === "" ? PARALLEL_PROTOCOL : `${base}\n\n${PARALLEL_PROTOCOL}` };
+		let withRole = base;
+		if (!base.includes(PARALLEL_PROTOCOL_MARKER)) {
+			withRole = base ? `${base}\n\n${PARALLEL_PROTOCOL}` : PARALLEL_PROTOCOL;
+		}
+		const key = watch.key ? claimedPmKey(projectDir, watch.key) : undefined;
+		const systemPrompt = appendKeyGoal(withRole, agenticdocRoot, key);
+		if (systemPrompt !== base) return { systemPrompt };
 	});
 
 	// Start worker status poll loop (setInterval is safe; displaySummary inside fires later)

@@ -49,6 +49,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import datetime
+import hashlib
 import json
 import os
 import pathlib
@@ -1383,7 +1384,7 @@ def _redactor_covers(redactor: object, value: str) -> bool:
     return True
 
 
-_SAFE_PATH_SEGMENT_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_SAFE_PATH_SEGMENT_RE = re.compile(r"[A-Za-z0-9_-]{1,64}(?:\[[0-9]{1,6}\])*")
 
 
 def safe_path_text(path: object, redactor: object | None = None) -> str:
@@ -1800,6 +1801,17 @@ class DecisionClient:
 
     # -- prepared same-call request (T08 / design D012A) --------------------
 
+    def _qg_independent_review_required(self, start: float) -> dict:
+        field = "preparation.model_context.review"
+        message = "pass requires current independently verified AC/VC evidence"
+        result = self._prepared(start, dp="dp-QG", reason=REASON_INPUT_INCOMPLETE,
+                                issues=((field, message),), detail=f"{message}; no request sent")
+        result["input_diagnostics"] = {
+            "stage": "evidence-preparation", "transport": "not-sent", "truncated": False,
+            "issues": [{"field": field, "code": "qg-independent-review-required", "issue": message}],
+        }
+        return result
+
     def request_prepared(
         self,
         dp: str,
@@ -1813,6 +1825,9 @@ class DecisionClient:
         evidence_refs: list[dict] | None = None,
         contract_root: pathlib.Path | None = None,
         sign_quality_gate: Mapping | None = None,
+        qg_review: tuple[frozenset[str], Mapping | None] | None = None,
+        preview_only: bool = False,
+        expected_snapshot: str | None = None,
     ) -> dict:
         """One choice over legal business-conclusion/prepared-basis pairs.
 
@@ -1921,13 +1936,25 @@ class DecisionClient:
                         "no request sent"
                     ),
                 )
+        eligible_choices = None
+        if dp == "dp-QG" and qg_review is not None:
+            context = preparation.get("model_context") if isinstance(preparation, Mapping) else None
+            reasons = context.get("reasons") if isinstance(context, Mapping) else None
+            eligible = []
+            if qg_review[1] is not None and not protocol.entry_choice_issues(dp, "pass", material):
+                eligible.append("pass")
+            if isinstance(reasons, Mapping) and reasons:
+                eligible.append("fix")
+            if not protocol.entry_choice_issues(dp, "reopen", material):
+                eligible.append("reopen")
+            eligible_choices = tuple(eligible)
         # 3. Role -> complete material -> complete prepared basis (zero POST).
         issues = tuple(
             protocol.prepared_request_issues(
-                dp, material, preparation, actor_role=actor_role
+                dp, material, preparation, actor_role=actor_role, eligible_choices=eligible_choices
             )
         )
-        if issues:
+        if issues and not protocol.only_candidate_coverage_issues(issues):
             return self._prepared(
                 start,
                 dp=dp,
@@ -1940,11 +1967,16 @@ class DecisionClient:
             import decision_backends  # type: ignore[import-not-found]  # sibling
 
             frozen_preparation = copy.deepcopy(dict(preparation))
-            options = decision_backends.prepared_selection_options(dp, material, frozen_preparation)
+            options = decision_backends.prepared_selection_options(
+                dp, material, frozen_preparation, diagnostic_only=bool(issues) or eligible_choices == (),
+                eligible_choices=eligible_choices or None,
+            )
             questions = decision_backends.build_prepared_questions(
                 dp, material, frozen_preparation, options=options,
             )
         except ValueError as exc:
+            if eligible_choices == ():
+                return self._qg_independent_review_required(start)
             return self._prepared(
                 start,
                 dp=dp,
@@ -2015,18 +2047,23 @@ class DecisionClient:
                 max_state_plus_question_tokens=self.cfg.max_state_plus_question_tokens,
                 source_references=source_references,
                 evidence_refs=evidence_refs,
+                coverage_issues=issues,
                 **({"sign_quality_gate": sign_quality_gate} if sign_quality_gate is not None else {}),
             )
         except protocol.decision_material_sources.SourceMaterialError as exc:
             self.last_file_evidence = copy.deepcopy(exc.file_evidence)
-            if exc.allowed_fields is not None or any("path" in issue for issue in exc.diagnostics):
-                redactor = known_secret_redactor(self.cfg, snapshot=self._pinned_credential_snapshot)
-                for issue in exc.diagnostics:
-                    name = issue.get("path")
-                    if isinstance(name, str) and redactor.redact(name).text != name:
-                        issue.pop("path")
-                if exc.allowed_fields is not None:
-                    exc.allowed_fields = [field for field in exc.allowed_fields if not secret_hit(field, redactor)]
+            redactor = known_secret_redactor(self.cfg, snapshot=self._pinned_credential_snapshot)
+            for issue in exc.diagnostics:
+                if issue["code"] == "undefined-term":
+                    issue["field"] = safe_path_text(issue["field"], redactor)
+                if "source_field" in issue:
+                    issue["source_field"] = safe_path_text(issue["source_field"], redactor)
+                name = issue.get("path")
+                if isinstance(name, str) and redactor.redact(name).text != name:
+                    issue.pop("path")
+            if exc.allowed_fields is not None:
+                exc.allowed_fields = [field for field in exc.allowed_fields if not secret_hit(field, redactor)]
+            material_issue = any(item["code"] in {"missing-candidates", "undefined-term"} for item in exc.diagnostics)
             result = self._prepared(
                 start,
                 dp=dp,
@@ -2035,8 +2072,9 @@ class DecisionClient:
                     if any("compression-required" in issue for _, issue in exc.issues)
                     else REASON_INPUT_INCOMPLETE
                 ),
-                issues=exc.issues,
-                detail="file evidence preparation failed; no request sent",
+                issues=tuple((safe_path_text(field, redactor), detail) for field, detail in exc.issues),
+                detail=("decision material preparation failed; no request sent" if material_issue
+                        else "file evidence preparation failed; no request sent"),
             )
             result["input_diagnostics"] = {
                 "stage": "evidence-preparation",
@@ -2049,6 +2087,11 @@ class DecisionClient:
                 result["input_diagnostics"]["allowed_fields_truncated"] = exc.allowed_fields_truncated
             return result
         self.last_file_evidence = copy.deepcopy(getattr(state, "file_evidence", []))
+        if eligible_choices == ():
+            return self._qg_independent_review_required(start)
+        pass_review = qg_review if qg_review is not None and "pass" in (eligible_choices or ()) else None
+        if pass_review is not None and protocol.decision_model_context.reviewed_criterion_ids(state) != pass_review[0]:
+            return self._qg_independent_review_required(start)
         # The source text must be checked against the very same credential
         # snapshot the transport uses. A fresh snapshot is local to this call;
         # restoring the caller's pin prevents it leaking into the next request.
@@ -2075,6 +2118,37 @@ class DecisionClient:
         self.last_prepared_state = copy.deepcopy(state)
         self.last_prepared_questions = copy.deepcopy(questions)
         self.last_prepared_preparation = copy.deepcopy(frozen_preparation)
+        try:
+            self._validate_input(state, questions)
+        except DecisionInputError as exc:
+            return self._prepared(start, dp=dp, reason=REASON_INPUT_INCOMPLETE, detail=_scrub_detail(exc))
+        if not protocol.decision_material_sources._fits(
+            state, questions, self.cfg.max_state_bytes, self.cfg.max_total_tokens,
+            self.cfg.max_state_plus_question_tokens,
+        ):
+            return self._prepared(start, dp=dp, reason=REASON_BUDGET_EXHAUSTED,
+                                  detail="prepared request exceeds the configured material budget")
+        if preview_only or expected_snapshot is not None:
+            identity = [dp, state, questions, options, self.last_file_evidence, protocol.get_decision_point(dp).questions_version,
+                        self.cfg.max_questions, self.cfg.max_state_bytes, self.cfg.max_total_tokens,
+                        self.cfg.max_state_plus_question_tokens]
+            if pass_review is not None:
+                identity.append(pass_review[1])
+            digest = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            if expected_snapshot is not None and digest != expected_snapshot:
+                return self._prepared(start, dp=dp, reason=REASON_INPUT_INCOMPLETE,
+                                      issues=(("preparation", "prepared snapshot changed; preview current evidence"),),
+                                      detail="prepared snapshot changed; no request sent")
+            if preview_only:
+                references = state.get("references", {})
+                return {"status": "ready", "snapshot": digest, "attempts": 0, "transport": "not-sent",
+                        "choices": sorted({option["choice"] for option in options.values()}),
+                        "criteria": sorted(name for name, entry in references.items()
+                                           if entry["kind"] in {"acceptance-criterion", "verification-criterion"}),
+                        "historical_references": {name: entry for name, entry in references.items()
+                                                  if entry["kind"] == "historical-criterion"},
+                        "sources": [{"path": item["path"], "lines": item["included_lines"]}
+                                    for item in state.get("evidence_sources", [])]}
         # Retain a separate decode contract: the caller and injected backend
         # may mutate their own mappings while the network call is in flight.
         # A wire option always means the pair rendered before that call.

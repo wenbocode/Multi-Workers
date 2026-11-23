@@ -898,6 +898,7 @@ export function prepareDecisionEnvelope(
 	preparation?: DecisionPreparation,
 	context?: Record<string, unknown>,
 	parentDecisionRef?: string,
+	deferCandidateCoverage = false,
 ): DecisionEnvelopePreparation {
 	const refusal = decisionIdRefusal(dpId);
 	if (refusal) return { ok: false, reason: refusal, missing: ["dp"] };
@@ -936,7 +937,12 @@ export function prepareDecisionEnvelope(
 		materialRefIssues,
 		choiceIssues,
 	);
-	if (!preparation || problems.length)
+	const awaitingSourceDiagnostics =
+		deferCandidateCoverage &&
+		problems.length === 1 &&
+		problems[0] === "preparation.basis_catalog" &&
+		choiceIssues.some((issue) => issue.code === "missing" && issue.field === problems[0]);
+	if (!preparation || (problems.length && !awaitingSourceDiagnostics))
 		return {
 			ok: false,
 			reason: TRIAGE_REASON_INPUT_INCOMPLETE,

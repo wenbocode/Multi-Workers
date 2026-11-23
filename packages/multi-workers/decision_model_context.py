@@ -18,7 +18,9 @@ TERMS = {
     "AC": "Acceptance criterion: a required delivery outcome.",
     "API": "Application programming interface.",
     "ASCII": "American Standard Code for Information Interchange.",
+    "BLOCKED": "The action cannot proceed under the current conditions.",
     "CPU": "Central processing unit.",
+    "DLL": "Dynamic-link library.",
     "CRLF": "Carriage return and line feed.",
     "CSV": "Comma-separated values.",
     "CLI": "Command-line interface.",
@@ -29,6 +31,7 @@ TERMS = {
     "EOF": "End of file.",
     "ERROR": "An operation reported an error.",
     "FAIL": "A check ran and did not meet its expected condition.",
+    "FPS": "Frames per second.",
     "GPU": "Graphics processing unit.",
     "HTTP": "Hypertext Transfer Protocol.",
     "HTTPS": "Hypertext Transfer Protocol over TLS.",
@@ -42,11 +45,14 @@ TERMS = {
     "LF": "Line feed.",
     "OK": "The recorded operation succeeded.",
     "PASS": "The check met its stated condition.",
+    "PID": "Process identifier.",
     "PM": "Project manager: the current decision owner and result consumer.",
     "PIE": "Play In Editor, the Unreal Engine editor play session.",
     "QG": "Quality gate: review of the delivery against its current requirements.",
     "SDD": "Specification-driven development.",
     "SDK": "Software development kit.",
+    "SHA256": "SHA-256, a 256-bit cryptographic hash function.",
+    "TASKS": "AgenticTask phase for preparing executable task cards.",
     "TLS": "Transport Layer Security.",
     "TS": "TypeScript.",
     "UI": "User interface.",
@@ -74,6 +80,11 @@ _QUALIFIED_CRITERION = re.compile(
     rf"#(?P<id>{decision_material_sources.CRITERION_ID_PATTERN})(?![A-Za-z0-9_-])", re.IGNORECASE | re.ASCII,
 )
 TERM = re.compile(r"(?<![A-Za-z0-9_-])(?:UTF-8|(?:[A-Z]{2,}[0-9]*|[A-Z][0-9]+[A-Z]+|L[0-3]))(?![A-Za-z0-9_-])")
+INSTANCE_ID = re.compile(r"(?:PID[0-9]+|(?:AC|VC|FLOW)[0-9]{3})\Z")
+IDENTIFIER_ASSIGNMENT = re.compile(
+    r"(?i)(?<![\w-])(?:pid|(?:session|run|task|build|context|world)_id)[ \t]*[:=][ \t]*[A-Za-z0-9_-]+"
+)
+TRACE_EVENT = re.compile(r"^\[(?:FLOW|END)\](?=\s+\d{4}-\d{2}-\d{2}T)")
 REASON_ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}\Z")
 REASON_FIELDS = ("finding_ids", "remaining_ids")
 REMAINING_BUDGET = re.compile(
@@ -88,8 +99,29 @@ REVIEW_MEANINGS = {
     "unmet": "The current criterion was checked and failed.",
     "unverified": "The current criterion lacks a conclusive verification result.",
 }
-_CRITERION_NAMES = {"AC": ("acceptance criterion", "acceptance criteria"),
-                    "VC": ("verification criterion", "verification criteria", "verification contract")}
+_CRITERION_NAMES = {
+    "AC": ("acceptance criterion", "acceptance criteria", "验收标准", "验收准则"),
+    "VC": ("verification criterion", "verification criteria", "verification contract", "验证标准", "验证合同"),
+}
+
+
+def qg_zero_findings(catalog, context):
+    """An explicit empty finding map, or old material with explicit empty partitions."""
+    if isinstance(context, Mapping) and "reasons" in context:
+        reasons = context["reasons"]
+        return isinstance(reasons, Mapping) and not reasons
+    if not isinstance(catalog, list):
+        return False
+    fixes = [item for item in catalog if isinstance(item, Mapping)
+             and isinstance(item.get("applies_to"), list) and "fix" in item["applies_to"]]
+    return bool(fixes) and all(item.get(field) == [] for item in fixes for field in REASON_FIELDS)
+
+
+def reviewed_criterion_ids(state: Mapping) -> frozenset[str]:
+    return frozenset(
+        name for name, item in state.get("references", {}).items()
+        if item.get("kind") in {"acceptance-criterion", "verification-criterion"} and "review" in item
+    )
 
 
 def describe_measurement(desc):
@@ -133,7 +165,8 @@ def _terms_in_prose(value):
         ):
             continue
         without_files = re.sub(r"(?<!\w)[A-Za-z0-9_/\\.-]+\.[A-Za-z][A-Za-z0-9_-]*(?::\d+(?:-\d+)?)?", "", text)
-        terms.update(TERM.findall(without_files))
+        prose = IDENTIFIER_ASSIGNMENT.sub("", without_files)
+        terms.update(name for name in TERM.findall(prose) if not INSTANCE_ID.fullmatch(name))
     return terms
 
 
@@ -254,17 +287,48 @@ def auto_issues(context, material):
     return []
 
 
-def _references(ids, review, root, key):
-    if not ids:
+def _references(required, mentioned, review, root, key):
+    if not required and not mentioned:
         return {}, []
     if not root or not key or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", key) or key.endswith("."):
+        if not required:
+            return {}, []
         raise decision_material_sources.SourceMaterialError(
             (("model_context.references", "criterion text requires the current bound key"),)
         )
     root = pathlib.Path(root).resolve()
     key_dir = root / ".agenticdoc" / key
     definitions = {}
+    malformed = {}
+    malformed_details = {}
+    replacements = {}
     dependencies = []
+    for filename, parse in (("spec.md", contract_guard.parse_acs), ("design.md", contract_guard.parse_vcs)):
+        path = key_dir / filename
+        try:
+            canonical = path.resolve(strict=True)
+            if not canonical.is_relative_to(key_dir) or not canonical.is_file():
+                raise OSError("outside key")
+            with canonical.open("rb") as handle:
+                content = handle.read(decision_material_sources.MAX_SOURCE_BYTES + 1)
+            if len(content) > decision_material_sources.MAX_SOURCE_BYTES:
+                raise OSError("document too large")
+            text = content.decode("utf-8-sig")
+            if filename == "design.md":
+                definitions.update(parse(text, malformed=malformed, malformed_details=malformed_details))
+            else:
+                definitions.update(parse(text))
+                replacements = _scope_replacements(text)
+            dependencies.append({
+                "path": str(path), "canonical_path": str(canonical),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            })
+        except (OSError, RuntimeError, UnicodeError):
+            continue
+    pending = sorted(required | (mentioned & definitions.keys() if not review else set()))
+    historical = (mentioned - required) & (replacements.keys() - definitions.keys())
+    if not pending and not historical:
+        return {}, dependencies
     freeze_path = contract_guard.freeze_path(key_dir)
     frozen = None
     try:
@@ -287,24 +351,6 @@ def _references(ids, review, root, key):
             dependencies.append({"path": str(freeze_path), "canonical_path": str(canonical), "sha256": hashlib.sha256(raw).hexdigest()})
     except (OSError, RuntimeError, ValueError) as exc:
         raise decision_material_sources.SourceMaterialError((("model_context.references", "the bound contract freeze is unreadable"),)) from exc
-    for filename, parse in (("spec.md", contract_guard.parse_acs), ("design.md", contract_guard.parse_vcs)):
-        path = key_dir / filename
-        try:
-            canonical = path.resolve(strict=True)
-            if not canonical.is_relative_to(key_dir) or not canonical.is_file():
-                raise OSError("outside key")
-            with canonical.open("rb") as handle:
-                content = handle.read(decision_material_sources.MAX_SOURCE_BYTES + 1)
-            if len(content) > decision_material_sources.MAX_SOURCE_BYTES:
-                raise OSError("document too large")
-            definitions.update(parse(content.decode("utf-8-sig")))
-            dependencies.append({
-                "path": str(path), "canonical_path": str(canonical),
-                "sha256": hashlib.sha256(content).hexdigest(),
-            })
-        except (OSError, RuntimeError, UnicodeError):
-            continue
-    pending = sorted(ids)
     result = {}
     while pending:
         name = pending.pop(0)
@@ -312,8 +358,15 @@ def _references(ids, review, root, key):
             continue
         body = definitions.get(name)
         if not body:
+            diagnostics = None
+            detail = "missing current criterion text in the bound spec or design"
+            if name in malformed:
+                detail = malformed_details[name]
+                diagnostics = [{"field": f"model_context.references.{name}", "code": "criterion-reference-unresolved",
+                                "path": f".agenticdoc/{key}/design.md",
+                                "source_line": malformed[name]}]
             raise decision_material_sources.SourceMaterialError(
-                ((f"model_context.references.{name}", "missing current criterion text in the bound spec or design"),)
+                ((f"model_context.references.{name}", detail),), dependencies, diagnostics,
             )
         family = "spec" if name.startswith("AC-") else "design"
         if frozen is not None and frozen[family].get(name) != contract_guard.canonical_sha(name, body):
@@ -332,7 +385,56 @@ def _references(ids, review, root, key):
         if name in review:
             entry["review"] = review[name]
         result[name] = entry
+    for name in sorted(historical):
+        targets, line = replacements[name]
+        if all(target in definitions and (frozen is None or
+               frozen["spec" if target.startswith("AC-") else "design"].get(target)
+               == contract_guard.canonical_sha(target, definitions[target])) for target in targets):
+            result[name] = {"kind": "historical-criterion", "superseded_by": targets,
+                            "source": f".agenticdoc/{key}/spec.md:{line}"}
     return result, dependencies
+
+
+def _scope_replacements(spec):
+    """Read the explicit old-to-current scope table from the bound spec."""
+    replacements = {}
+    in_table = False
+    for line, text in enumerate(spec.splitlines(), 1):
+        cells = text.strip().strip("|").split("|")
+        if len(cells) != 3 or not text.lstrip().startswith("|"):
+            in_table = False
+            continue
+        old, current, _ = (cell.strip() for cell in cells)
+        if (old, current) == ("历史判据", "现行判据") or (
+            re.fullmatch(r"v\d+要求", old) and re.fullmatch(r"v\d+去向", current)
+        ):
+            in_table = True
+            continue
+        if not in_table or not cells[2].strip():
+            continue
+        if not re.fullmatch(r"(?:AC|VC)-\d{3}(?:[、, ]+(?:(?:AC|VC)-)?\d{3})*", current, re.I):
+            continue
+        if match := re.fullmatch(r"v\d+\s+(\d{3})\s*/\s*原VC-(\d{3})(?:[–-](\d{3}))?", old):
+            first, last = int(match[2]), int(match[3] or match[2])
+            if last < first:
+                continue
+            names = [f"AC-{match[1]}", *(f"VC-{number:03}" for number in range(first, last + 1))]
+        elif match := re.fullmatch(rf"(?:旧|原|previous\s+)?(?P<id>{decision_material_sources.CRITERION_ID_PATTERN})", old, re.I):
+            names = [match["id"].upper()]
+        else:
+            continue
+        family = current[:2].upper()
+        targets = []
+        for name in re.split(r"[、, ]+", current.upper()):
+            if CONTRACT_ID.fullmatch(name):
+                family = name[:2]
+            targets.append(f"{family}-{name[-3:]}")
+        for name in names:
+            if name in replacements:
+                replacements[name] = None
+            else:
+                replacements[name] = (targets, line)
+    return {name: row for name, row in replacements.items() if row is not None}
 
 
 def project(dp, material, preparation, questions, options):
@@ -389,7 +491,7 @@ def project(dp, material, preparation, questions, options):
                 issues.append((f"{field}.references", "expected stable non-criterion ids with a reference kind"))
                 continue
             kind = entry["kind"].strip().casefold().replace("_", "-").replace(" ", "-")
-            if kind in {"acceptance-criterion", "verification-criterion", "verification-contract"}:
+            if kind in {"acceptance-criterion", "verification-criterion", "verification-contract", "historical-criterion"}:
                 issues.append((f"{field}.references.{name}", "cite criterion ids from the bound contract without redefining them"))
                 continue
             if entry.keys() == {"kind", "text"} and _text(entry["text"]):
@@ -409,18 +511,22 @@ def project(dp, material, preparation, questions, options):
         issues.append((f"{field}.auto_comparison", "only dp-auto accepts path comparison"))
     if issues:
         raise decision_material_sources.SourceMaterialError(tuple(issues))
-    if dp == "dp-QG" and context:
-        fixes = {index: basis for index, basis in enumerate(preparation["basis_catalog"]) if "fix" in basis["applies_to"]}
-        known = {name for basis in fixes.values() for field in REASON_FIELDS for name in basis.get(field, [])}
-        for index, basis in fixes.items():
-            findings, remaining = (set(basis.get(field, [])) for field in REASON_FIELDS)
-            if not findings or findings & remaining or findings | remaining != known:
-                issues.append((f"preparation.basis_catalog[{index}].finding_ids",
-                               "a fix option must partition the same current findings into selected and remaining ids"))
+    catalog = preparation["basis_catalog"]
+    if dp == "dp-QG" and (context or any(field in basis for basis in catalog for field in REASON_FIELDS)):
+        zero = qg_zero_findings(catalog, context)
+        for index, basis in enumerate(catalog):
+            if "fix" not in basis["applies_to"]:
+                continue
+            selected = set(basis.get("finding_ids", []))
+            path = f"preparation.basis_catalog[{index}]"
+            if (not zero and not selected) or selected - reasons.keys():
+                issues.append((f"{path}.finding_ids", "select only current finding ids from model_context.reasons"))
+            elif "remaining_ids" in basis and set(basis["remaining_ids"]) != reasons.keys() - selected:
+                issues.append((f"{path}.remaining_ids", "omit remaining_ids or match the findings not selected for this fix"))
         if issues:
             raise decision_material_sources.SourceMaterialError(tuple(issues))
     selected_reason_ids = {
-        reason_id for basis in preparation["basis_catalog"]
+        reason_id for basis in catalog
         for name in REASON_FIELDS for reason_id in basis.get(name, [])
     }
     missing = selected_reason_ids - reasons.keys()
@@ -428,6 +534,8 @@ def project(dp, material, preparation, questions, options):
         raise decision_material_sources.SourceMaterialError(tuple(
             (f"{field}.reasons.{name}", "missing definition of prepared reason id") for name in sorted(missing)
         ))
+    if dp == "dp-QG" and reasons:
+        selected_reason_ids.update(reasons)
     model_fields = {"desc": desc}
     if selected_reason_ids:
         model_fields["reasons"] = {name: reasons[name] for name in sorted(selected_reason_ids)}
@@ -446,19 +554,17 @@ def project(dp, material, preparation, questions, options):
     model_fields["enum_meanings"] = enums | choice_meanings | status_meanings
     observed = _terms_in_prose([material, questions, model_fields, review])
     defined = TERMS | terminology
-    authored = _terms_in_prose([
-        material,
-        [item["text"] for item in preparation["basis_catalog"]],
-        [context[name] for name in ("desc", "review", "reasons", "auto_comparison", "enum_meanings") if name in context],
-        [entry["text"] for entry in generic.values() if "text" in entry],
-    ])
-    if authored - defined.keys():
-        raise decision_material_sources.SourceMaterialError(tuple(
-            (f"{field}.terminology.{name}", "missing definition of a term in submitted decision material")
-            for name in sorted(authored - defined.keys())
-        ))
+    leaves = decision_material_sources._string_leaves
+    authored = {}
+    basis_text = [(f"preparation.basis_catalog[{index}].text", item["text"])
+                  for index, item in enumerate(preparation["basis_catalog"])]
+    for source_field, text in leaves(material) + basis_text + leaves({
+        name: context[name] for name in ("desc", "review", "reasons", "auto_comparison", "enum_meanings") if name in context
+    } | {"references": generic}, field):
+        for name in _terms_in_prose(text) - defined.keys():
+            authored.setdefault(name, source_field)
     model_fields["terminology"] = {name: defined[name] for name in sorted((observed & defined.keys()) | terminology.keys())}
-    return model_fields, context_refs
+    return model_fields, context_refs, authored
 
 
 def field_trace(dp, material, preparation, state, options, *, key=None, instruction_source=None):
@@ -515,7 +621,9 @@ def field_trace(dp, material, preparation, state, options, *, key=None, instruct
             put(f"/state/enum_meanings/{name}", f"book:{base}/enum_meanings/{name}")
     for name, value in state["references"].items():
         target = f"/state/references/{name}"
-        if CONTRACT_ID.fullmatch(name):
+        if value["kind"] == "historical-criterion":
+            put(target, f"contract:{value['source']}", transform="historical-scope")
+        elif CONTRACT_ID.fullmatch(name):
             doc = "spec.md" if name.startswith("AC") else "design.md"
             put(target, f"contract:{key}/{doc}#{name}", transform="current-criterion")
             if "review" in value:
@@ -546,11 +654,12 @@ def field_trace(dp, material, preparation, state, options, *, key=None, instruct
 
 
 def resolve_criterion_references(state, questions, preparation, *, root, key):
-    """Bind all submitted criterion mentions to the current key before sizing the request."""
+    """Bind explicit criterion references and retain ordinary mentions as context."""
     review = preparation.get("model_context", {}).get("review", {})
     doc_root = pathlib.Path(root).resolve() / ".agenticdoc" if root else None
     key_dir = doc_root / key if doc_root is not None and key else None
     mentions = {name: f"preparation.model_context.review.{name}" for name in review}
+    required = set(review)
 
     def outside_current_key(path):
         try:
@@ -559,50 +668,62 @@ def resolve_criterion_references(state, questions, preparation, *, root, key):
         except (OSError, RuntimeError, ValueError):
             return True
 
-    def check(text, field, source_path=None):
+    def check(text, field, source_path=None, *, explicit_links=True):
         ids = [name.upper() for name in CONTRACT_ID.findall(text)]
         if not ids:
             return
-        if (source_path is not None and any(part.casefold() == ".agenticdoc" for part in source_path.parts)
-                and outside_current_key(source_path)):
-            raise decision_material_sources.SourceMaterialError(
-                ((field, f"{ids[0]} is cited from a source outside the bound key"),), state.file_evidence,
-                [{"field": field, "code": "criterion-reference-other-object", "criterion": ids[0]}],
-            )
-        for match in _QUALIFIED_CRITERION.finditer(text):
+        foreign = (source_path is not None and any(part.casefold() == ".agenticdoc" for part in source_path.parts)
+                   and outside_current_key(source_path))
+        for match in _QUALIFIED_CRITERION.finditer(text) if explicit_links else ():
             locator = pathlib.PurePosixPath(match["locator"].replace("\\", "/")).as_posix()
-            if locator in {key, "spec.md", "design.md"}:
-                continue
+            name = match["id"].upper()
             target = pathlib.Path(locator)
             if root and not target.is_absolute():
                 base = source_path.parent if source_path is not None and not locator.startswith(".agenticdoc/") else pathlib.Path(root)
                 target = base / target
-            if not outside_current_key(target):
+            filename = "spec.md" if name.startswith("AC-") else "design.md"
+            local = locator in {key, filename} or (
+                pathlib.Path(os.path.abspath(target)) == key_dir / filename and not outside_current_key(target)
+                if key_dir is not None else False
+            )
+            if local and not foreign:
+                required.add(name)
                 continue
-            name = match["id"].upper()
             raise decision_material_sources.SourceMaterialError(
-                ((field, f"{name} is qualified by an object outside the bound key"),), state.file_evidence,
+                ((field, f"{name} must cite the current key's {filename}"),), state.file_evidence,
                 [{"field": field, "code": "criterion-reference-other-object", "criterion": name}],
             )
-        for name in ids:
-            mentions.setdefault(name, field)
+        if not foreign:
+            for name in ids:
+                mentions.setdefault(name, field)
 
     leaves = decision_material_sources._string_leaves
-    for field, text in leaves({name: value for name, value in state.items()
-                              if name not in {"evidence_sources", "quality_gate"}}, "state") + leaves(questions, "questions"):
+    for field, text in (leaves(state["material"]) + leaves({
+        name: value for name, value in state.items() if name not in {"material", "evidence_sources", "quality_gate"}
+    }, "state") + leaves(questions, "questions")):
         check(text, field)
     for field, text in leaves(review, "preparation.model_context.review"):
         check(text, field)
     for index, source in enumerate(state.get("evidence_sources", [])):
-        check(source["text"], f"state.evidence_sources[{index}].text", pathlib.Path(source["path"]))
+        path = pathlib.Path(source["path"])
+        review_fields = [field for field in source["references"] if field.startswith("preparation.model_context.review.")]
+        if review_fields and any(
+                part.casefold() == ".agenticdoc" for part in path.parts
+            ) and outside_current_key(path):
+            raise decision_material_sources.SourceMaterialError(
+                ((review_fields[0], "current review evidence is outside the bound key"),), state.file_evidence,
+                [{"field": review_fields[0], "code": "criterion-reference-other-object"}],
+            )
+        check(source["text"], f"state.evidence_sources[{index}].text", path,
+              explicit_links=bool(review_fields) or path.suffix.lower() != ".log")
 
     try:
-        references, dependencies = _references(mentions, review, root, key)
+        references, dependencies = _references(required, set(mentions), review, root, key)
     except decision_material_sources.SourceMaterialError as exc:
         diagnostics = []
-        for field, _ in exc.issues:
-            name = field.rsplit(".", 1)[-1]
-            diagnostic = {"field": field, "code": "criterion-reference-unresolved"}
+        for item in exc.diagnostics:
+            name = item["field"].rsplit(".", 1)[-1]
+            diagnostic = {**item, "code": "criterion-reference-unresolved"}
             if name in mentions:
                 diagnostic.update(criterion=name, source_field=mentions[name])
             diagnostics.append(diagnostic)
@@ -627,28 +748,58 @@ def resolve_criterion_references(state, questions, preparation, *, root, key):
         state["terminology"][term] = TERMS[term]
 
 
-def complete_reference_terminology(state):
-    """Check named definitions and the actual prose excerpts selected for sending."""
+def terminology_issues(state, authored, project_root):
+    """Collect definitions needed by the authored text and the retained evidence."""
     evidence = state.get("evidence_sources", [])
-    sources = {row["source_id"]: row["text"] for row in evidence}
-    definitions = [
-        entry.get("text", sources.get(entry.get("source_id")))
-        for entry in state["references"].values()
-    ]
-    excerpts = [
-        row["text"] for row in evidence
-        if pathlib.Path(row["path"]).suffix.lower() in {".txt", ".md", ".rst", ".log"}
-    ]
-    terms = _terms_in_prose([definitions, excerpts])
+    references = state["references"]
+    named_sources = {entry["source_id"] for entry in references.values() if "source_id" in entry}
+    definition_fields = {}
+    for name, entry in references.items():
+        for term in _terms_in_prose(entry.get("text")):
+            definition_fields.setdefault(term, f"state.references.{name}")
+    terms = set(definition_fields)
+    sources_by_term = {}
+    for row in evidence:
+        source_path = pathlib.Path(row["path"])
+        suffix = source_path.suffix.lower()
+        if suffix not in {".txt", ".md", ".rst", ".log"} and row["source_id"] not in named_sources:
+            continue
+        line_numbers = (line for start, end in row["included_lines"] for line in range(start, end + 1))
+        for number, text in zip(line_numbers, row["text"].splitlines()):
+            if row["representation"] == "excerpt":
+                text = text.partition(": ")[2]
+            if suffix == ".log":
+                text = TRACE_EVENT.sub("", text)
+            for term in _terms_in_prose(text):
+                terms.add(term)
+                sources_by_term.setdefault(term, (row, number))
     glossary = state["terminology"]
-    missing = terms - glossary.keys() - TERMS.keys()
-    if missing:
-        raise decision_material_sources.SourceMaterialError(tuple(
-            (f"preparation.model_context.terminology.{name}", "missing definition of a term in referenced prose")
-            for name in sorted(missing)
-        ), file_evidence=state.file_evidence)
     for name in sorted((terms & TERMS.keys()) - glossary.keys()):
         glossary[name] = TERMS[name]
+    issues = []
+    diagnostics = []
+    root = pathlib.Path(project_root).resolve() if project_root is not None else None
+    for name in sorted((terms | authored.keys()) - glossary.keys()):
+        field = f"preparation.model_context.terminology.{name}"
+        origin = "submitted decision material" if name in authored else "referenced prose"
+        issues.append((field, f"missing definition of a term in {origin}"))
+        item = {"field": field, "code": "undefined-term"}
+        if name in authored:
+            item["source_field"] = authored[name]
+        elif name in definition_fields:
+            item["source_field"] = definition_fields[name]
+        if root is not None and name in sources_by_term:
+            row, line = sources_by_term[name]
+            path = decision_material_sources._display_path(pathlib.Path(row["path"]), root)
+            if path is not None:
+                item["path"] = path
+                item["source_line"] = line
+            if len(row["included_lines"]) == 1:
+                start, end = row["included_lines"][0]
+                item["requested_lines"] = {"start": start, "end": end}
+                item["file_line_count"] = row["source_lines"]
+        diagnostics.append(item)
+    return issues, diagnostics
 
 
 def _description_source(facts, name):

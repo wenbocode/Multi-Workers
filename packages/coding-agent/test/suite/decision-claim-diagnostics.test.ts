@@ -2,7 +2,7 @@
  *
  * Fully offline: a local CapturingApi drives the REAL registered execute, plus
  * one faux-provider harness integration case. Injected runner spies count every
- * decision/sign/lifecycle child; IndexStore.readAuthorityRows is spied to prove one read
+ * decision/sign/lifecycle child; IndexStore.readAll is spied to prove one read
  * per judgment; isolated temp projects are cleaned up. No real provider, no
  * real pi/python subprocess, no index writes by the tool. */
 import * as fs from "node:fs";
@@ -32,6 +32,10 @@ import {
 } from "../../src/extensions/agent-team-loop/pm/decision-tool.ts";
 import { claimedPmKey, inspectPmClaim } from "../../src/extensions/agent-team-loop/shared/decide-policy.ts";
 import { DECIDE_REGISTRY } from "../../src/extensions/agent-team-loop/shared/decide-registry.generated.ts";
+import {
+	type DecisionFeedback,
+	parseDecisionFeedback,
+} from "../../src/extensions/agent-team-loop/shared/decision-handoff.ts";
 import { currentClaimId } from "../../src/extensions/agent-team-loop/shared/implementation-gate.ts";
 import { IndexStore, keyNameRefusal, normalizeKey } from "../../src/extensions/agent-team-loop/shared/index-store.ts";
 import { agenticdocRoot } from "../../src/extensions/agent-team-loop/shared/paths.ts";
@@ -187,6 +191,7 @@ function spies(): Spies {
 			status: 0,
 			stdout: JSON.stringify({
 				available: true,
+				file_evidence: [],
 				mode: "auto",
 				acted: false,
 				confidence_source: "api",
@@ -296,9 +301,9 @@ function diagnosisOf(payload: Record<string, unknown>): Diagnosis {
 
 const PM_CLAIM_EXPLANATIONS: Record<string, string> = {
 	"index-empty-or-unparseable":
-		"PM 认领校验未通过：本次索引读取未取得可用数据；索引缺失、空文件或含无法解析的数据行，仅据本次结果无法区分，具体状态 unknown，不得据空结果猜测具体原因。",
+		"PM 认领校验未通过：本次索引读取返回 0 行；索引缺失、空文件或全部数据行损坏在既有读取器下无法区分，具体状态 unknown，不得据空结果猜测具体原因。",
 	"index-unreadable":
-		"PM 认领校验未通过：本次索引读取抛出异常，底层原因 unknown；该状态不等同于索引缺失、空文件或含无法解析的数据行，也不输出异常内容。",
+		"PM 认领校验未通过：本次索引读取抛出异常，底层原因 unknown；该状态不等同于索引缺失、空文件或全部数据行损坏，也不输出异常内容。",
 	"invalid-key": "PM 认领校验未通过：解析到的 key 名称不符合现有注册约束。",
 	"ambiguous-claim": "PM 认领校验未通过：满足本次判定的 active 认领或同名 key 行不唯一，无法解析出唯一绑定。",
 	"key-not-found": "PM 认领校验未通过：请求 key 在已解析索引行中不存在。",
@@ -330,7 +335,7 @@ function expectNoPmRecoveryAdvice(label: string, payload: Record<string, unknown
 function legacyClaimedPmKey(projectDir: string, requested?: string): string | undefined {
 	try {
 		const self = currentClaimId();
-		const rows = new IndexStore(agenticdocRoot(projectDir)).readAuthorityRows();
+		const rows = new IndexStore(agenticdocRoot(projectDir)).readAll();
 		const eligible = rows.filter(
 			(row) =>
 				row.status === "active" &&
@@ -423,14 +428,14 @@ describe("claim refusal diagnostics — VC-001 precise reasons", () => {
 			// F4: only missing / empty / all-bad-lines are indistinguishable here.
 			if (c.reason === "index-empty-or-unparseable") {
 				expect(d.message).toContain("unknown");
-				expect(d.message).toContain("索引缺失、空文件或含无法解析的数据行");
+				expect(d.message).toContain("索引缺失、空文件或全部数据行损坏");
 				expect(d.message).toContain("无法区分");
 				expect(d.message).not.toContain("抛出异常");
 				expect(d.message).not.toContain("不可读");
 			}
 		}
-		// readAuthorityRows throwing is ONLY "unreadable"; the raw exception never leaks.
-		vi.spyOn(IndexStore.prototype, "readAuthorityRows").mockImplementation(() => {
+		// readAll throwing is ONLY "unreadable"; the raw exception never leaks.
+		vi.spyOn(IndexStore.prototype, "readAll").mockImplementation(() => {
 			throw new Error(INDEX_UNREADABLE_SECRET);
 		});
 		const thrown = pmTools(root);
@@ -470,11 +475,11 @@ describe("claim refusal diagnostics — VC-001 precise reasons", () => {
 });
 
 describe("claim refusal diagnostics — VC-002 zero side effects, one read", () => {
-	it("ask refusal: zero children, readAuthorityRows once, index bytes/lock unchanged, no terminal on repeats", async () => {
+	it("ask refusal: zero children, readAll once, index bytes/lock unchanged, no terminal on repeats", async () => {
 		const root = pmProject();
 		setIndex(root, selfIdle); // key-inactive
 		const before = fs.readFileSync(indexFileOf(root));
-		const readSpy = vi.spyOn(IndexStore.prototype, "readAuthorityRows");
+		const readSpy = vi.spyOn(IndexStore.prototype, "readAll");
 		const t = pmTools(root);
 		// Three consecutive claim refusals must NOT touch the counter / terminal.
 		for (let i = 0; i < 3; i++) {
@@ -593,10 +598,10 @@ describe("claim refusal diagnostics — VC-003 authorization equivalence + legal
 			expect(claimedPmKey(root, v.requested), v.name).toBe(legacy);
 			expect(inspectPmClaim(root, v.requested).key, v.name).toBe(legacy);
 		}
-		// A malformed row invalidates the authority snapshot even with a valid self row.
+		// Partial bad rows do NOT introduce a new refusal: the valid self row still authorizes.
 		setIndex(root, `${selfActive}\n# comment\nbroken | line`);
-		expect(claimedPmKey(root, KEY)).toBeUndefined();
-		expect(inspectPmClaim(root, KEY).reason).toBe("index-empty-or-unparseable");
+		expect(claimedPmKey(root, KEY)).toBe(KEY);
+		expect(inspectPmClaim(root, KEY).reason).toBe("ok");
 	});
 
 	it("legal PM (valid claim) succeeds with no diagnosis leak; worker/role refusals never fake a PM claim", async () => {
@@ -712,7 +717,7 @@ describe("claim refusal diagnostics — VC-003 authorization equivalence + legal
 	it("legal worker succeeds on dp-w-check-task with schema material, basis and correlated lifecycle", async () => {
 		const root = pmProject();
 		setIndex(root, null);
-		const readSpy = vi.spyOn(IndexStore.prototype, "readAuthorityRows");
+		const readSpy = vi.spyOn(IndexStore.prototype, "readAll");
 		const taskPath = path.join(root, ".agenticdoc", KEY, "workers", TASK, "task.md");
 		fs.mkdirSync(path.dirname(taskPath), { recursive: true });
 		fs.writeFileSync(taskPath, "type: coding\n\n## 上下文\n\nfixture\n", "utf8");
@@ -759,7 +764,16 @@ describe("claim refusal diagnostics — VC-003 authorization equivalence + legal
 		expect(payload.available).toBe(true);
 		expect(payload.claim_diagnosis).toBeUndefined();
 		expect(payload.unavailable).toBeUndefined();
-		expect(askText).toBe(JSON.stringify(payload));
+		// R1: the first line stays the frozen legacy payload; the second line is
+		// the structured T04A feedback, never deleted to satisfy an old exact-text
+		// assertion. Worker success, receipt join and refusal zero-effect stay.
+		const lines = askText.split("\n");
+		expect(lines[0]).toBe(JSON.stringify(payload));
+		const feedback = (JSON.parse(lines[1] ?? "") as { decision_feedback?: DecisionFeedback }).decision_feedback;
+		expect(feedback).toBeDefined();
+		expect(parseDecisionFeedback(feedback).ok).toBe(true);
+		expect(feedback).toMatchObject({ category: "answer", origin: "mw-decide-run", stage: "service-reply" });
+		expect(feedback?.matter_ref).toMatch(/^[0-9a-f]{32}$/);
 		expect(workerSpy.decideCalls).toHaveLength(1);
 		expect(workerSpy.signCalls).toHaveLength(0);
 		const decideRequest = workerSpy.decideCalls[0] as DecideRunRequest;

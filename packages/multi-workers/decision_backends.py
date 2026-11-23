@@ -796,6 +796,8 @@ def prepared_selection_options(
     preparation: object,
     *,
     business_questions: Mapping | None = None,
+    diagnostic_only: bool = False,
+    eligible_choices: tuple[str, ...] | None = None,
 ) -> dict[str, dict[str, object]]:
     """Render only legal conclusion/basis pairs from this prepared request.
 
@@ -816,7 +818,10 @@ def prepared_selection_options(
         else None
     )
     catalog = preparation.get("basis_catalog") if isinstance(preparation, Mapping) else None
-    if _dpts.basis_catalog_issues(dp_id, catalog, material, require_complete=True):
+    context = preparation.get("model_context") if isinstance(preparation, Mapping) else None
+    issues = _dpts.basis_catalog_issues(dp_id, catalog, material, require_complete=True, model_context=context,
+                                       eligible_choices=eligible_choices)
+    if issues and not (diagnostic_only and _dpts.only_candidate_coverage_issues(issues)):
         raise ValueError(f"{dp_id}: preparation.basis_catalog is not complete and legal")
     labels = spec.get("labels")
     labels = dict(labels) if isinstance(labels, Mapping) else {}
@@ -843,8 +848,18 @@ def prepared_selection_options(
         field = "criteria" if presentation.get("criteria") else "labels"
         label_sources.update({choice: f"questions:/{business_qid}/{field}/{choice}" for choice in overrides})
     options: dict[str, dict[str, object]] = {}
-    entry_choices = _dpts.resolve_entry_choices(dp_id, material)
+    entry_choices = _dpts.resolve_entry_choices(dp_id, material) if eligible_choices is None else eligible_choices
+    if diagnostic_only and eligible_choices is not None and not any(
+        choice in entry_choices for item in catalog for choice in item["applies_to"]
+    ):
+        # An incomplete catalog can still supply the local source inspection.
+        # The shared preparation rejects its coverage issues before transport.
+        entry_choices = _dpts.resolve_entry_choices(dp_id, material)
+    zero_findings = dp_id == "dp-QG" and _dpts.decision_model_context.qg_zero_findings(catalog, context)
+    reasons = context.get("reasons") if isinstance(context, Mapping) else None
     for choice in entry_choices:
+        if zero_findings and choice == "fix":
+            continue
         # Conditional choices retain their prepared criteria. The host checks
         # the selected branch's preconditions after decoding the frozen pair.
         number = 0
@@ -864,18 +879,20 @@ def prepared_selection_options(
             if option_id in options:
                 raise ValueError(f"{dp_id}: prepared option ids are not unique")
             label = labels.get(choice) or choice
-            reason_labels = "".join(
-                f"\n{field}: {', '.join(item[field])}"
-                for field in ("finding_ids", "remaining_ids") if item.get(field)
-            )
+            findings = list(item.get("finding_ids", []))
+            remaining = list(item.get("remaining_ids", []))
+            if dp_id == "dp-QG" and choice == "fix" and isinstance(reasons, Mapping):
+                remaining = sorted(name for name in reasons if isinstance(name, str) and name not in findings)
+            reason_labels = "".join(f"\n{field}: {', '.join(ids)}" for field, ids in
+                                    (("finding_ids", findings), ("remaining_ids", remaining)) if ids)
             options[option_id] = {
                 "choice": choice,
                 "basis_id": item["id"],
                 "basis_text": item["text"],
                 "choice_label": label,
                 "choice_label_source": label_sources.get(choice, f"registry:{dp_id}/{business_qid}/choices/{choice}"),
-                "finding_ids": list(item.get("finding_ids", [])),
-                "remaining_ids": list(item.get("remaining_ids", [])),
+                "finding_ids": findings,
+                "remaining_ids": remaining,
                 "label": (
                     f"结论 {choice}: {label}\n"
                     f"依据 {item['id']}: {item['text']}{reason_labels}"

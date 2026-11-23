@@ -1,7 +1,81 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { expect, it, vi } from "vitest";
-import { registerAskDecisionTool } from "../../src/extensions/agent-team-loop/pm/decision-tool.ts";
+import {
+	formatInputDiagnostics,
+	readInputDiagnostics,
+} from "../../src/extensions/agent-team-loop/pm/decision-input-diagnostics.ts";
+import { registerAskDecisionTool, runAskDecision } from "../../src/extensions/agent-team-loop/pm/decision-tool.ts";
 import { createHarness, getMessageText } from "./harness.ts";
+
+it("shows the contract header or material field used by a preparation diagnostic", () => {
+	const diagnostics = readInputDiagnostics({
+		stage: "evidence-preparation",
+		transport: "not-sent",
+		truncated: false,
+		issues: [
+			{
+				field: "model_context.references.VC-002",
+				code: "criterion-reference-unresolved",
+				path: ".agenticdoc/context/design.md",
+				source_line: 89,
+			},
+			{
+				field: "preparation.model_context.terminology.XRAY",
+				code: "undefined-term",
+				source_field: "preparation.basis_catalog[1].text",
+			},
+		],
+	});
+	expect(diagnostics).toBeDefined();
+	if (diagnostics) {
+		const text = formatInputDiagnostics(diagnostics);
+		expect(text).toContain(".agenticdoc/context/design.md:89");
+		expect(text).toContain("preparation.basis_catalog[1].text");
+	}
+});
+
+it("admits a public quality request with zero findings and no fix placeholder", async () => {
+	const runner = vi.fn(async (_request: { input: string }) => ({
+		status: 0,
+		timedOut: false,
+		stderr: "",
+		stdout: JSON.stringify({ available: false, reason: "entry-unavailable" }),
+	}));
+	await runAskDecision({
+		dp: "dp-QG",
+		trigger: "current-review",
+		projectDir: ".",
+		key: "fixture",
+		initiatorRole: "pm",
+		runner,
+		material: {
+			review_requirements: "The export remains readable.",
+			review_evidence: ["The readback result is pending."],
+			review_findings: "No product findings.",
+			uncovered_scope: "A further independent check is pending.",
+		},
+		preparation: {
+			prepared_at: "2026-11-23T00:00:00Z",
+			model_context: { reasons: {} },
+			basis_catalog: [
+				{
+					id: "satisfied",
+					text: "Apply when independent review meets the contract.",
+					applies_to: ["pass"],
+					material_refs: ["review_requirements"],
+				},
+				{
+					id: "basis-gap",
+					text: "Apply when the contract itself is inconsistent.",
+					applies_to: ["reopen"],
+					material_refs: ["review_requirements"],
+				},
+			],
+		},
+	});
+	expect(runner).toHaveBeenCalledOnce();
+	expect(JSON.parse(runner.mock.calls[0][0].input).preparation.model_context.reasons).toEqual({});
+});
 
 it("shows a bounded, safe evidence refusal and sends explicit refs in the local envelope", async () => {
 	const evidenceRefs = [

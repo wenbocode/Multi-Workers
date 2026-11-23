@@ -1,0 +1,376 @@
+[
+	{
+		"project": "Bearing",
+		"recorded_event_id": "cd41568d-bfc0-4c6f-9628-161681195e3a",
+		"original_tool_entry": "5e48b16e",
+		"source_sha256": {
+			".agenticdoc/work-memory/evidence/s6-source-audit-partial-pm-disposition.md": "582453f0a22fd2b3626fcb3848b127753d6f626326ca158788d4394d572ea385",
+			".agenticdoc/work-memory/tasks/V-S6-final-source-audit.md": "d767d1839212bfff05d6e2716b2bb3b2a49005861ed70e7b40768f67bcb99131",
+			".agenticdoc/work-memory/workers/work-memory-s6-final-source-audit/run.json": "173efe98bf101d93b05b8131f678c51c282cf73371511b164dab2de28108d909"
+		},
+		"missing_choices": [],
+		"authored_terms": [
+			"ACK",
+			"ACVC",
+			"DB",
+			"FIX",
+			"S6DONE"
+		],
+		"identifiers": [
+			"FLOW016",
+			"AC001",
+			"AC021",
+			"AC024",
+			"AC025",
+			"AC031",
+			"AC034"
+		],
+		"wire": "splitA",
+		"negative": {
+			"dp": "dp-pm-steer",
+			"key": "work-memory",
+			"task_key": "work-memory-s6-final-source-audit",
+			"trigger": "work-memory-s6-final-source-audit",
+			"evidence_refs": [
+				{
+					"field": "material.task_goal",
+					"path": ".agenticdoc/work-memory/tasks/V-S6-final-source-audit.md",
+					"lines": {
+						"start": 8,
+						"end": 10
+					}
+				},
+				{
+					"field": "material.pm_decision_background",
+					"path": ".agenticdoc/work-memory/evidence/s6-source-audit-partial-pm-disposition.md",
+					"lines": {
+						"start": 9,
+						"end": 23
+					}
+				},
+				{
+					"field": "material.worker_execution",
+					"path": ".agenticdoc/work-memory/workers/work-memory-s6-final-source-audit/run.json",
+					"lines": {
+						"start": 7,
+						"end": 8
+					}
+				}
+			],
+			"material": {
+				"task_goal": "完成原T037全35AC40VC/FLOW016独立审计，先真正读两线源文/原新对象/API/DOM，自行四事实或明确缺口/精确path:line/version/核对窗口；manifest/PM表不能代源读取，不代PM签署。",
+				"task_requirements": "5min真实读取进度，18min报告only，20min硬止；只有report可写就据实交付。不用PM表代你自己的工作四事实/缺口，不为PASS隐去历史。",
+				"task_deliverables": "report.md唯一完整交付，可progress；两张独立四事实表path:line/version/真实窗口/不确定性，35AC+40VC唯一行现合同/证据/层级/结论/缺口，不只同上PASS；原FIX如何被实际新证据关闭或未闭、P级最小问题/全部未读UNVERIFIED。不签署，PM后原样发布。",
+				"pm_decision_background": "用户持续推进S6DONE/可改ACVC，但无需本次改标准。原20min审者实际3min终态done0，报告逐字留存partial；核真实trace只部分source/raw，无spec/design/evreq或S1–S5真证据/真双客全链；35AC表大量语义误配、read窗口写16:40–48早于16:59run，currentNote2/snapshot2混历史hop1。不能接受full025或终审，也不把未读冒产品bug/撤先前合法stage接受，不为原donebadge跑绿。需要改变剩余任务组织，preview已冻结1ed7f4cd86eb53be6c0a2449e579afde33414a8ad5cdfa6693149ab9ecf61da3，basis replan-1ed7f4cd86eb53be6c0a2449。split A33个非024025AC+38个非024025VC先真合同/正式stage问题/raw/当前身份，核既有有限证据适用性；B024025/FLOW016真双客各五+两线源文/原新版本/DOMscript与自己四事实实际窗口。两只读20min各末2min报告、资源空、独立ownreport，可并行，无产品writer；直接parent均本done run@2026-11-22T16:59:08.032Z。全部35AC40VCFLOW016不删，479213051ae7/37原ID/原816a2cf628af/原红/原终态与真人外部引擎收益UNVERIFIED保留。禁止新产品/服务/测试/全回归/浏览器/网络/DB/private或新权。read公开合同及现有公开证据本来已授权，不需用户重新授权；023只原有限CPython合同，不强加native/global定理。先真正审读而非只数行/标题，真实缺口留具体最小路径。后还需实际独立QG，不能自动从done签S6/wholekey。",
+				"worker_execution": "actual run16:59:08.032→17:02:08.480Z done0/180s/34calls，report/trace/run已读ACK；report字节SHAa363337909322bc1217109c14d7e064bb8c9b32787728ef0e54dd0d66a28a755保留。实际source/raw部分有价值但snapshot/窗口与大部分合同未审未完成；无活动worker，原预算不恢复/不重试原run，本split在用户S6既有整体授权内有界新审读卡。"
+			},
+			"preparation": {
+				"prepared_at": "2026-11-22T17:07:29.2110478Z",
+				"basis_catalog": [
+					{
+						"id": "replan-1ed7f4cd86eb53be6c0a2449",
+						"applies_to": [
+							"split"
+						],
+						"material_refs": [
+							"pm_decision_background",
+							"worker_execution",
+							"task_goal"
+						],
+						"text": "正式冻结preview将同一全部责任分成互不写冲突的两个有界只读源审，A专合同继承证据适用性，B专真双客/两线确切版本窗口；原已有明确public paths，非新业务或弱化标准，不代独立签署。"
+					},
+					{
+						"id": "avoid-broad-pm-takeover-or-requirement-narrowing",
+						"applies_to": [
+							"narrow",
+							"direct-exec",
+							"escalate"
+						],
+						"material_refs": [
+							"task_requirements",
+							"pm_decision_background"
+						],
+						"text": "当前问题是review实际覆盖不足/误读，不是产品或目录权限故障；不能缩交付、PM自填独立四事实或以用户重授权替代已可读源。"
+					}
+				]
+			}
+		},
+		"positive": {
+			"material": {
+				"task_goal": "完成原T037全35AC40VC/FLOW016独立审计，先真正读两线源文/原新对象/API/DOM，自行四事实或明确缺口/精确path:line/version/核对窗口；manifest/PM表不能代源读取，不代PM签署。",
+				"task_requirements": "实际read，只写自己报告，不shell扩权，不改产品/标准/旧证据，列实际/未读范围与窗口。5min真实读取进度，18min报告only，20min硬止；只有report可写就据实交付。不用PM表代你自己的工作四事实/缺口，不为PASS隐去历史。",
+				"task_deliverables": "report.md唯一完整交付，可progress；两张独立四事实表path:line/version/真实窗口/不确定性，35AC+40VC唯一行现合同/证据/层级/结论/缺口，不只同上PASS；原FIX如何被实际新证据关闭或未闭、P级最小问题/全部未读UNVERIFIED。不签署，PM后原样发布。",
+				"pm_decision_background": "用户授权持续推进S6，本次不改标准。原审计实际3分钟终态，只部分源文和原始对象读过，未读现行spec/design/evidence-requirement及多数前阶段证据，合同语义错配、核对时间早于运行、当前与导入历史版本混淆。原件和PM处置均保存，不接受全量验收。冻结split版本1ed7f4cd86eb53be6c0a2449e579afde33414a8ad5cdfa6693149ab9ecf61da3，依据replan-1ed7f4cd86eb53be6c0a2449：A核33项非024025验收与38项非024025验证的真实合同和S1至S5既有证据适用性；B核024025及FLOW-016的双真客户端各五流程、两线真实源文、新旧版本、DOM脚本和自行四事实。每项20分钟，末2分钟只报告，无共享写面可并行，父运行均work-memory-s6-final-source-audit@2026-11-22T16:59:08.032Z。保全35项验收、40项验证、37原任务与原新指纹479213051ae7和816a2cf628af，原红和真人/外部引擎/收益UNVERIFIED不变。不启动产品、测试、服务、浏览器、网络，不读数据库/私密文件，不改任何产品或标准。既有有限CPython接受不升全局定理。真正审读后仍需质量门禁，不从done元数据宣称完成或签全key。",
+				"worker_execution": "实际运行2026-11-22T16:59:08.032Z至17:02:08.480Z，done/exit0/180秒/34次工具。报告、运行元数据和真实读取轨迹已读确认；原件SHA256 a363337909322bc1217109c14d7e064bb8c9b32787728ef0e54dd0d66a28a755保留。已读源文和部分对象可复用为线索，尚未完成原合同审计，核对窗口和版本表存在错误。没有活动写者。原运行已结束不恢复预算，不重跑为绿；这是既有用户授权下两项有界只读后续审计。"
+			},
+			"preparation": {
+				"prepared_at": "2026-11-22T17:16:29.722919+00:00",
+				"model_context": {
+					"desc": [
+						"目标是补齐原独立审计责任，不是改产品或降低验收标准。",
+						"已完成的审者部分原始读取有用，但实际合同覆盖、版本和时间陈述不足，逐字原件已保留。",
+						"两项各二十分钟的只读后续审计分别核合同继承证据与两客户端工作线，全部原责任保留。"
+					],
+					"terminology": {
+						"SHA256": "用于核对文件字节内容身份的256位安全散列算法。",
+						"ACK": "项目负责人已读确认，不是验收通过。",
+						"ACVC": "验收标准编号和验证标准编号两类的合称。",
+						"DB": "数据库。",
+						"FIX": "审计要求修正的结论，并不自动证明产品存在缺陷。",
+						"FLOW016": "当前设计文件中编号为FLOW-016的双客户端和两工作线工程流程。",
+						"S6DONE": "第六阶段验收完成，不代表整个项目任务签署。"
+					}
+				},
+				"basis_catalog": [
+					{
+						"id": "replan-1ed7f4cd86eb53be6c0a2449",
+						"applies_to": [
+							"split"
+						],
+						"material_refs": [
+							"pm_decision_background",
+							"worker_execution",
+							"task_goal"
+						],
+						"text": "冻结计划将全部原责任分成合同继承证据审计和真实客户端两线审计，各自有界只读、独立报告无写入冲突，保留全部原编号和标准。"
+					},
+					{
+						"id": "avoid-broad-pm-takeover-or-requirement-narrowing",
+						"applies_to": [
+							"narrow",
+							"direct-exec",
+							"escalate"
+						],
+						"material_refs": [
+							"task_requirements",
+							"pm_decision_background"
+						],
+						"text": "当前缺口是审者实际覆盖不足和误读，而非产品或权限故障；不能缩交付、由项目负责人自填独立事实或请求无必要的用户重新授权。"
+					}
+				]
+			},
+			"evidence_refs": [
+				{
+					"field": "material.task_goal",
+					"path": ".agenticdoc/work-memory/tasks/V-S6-final-source-audit.md",
+					"lines": {
+						"start": 8,
+						"end": 8
+					}
+				},
+				{
+					"field": "material.pm_decision_background",
+					"path": ".agenticdoc/work-memory/evidence/s6-source-audit-partial-pm-disposition.md",
+					"lines": {
+						"start": 13,
+						"end": 14
+					}
+				},
+				{
+					"field": "material.pm_decision_background",
+					"path": ".agenticdoc/work-memory/evidence/s6-source-audit-partial-pm-disposition.md",
+					"lines": {
+						"start": 21,
+						"end": 23
+					}
+				},
+				{
+					"field": "material.worker_execution",
+					"path": ".agenticdoc/work-memory/workers/work-memory-s6-final-source-audit/run.json",
+					"lines": {
+						"start": 7,
+						"end": 8
+					}
+				}
+			],
+			"dp": "dp-pm-steer",
+			"key": "work-memory",
+			"task_key": "work-memory-s6-final-source-audit",
+			"trigger": "work-memory-s6-final-source-audit"
+		},
+		"sources": {
+			".agenticdoc/work-memory/tasks/V-S6-final-source-audit.md": "\n\n\n\n\n\n\n完成原T037全35AC40VC/FLOW016独立审计，先真正读两线源文/原新对象/API/DOM，自行四事实或明确缺口/精确path:line/version/核对窗口；manifest/PM表不能代源读取，不代PM签署。\n## 上下文\n.agenticdoc/goal.md:7；spec/design/evidence-requirement现479213051ae7。tasks/T-037-final-independent-audit.md:1及V-S6-source-raw-closure.md:1全部目标/审计责任保留，AC001..035/VC001..040/FLOW016，35AC40VC37原ID不删，旧816a2cf628af/真人外部引擎收益UNVERIFIED。原T037@16:10:19.297Z是审计祖先，原FIX报告evidence/reviews/stage6-initial-independent-audit.md:1，PM处置s6-t037-initial-pm-disposition.md:1，不冒全源审计。\n",
+			".agenticdoc/work-memory/evidence/s6-source-audit-partial-pm-disposition.md": "\n\n\n\n\n\n\n\nActual trace independently reads original T035 apply/Note/one originalRecord; T035/T036 manifests; new productNote and MWWorkItem raw, both DOM result JSONs, import receipts, pi-source correction. This is genuinely another executor's **partial** inspection, does close some old manifest-only reading gap, and identifies current limitations. Preserve reported finite AC025 PASS as **reviewer's opinion**, not PM final acceptance. Creator selfchecks, PM offline reconciliation and independent evidence reading remain distinct layers.\n\n## Rejected as complete original responsibility\n\n1. Actual run is16:59:08–17:02:08, but report says independent read16:40–16:48 and tables16:40–16:45: those are **before worker start**. Artifact capture times16:43 are not this auditor's read window. No clock rewriting: use trace read calls16:59:37–17:00:09 only as tool timestamps; no invented human effort. Thus actual-review-window obligation unsatisfied in authored table.\n2. Product currentNotev2 `source_record_ref` points snapshot source_version2, not report's claimed current snapshotv1; original importedNotev1 snapshot1 and DOM historical hopv1 must be separated from currenteditor2. PM earlier raw reconciliation checks version2 exactcanonicalbody; report does not establish this distinction by reading new snapshotraw or DOMscript. Do not call historicalpin wrong merely because current is2, or call current2 proven from historical1 alone.\n3. Trace never reads spec/design/evidence-requirement, hence its 35AC rows misdescribe e.g.AC009 as backup/restore (actualvalidate zero-write), AC021 as time/insight (actualversion/undo), AC029 as startup (actualUnicode note limits), AC030 as keyboard (actualresolve), AC031 as performance (actualbroken-link), AC034 as backup (actualtimehint nonhuman/noLLM). Its UNVERIFIED means **not read by this reviewer**, not evidence that prior formal S1–S5 acceptance vanished or product failed. No authority gap: existing card explicitly authorized these public contracts and exact stage evidence paths; do not ask user to reauthorize lawful reads.\n4. Trace does not read supplied S3/S4/S5 formal evidence or comparator/raw/perf/UI source samples, T033 actualcalls/T034 nativecalls, MW original apply/APIobjects, DOMscripts or all five source segments/Records. Row counts35/40 are not full independent coverage. AC024 current accepted fullpublic text lines1–24 exists; :26–33 is merely the T035 **captured source** range, never an audit read ceiling.\n5. Report's FLOW016 human-feedback blocker contradicts current design.md:210 revision: now clients+two engineering lines, originalhuman/externalengine/benefit remain UNVERIFIED outside revised engineering acceptance. No standard reopening implied by this report error. CurrentNote internalrefs not public directread is known limitation; existing importreceipt→snapshot.evidence_refs→originalRecords is finite contract, independent auditor must inspect actual proof, not automatically demand a new endpoint or universal guarantee.\n\n## Minimal remaining plan\n\nNo new coding, product/DB/API/client/browser/perf/full regression reruns. Freeze479213051ae7/35AC40VC/37originaltasks/currentfinal2/120candidate. Split remaining readonly independent work into two disjoint report faces (may run parallel):\n- A: 33 non024025 AC +38 non024025 VC: first read **actual contracts**, then actual earlier stage exits/questions/raw references and identity applicability, not source-filling guesses and not merely PASS titles. Reuse named finite S1–S5 evidence after inspecting content/childconditions; mark reviewer-reading gaps distinctly from demonstrated product failures or earlier retained exceptions. No native/global theorem imposed on finite023.\n- B: 024025/FLOW016: actual client five-workflows each + exactsource/newoldraw/DOMscripts, independently author four facts/gaps/source line/version and **host trace actual window**, separate imported1/historicalsnapshot1 vs current2/snapshot2. No creator-prefilled answers; truth-preserving explicit local gaps permitted by revised025.\n",
+			".agenticdoc/work-memory/workers/work-memory-s6-final-source-audit/run.json": "\n\n\n\n\n\n  \"status\": \"done\",\n  \"started_at\": \"2026-11-22T16:59:08.032Z\",\n"
+		}
+	},
+	{
+		"project": "Gaze",
+		"recorded_event_id": "81f97b54-784e-4e7d-867b-744335a9d504",
+		"original_tool_entry": "e8421730",
+		"source_sha256": {
+			".agenticdoc/gaze-insights-evidence/tasks/T-007-local-loop-repair.md": "5fe1acc45da66c87286c238ea2a08788f82442c851c315cc419dbb78a7c9413b",
+			".agenticdoc/gaze-insights-evidence/workers/gaze-evidence-local-loop-repair/trace.log": "aaea5172f5046ed05c228beae38a7c9374120f596b0a751f9adc33af1a5a1da9"
+		},
+		"missing_choices": [
+			"narrow",
+			"split",
+			"escalate"
+		],
+		"authored_terms": [
+			"CL",
+			"DONE",
+			"GUI",
+			"HTTP400",
+			"PMF005",
+			"PMF006",
+			"SHA"
+		],
+		"identifiers": [
+			"AC007",
+			"END",
+			"FLOW",
+			"FLOW009",
+			"VC007"
+		],
+		"wire": "direct-execA",
+		"negative": {
+			"dp": "dp-pm-steer",
+			"key": "gaze-insights-evidence",
+			"trigger": "gaze-evidence-local-loop-repair",
+			"task_key": "gaze-evidence-local-loop-repair",
+			"evidence_refs": [
+				{
+					"field": "material.pm_decision_background",
+					"path": ".agenticdoc/gaze-insights-evidence/workers/gaze-evidence-local-loop-repair/trace.log",
+					"lines": {
+						"start": 4,
+						"end": 19
+					}
+				},
+				{
+					"field": "material.task_goal",
+					"path": ".agenticdoc/gaze-insights-evidence/tasks/T-007-local-loop-repair.md",
+					"lines": {
+						"start": 8,
+						"end": 9
+					}
+				}
+			],
+			"material": {
+				"task_goal": "修复最小本地真实范围证据注册→选择→按钮定位→正确原会话精确range→同操作真实Draw回执闭环的已确认缺陷，交付可连续使用/PM独立复跑的最终功能，过期/不匹配拒绝不改错UI。",
+				"task_requirements": "修复F001op发布顺序、F002heldsession生命周期、F003新drive精确关联与registry容量、F004cap计数、PMF005后台可取消有界query、PMF006真实内容revision，实际构建运行定点自验。",
+				"task_deliverables": "evidence/t007-local-loop-repair-20261123.md及本report：F001..F006逐项真实修复/代码位置/结果、actualsources/bin/run/CL/pins、至少5次新drive关联证据（可短链2次full+其余minimal）/不同range、expired/mismatch/cancel/partial0发布、注册后台wall/GUI无阻塞、真实SHA绑定及重验、正常ownedmaintenance链、PM精确复跑命令。",
+				"pm_decision_background": "Coding endpoint exhausted three startup attempts HTTP400, tool calls0/no writes; worker terminal readACK. User authorized overnight shortest-path continued implementation to DONE. No live D/build/runtime writer; PM proposes direct-exec same unchanged exact card's Game-plugin/Tools/output surfaces and 3600s bound, Engine read-only, no guard/model/strict changes, no forcekill; nonauthor review after actual build/run. Frozen replan preview version21e8b754ca85544b4b7d8c9d7285c89c0df1b4c41a2c23c9f7e4ad3a82a4b583 accepts direct-exec, live_workers[].",
+				"worker_execution": "Failed before output at17:31:18/22/27Z, three model HTTP400 failures, tools0/writes0. Source remains c07839a1 and old dedicatedPID85676 must freshly verify before any maintenance."
+			},
+			"preparation": {
+				"prepared_at": "2026-11-23T01:34:00+08:00",
+				"basis_catalog": [
+					{
+						"id": "replan-21e8b754ca85544b4b7d8c9d",
+						"applies_to": [
+							"direct-exec"
+						],
+						"material_refs": [
+							"pm_decision_background",
+							"worker_execution",
+							"task_requirements"
+						],
+						"text": "Frozen direct-exec preview for same failed coding task: no live writers, service zero-tool failure, user continued implementation authority and unchanged Game-only scope; PM may take exact card write/build/runtime surface and independent final reviewer follows, no model/guard bypass."
+					}
+				]
+			}
+		},
+		"positive": {
+			"dp": "dp-pm-steer",
+			"key": "gaze-insights-evidence",
+			"trigger": "gaze-evidence-local-loop-repair",
+			"task_key": "gaze-evidence-local-loop-repair",
+			"evidence_refs": [
+				{
+					"field": "material.pm_decision_background",
+					"path": ".agenticdoc/gaze-insights-evidence/workers/gaze-evidence-local-loop-repair/trace.log",
+					"lines": {
+						"start": 4,
+						"end": 5
+					}
+				},
+				{
+					"field": "material.pm_decision_background",
+					"path": ".agenticdoc/gaze-insights-evidence/workers/gaze-evidence-local-loop-repair/trace.log",
+					"lines": {
+						"start": 11,
+						"end": 12
+					}
+				},
+				{
+					"field": "material.pm_decision_background",
+					"path": ".agenticdoc/gaze-insights-evidence/workers/gaze-evidence-local-loop-repair/trace.log",
+					"lines": {
+						"start": 18,
+						"end": 19
+					}
+				},
+				{
+					"field": "material.task_goal",
+					"path": ".agenticdoc/gaze-insights-evidence/tasks/T-007-local-loop-repair.md",
+					"lines": {
+						"start": 8,
+						"end": 8
+					}
+				}
+			],
+			"material": {
+				"task_goal": "修复最小本地真实范围证据注册→选择→按钮定位→正确原会话精确range→同操作真实Draw回执闭环的已确认缺陷，交付可连续使用/PM独立复跑的最终功能，过期/不匹配拒绝不改错UI。",
+				"task_requirements": "修复F001op发布顺序、F002heldsession生命周期、F003新drive精确关联与registry容量、F004cap计数、PMF005后台可取消有界query、PMF006真实内容revision，实际构建运行定点自验。",
+				"task_deliverables": "evidence/t007-local-loop-repair-20261123.md及本report：F001..F006逐项真实修复/代码位置/结果、actualsources/bin/run/CL/pins、至少5次新drive关联证据（可短链2次full+其余minimal）/不同range、expired/mismatch/cancel/partial0发布、注册后台wall/GUI无阻塞、真实SHA绑定及重验、正常ownedmaintenance链、PM精确复跑命令。",
+				"pm_decision_background": "Coding endpoint exhausted three startup attempts HTTP400, tool calls0/no writes; worker terminal readACK. User authorized overnight shortest-path continued implementation to DONE. No live D/build/runtime writer; PM proposes direct-exec same unchanged exact card's Game-plugin/Tools/output surfaces and 3600s bound, Engine read-only, no guard/model/strict changes, no forcekill; nonauthor review after actual build/run. Frozen replan preview version21e8b754ca85544b4b7d8c9d7285c89c0df1b4c41a2c23c9f7e4ad3a82a4b583 accepts direct-exec, live_workers[].",
+				"worker_execution": "Failed before output at17:31:18/22/27Z, three model HTTP400 failures, tools0/writes0. Source remains c07839a1 and old dedicatedPID85676 must freshly verify before any maintenance."
+			},
+			"preparation": {
+				"prepared_at": "2026-11-23T01:34:20+08:00",
+				"basis_catalog": [
+					{
+						"id": "replan-21e8b754ca85544b4b7d8c9d",
+						"applies_to": [
+							"direct-exec"
+						],
+						"material_refs": [
+							"pm_decision_background",
+							"worker_execution",
+							"task_requirements"
+						],
+						"text": "Frozen direct-exec preview same failed coding task: no live writers, service zero-tool failure, user implementation authority and unchanged Game-only scope. PM may take card boundedwrite/build/runtime; independent final reviewer follows, no model/guard bypass."
+					},
+					{
+						"id": "unchanged-goal-boundaries",
+						"applies_to": [
+							"narrow",
+							"split",
+							"escalate"
+						],
+						"material_refs": [
+							"task_goal",
+							"task_requirements",
+							"pm_decision_background"
+						],
+						"text": "Narrow only if confirmed local closure goal remains intact; cannot drop actual identity/Draw correctness or usermustconfirm delivery reduction. Split only if file/build surfaces can be nonoverlapping; current singleTU and sharedDLL are serial and service unavailable, so split does not cure current startup failure. Escalate if PM lacks exact existing Game authority/runtimeidentity or safe code path, with concrete missingpermission/risk not generic request to continue; none newly observed yet."
+					}
+				],
+				"model_context": {
+					"desc": [
+						"目标是修复本地证据注册、精确定位和绘制回执的完整链路。",
+						"编码进程连续三次在首个工具调用前收到请求错误，未写文件。",
+						"当前冻结计划沿用原任务的写入范围和一小时上限，实际构建运行后仍需独立复核。"
+					],
+					"terminology": {
+						"CL": "Perforce changelist，指用于跟踪本次源码变更的变更列表。",
+						"DONE": "任务已完成并具备其要求的交付证据的工作状态，此处表示目标。",
+						"GUI": "Graphical user interface，工具的图形用户界面。",
+						"HTTP400": "HTTP 400，服务端在编码 Worker 启动时返回的 Bad Request，未发生工具调用。",
+						"PMF005": "项目负责人记录的 F005，后台查询必须可取消并有执行上限。",
+						"PMF006": "项目负责人记录的 F006，证据的版本标记必须随真实内容变动。",
+						"SHA": "Secure Hash Algorithm，保存的源码和运行证据使用的内容散列。",
+						"END": "Worker trace label for a terminal run event with exit status, duration and tool count.",
+						"FLOW": "Worker trace label for an observed execution-flow event."
+					}
+				}
+			}
+		},
+		"sources": {
+			".agenticdoc/gaze-insights-evidence/workers/gaze-evidence-local-loop-repair/trace.log": "\n\n\n[FLOW] 2026-11-22T17:31:20.137Z [MODEL_ERR] 2026-11-22T17:31:20.137Z model=timi/deepseek-v4.1-flash run=1 err=400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"API调用失败: status_code: 400 {'type': 'error', 'error': {'type': 'invalid_request_error', 'code': '400001', 'message': 'The request…\n[END] 2026-11-22T17:31:20.144Z exit=3 elapsed=2s tools=0 phases=-\n[WRITE_SCOPE_SUMMARY] allow=0 deny=0 allow-unknown=0\n[MODEL_RETRY] 2026-11-22T17:31:20+00:00 model=timi/deepseek-v4.1-flash attempt=1\n[START] pid=41712\n[START] 2026-11-22T17:31:22.815Z task=gaze-evidence-local-loop-repair type=coding phases=-\n[MODEL] 2026-11-22T17:31:22.881Z model=deepseek-v4.1-flash\n[FLOW] 2026-11-22T17:31:25.068Z [MODEL_ERR] 2026-11-22T17:31:25.067Z model=timi/deepseek-v4.1-flash run=1 err=400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"API调用失败: status_code: 400 {'type': 'error', 'error': {'type': 'invalid_request_error', 'code': '400001', 'message': 'The request…\n[END] 2026-11-22T17:31:25.074Z exit=3 elapsed=2s tools=0 phases=-\n[WRITE_SCOPE_SUMMARY] allow=0 deny=0 allow-unknown=0\n[MODEL_RETRY] 2026-11-22T17:31:25+00:00 model=timi/deepseek-v4.1-flash attempt=2\n[START] pid=103852\n[START] 2026-11-22T17:31:27.916Z task=gaze-evidence-local-loop-repair type=coding phases=-\n[MODEL] 2026-11-22T17:31:27.988Z model=deepseek-v4.1-flash\n[FLOW] 2026-11-22T17:31:30.397Z [MODEL_ERR] 2026-11-22T17:31:30.397Z model=timi/deepseek-v4.1-flash run=1 err=400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"API调用失败: status_code: 400 {'type': 'error', 'error': {'type': 'invalid_request_error', 'code': '400001', 'message': 'The request…\n[END] 2026-11-22T17:31:30.405Z exit=3 elapsed=2s tools=0 phases=-\n",
+			".agenticdoc/gaze-insights-evidence/tasks/T-007-local-loop-repair.md": "\n\n\n\n\n\n\n目标：修复最小本地真实范围证据注册→选择→按钮定位→正确原会话精确range→同操作真实Draw回执闭环的已确认缺陷，交付可连续使用/PM独立复跑的最终功能，过期/不匹配拒绝不改错UI。\n依据.agenticdoc/goal.md:7及KeyConstraints9后台可取消；spec/design用户2026-11-23授权最短range本地闭环、AC007/VC007/FLOW009/010；PM evidence/pm-local-loop-absorption-20261123.md记录具体修复；evidence/review/t008-local-evidence-loop-20261123.md是非作者代码发现（其oldSHA标注错误，不要用oldSHA定位finalsource）。用户明确过夜持续到s6DONE，不每增量/维护请示，当前卡3600s新有界修复不是延长旧run。唯一D/build/runtime你，非作者只读无竞争，PM只E。\n"
+		}
+	}
+]

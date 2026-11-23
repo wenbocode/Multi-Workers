@@ -268,7 +268,7 @@ def _draft(payload: dict, binding: dict) -> dict:
         raise Refusal("rejected", "draft exceeds the preparation artifact limit")
     protocol = "worker" if binding["dp"] == "dp-w-check-task" else "pm"
     issues = decision_points.prepared_request_issues(binding["dp"], material, preparation, actor_role=protocol)
-    if issues:
+    if issues and not decision_points.only_candidate_coverage_issues(issues):
         status = decision_model_context.auto_preparation_status(issues) if binding["dp"] == "dp-auto" else None
         raise Refusal(status or "needs-evidence", "; ".join(f"{field}: {detail}" for field, detail in issues))
     return draft
@@ -321,11 +321,17 @@ def _projection(root: pathlib.Path, state: dict) -> dict:
     draft = _prepared_input(root, state)
     dp, preparation = binding["dp"], draft["preparation"]
     material = decision_points.model_state_for(dp, draft["material"])
-    options = decision_backends.prepared_selection_options(dp, material, preparation)
+    coverage_issues = decision_points.basis_catalog_issues(
+        dp, preparation["basis_catalog"], material, require_complete=True,
+    )
+    options = decision_backends.prepared_selection_options(
+        dp, material, preparation, diagnostic_only=decision_points.only_candidate_coverage_issues(coverage_issues),
+    )
     questions = decision_backends.build_prepared_questions(dp, material, preparation, options=options)
     try:
         projected = decision_points.prepared_model_request(
             dp, material, preparation, questions, root, key=binding["key"], options=options, evidence_refs=[],
+            coverage_issues=coverage_issues,
         )
     except decision_material_sources.SourceMaterialError as error:
         status = decision_model_context.auto_preparation_status(error.issues) if dp == "dp-auto" else None

@@ -16,6 +16,8 @@ python $pm init --project $project --key $key
 
 `init` 生成 `.agenticdoc/<key>/codex_doc.md`，以 `SPEC / active / codex` 登记索引。填写主记录的 `## 目标`、`## 范围`、`## 验收标准` 和 `## 接续须知`，验收标准使用 `- AC-001: 可观察的结果` 格式。目标应对应 `.agenticdoc/goal.md`，范围应写明控制工作区、目标工作区和允许的改动。
 
+用两三句话在「目标」段写清交付结果、与项目目标的关系和完成时可观察的结果。这一段就是轻量 key 的 `spec_goal`，MW 宿主只提取该段供派到此 key 的 Worker 使用。定稿后，replan 沿用原文。
+
 `init` 优先使用控制工作区的 `.agenticdoc/templates/codex_doc.md`，缺失时使用发行版模板。已有的旧版自定义模板会保留；使用轻量入口前须把它的机器字段对齐下列 schema，格式不符时命令会明确报错，不会覆盖定制内容。
 
 主记录中的机器接口是：

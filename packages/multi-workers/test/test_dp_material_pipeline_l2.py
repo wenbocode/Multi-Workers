@@ -53,13 +53,13 @@ def lifecycle(project, monkeypatch, envelope, decision_id, stage, *, worker_task
     return result
 
 
-def reply_with(monkeypatch, wire_id):
+def reply_with(monkeypatch, wire_id, *, expect_candidate=True):
     calls = []
 
     def reply(request, *, timeout):
         assert request.method == "POST" and timeout > 0
         [question] = json.loads(request.data)["questions"].values()
-        assert wire_id in question["criteria"]
+        assert (wire_id in question["criteria"]) == expect_candidate
         raw = json.dumps({"id": f"offline-{wire_id}", "model": "jev-latest", "answers": {
             "decision_selection": {"type": "choice", "choice": wire_id, "confidence": 0.92},
         }}).encode()
@@ -318,6 +318,7 @@ def test_current_decision_consumers_write_same_request_receipts(case, dp, choice
 
 def test_qg_incomplete_historical_menu_refuses_before_transport(tmp_path, monkeypatch, isolated_credentials):
     env = cli._envelope("dp-QG", "missing-reopen-v05-shape", task_key=None)
+    env["material"]["basis_issue"] = "The fixture requirements conflict over the acceptance boundary."
     for item in env["preparation"]["basis_catalog"]:
         item["applies_to"] = [choice for choice in item["applies_to"] if choice != "reopen"] or ["fix"]
     calls = reply_with(monkeypatch, "fixB")
@@ -344,7 +345,7 @@ def test_invalid_authored_context_refuses_before_transport(context, issue_suffix
 
 
 @pytest.mark.parametrize(("case", "dp", "field"), [
-    ("single-choice", "dp-w-type", "basis_catalog"),
+    ("single-choice", "dp-w-type", "preparation.basis_catalog"),
     ("undefined-term", "dp-w-type", "preparation.model_context.terminology.XRAY"),
     ("over-budget", "dp-auto", "preparation.model_context.auto_comparison.paths.patch-now.max_seconds"),
     ("raised-budget", "dp-auto", "preparation.model_context.auto_comparison.budget.remaining_seconds"),
@@ -431,7 +432,9 @@ def test_all_prepared_dps_bind_desc_and_hydrated_criteria(dp, tmp_path):
     assert {pathlib.Path(row["path"]).name for row in state.file_evidence} >= {"spec.md", "design.md", freeze.name, source.name}
     assert state.field_trace["fields"]["/state/references/AC-005"]["sources"] == [f"contract:{key}/spec.md#AC-005"]
     source_index = next(i for i, row in enumerate(state["evidence_sources"]) if pathlib.Path(row["path"]) == source)
-    source.write_text("Check VC-999 in the evidence.\n", encoding="utf-8")
+    source.write_text("The old log mentioned VC-999.\n", encoding="utf-8")
+    assert "VC-999" not in request()["references"]
+    source.write_text("Check design.md#VC-999 in the evidence.\n", encoding="utf-8")
     with pytest.raises(decision_points.decision_material_sources.SourceMaterialError) as refused:
         request()
     assert refused.value.diagnostics[0]["source_field"] == f"state.evidence_sources[{source_index}].text"
@@ -868,3 +871,15 @@ def test_qg_fix_run_independent_review_and_formal_receipt(tmp_path, monkeypatch,
         "qg_sha256": report_hash, "local_signoff_id": signoff.logical_id,
         "receipts": {receipt["stage"]: receipt["event_id"] for receipt in (consumed, executed, settled)},
     })
+
+    scoped = cli._envelope("dp-QG", "qg-verification-only", task_key=None)
+    scoped["preparation"]["model_context"] = {
+        "reasons": {},
+        "review": {"VC-002": {"status": "met", "evidence": "Independent review resolved the assertion anchor."}},
+    }
+    calls = reply_with(monkeypatch, "passA")
+    _, result, _ = cli._invoke("run", project, monkeypatch, stdin=json.dumps(scoped), stdin_flag=True, dp="dp-QG")
+    assert json.loads(result)["choice"] == "pass", result
+    references = json.loads(calls[0][0])["state"]["references"]
+    assert references["VC-002"]["source_criteria"] == ["AC-002"]
+    assert "review" not in references["AC-002"]

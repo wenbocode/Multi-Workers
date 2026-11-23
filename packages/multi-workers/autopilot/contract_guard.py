@@ -88,9 +88,13 @@ AC_LINE_RE = re.compile(r"^\|\s*(AC-\d{3})\s*\|\s*(.*?)\s*\|\s*$")
 #: VC block: `VC-001: assert` + `Layer: Lx Output: [VERIFY] ... Source: ...`.
 #: Semantics copied from `.tmp/msc-gen-evidence-req.py:parse_vcs`; the path
 #: dependency is not (this module only ever parses caller-supplied text).
-VC_BLOCK_RE = re.compile(
-    r"VC-(\d{3}):\s*(.+?)\n\s*Layer:\s*(\S+)\s+Output:\s*(\[VERIFY\][^\n]*?)\s+Source:\s*([^\n]+)"
+VC_HEADER_RE = re.compile(r"(?m)^[ \t]*(?P<id>VC-\d{3}):[ \t]*(?P<assertion>[^\n]*)")
+VC_METADATA_RE = re.compile(
+    r"\n\s*Layer:[ \t]*([^\n]+?)"
+    r"\s+Output:[ \t]*(\[VERIFY\][^\n]*?)\s+Source:[ \t]*([^\n]+)"
 )
+VC_METADATA_FIELDS = ("Layer", "Output", "Source")
+VC_METADATA_LABEL_RE = re.compile(r"(?:^|(?<=[ \t。；;]))(Layer|Output|Source):[ \t]*")
 
 #: Canonical field separator. Not a character that occurs in either file.
 _FIELD_SEP = "\x1f"
@@ -115,22 +119,79 @@ def parse_acs(spec_text: str) -> dict[str, str]:
     return acs
 
 
-def parse_vcs(design_text: str) -> dict[str, str]:
+def _vc_inline_value(text: str) -> str:
+    value = text.rstrip()
+    return value[:-1].rstrip() if value.endswith(("。", "；", ";")) else value
+
+
+def _inline_vc(text: str) -> tuple[str, tuple[str, str, str]] | None:
+    labels = list(VC_METADATA_LABEL_RE.finditer(text))
+    if tuple(match[1] for match in labels) != VC_METADATA_FIELDS:
+        return None
+    layer, output, source = labels
+    values = (
+        _vc_inline_value(text[layer.end():output.start()]),
+        _vc_inline_value(text[output.end():source.start()]),
+        text[source.end():].strip(),
+    )
+    if not all(values) or not values[1].startswith("[VERIFY]"):
+        return None
+    return text[:layer.start()].rstrip(), values
+
+
+def _vc_layout_error(assertion: str, continuation: str) -> str:
+    labels = [match[1] for match in VC_METADATA_LABEL_RE.finditer(assertion)]
+    for line in continuation.splitlines():
+        if not line.strip():
+            continue
+        label = VC_METADATA_LABEL_RE.match(line.lstrip())
+        if label is None:
+            break
+        labels.append(label[1])
+    missing = [name for name in VC_METADATA_FIELDS if name not in labels]
+    if missing:
+        return f"verification criterion is missing {', '.join(missing)}"
+    return "expected one Layer, Output and Source in order, with Output starting with [VERIFY]"
+
+
+def parse_vcs(design_text: str, *, malformed: dict[str, int] | None = None,
+              malformed_details: dict[str, str] | None = None) -> dict[str, str]:
     """VC-### -> canonical five-tuple text (assert/Layer/Output/Source).
 
     The identity text is the four parsed fields joined by ``\\x1f``; together
     with the id it forms the five-tuple that :func:`canonical_sha` hashes.
-    ``finditer`` keeps source order, but the returned mapping is used in sorted
-    order by the callers.
+    Invalid or duplicate blocks can be reported by their header line.
     """
     vcs: dict[str, str] = {}
-    for match in VC_BLOCK_RE.finditer(design_text):
-        vc_id = "VC-" + match.group(1)
-        assert_text = match.group(2).strip()
-        layer = match.group(3).strip()
-        output = match.group(4).strip()
-        source = match.group(5).strip()
-        vcs[vc_id] = _FIELD_SEP.join((assert_text, layer, output, source))
+    headers = list(VC_HEADER_RE.finditer(design_text))
+    seen = set()
+    for index, header in enumerate(headers):
+        name = header["id"]
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(design_text)
+        metadata = VC_METADATA_RE.match(design_text, header.end(), end)
+        assertion = header["assertion"].strip()
+        inline = _inline_vc(assertion)
+        metadata_fields = tuple(part.strip() for part in metadata.groups()) if metadata else ()
+        error = None
+        if name in seen:
+            error = "duplicate verification criterion ID"
+        elif inline and metadata:
+            error = "verification criterion has both inline and multiline metadata"
+        elif inline:
+            assertion, metadata_fields = inline
+        if not error and not assertion:
+            error = "verification criterion is missing its assertion"
+        if not error and (not metadata_fields or not all(metadata_fields)):
+            error = _vc_layout_error(assertion, design_text[header.end():end])
+        if error:
+            vcs.pop(name, None)
+            if malformed is not None:
+                malformed[name] = design_text.count("\n", 0, header.start()) + 1
+            if malformed_details is not None:
+                malformed_details[name] = error
+        else:
+            vcs[name] = _FIELD_SEP.join((assertion, *metadata_fields))
+        seen.add(name)
     return vcs
 
 

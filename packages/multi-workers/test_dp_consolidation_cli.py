@@ -379,7 +379,7 @@ class FakeCalls:
 
     def result(self, dp: str, material: dict, preparation: dict) -> dict:
         legal = list(dpts.resolve_entry_choices(dp, material))
-        choice = legal[0]
+        choice = "fix" if dp == "dp-QG" else legal[0]
         basis = preparation["basis_catalog"][0]
         answers = {
             _business_question_id(dp): {"type": "choice", "choice": choice, "confidence": 0.9},
@@ -422,6 +422,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeCalls:
         logical_id=None,
         replay_check=None,
         source_references=None,
+        qg_review=None,
     ):
         calls.prepared.append(
             {
@@ -913,9 +914,16 @@ def test_renderperformance_qg_evidence_binding_hints_and_replay(
         (tmp_path / ref["path"]).write_text("Fixture evidence\n", encoding="utf-8")
     preparation = {
         "prepared_at": "2026-11-20T17:14:00Z",
+        "model_context": {"reasons": {
+            "F001": "First finding from the source review.",
+            "F002": "Second finding from the source review.",
+            "F003": "Third finding from the source review.",
+            "F004": "Fourth finding from the source review.",
+        }},
         "basis_catalog": [
             {"id": "frame-source-f001-f004", "text": "Four findings from the source review",
-             "applies_to": ["fix"], "material_refs": ["review_findings", "review_evidence", "review_requirements"]},
+             "applies_to": ["fix"], "material_refs": ["review_findings", "review_evidence", "review_requirements"],
+             "finding_ids": ["F001", "F002", "F003", "F004"]},
             {"id": "frame-pass", "text": "If independent review confirms all frame capture checks",
              "applies_to": ["pass"], "material_refs": ["review_requirements"]},
             {"id": "frame-reopen", "text": "If the accepted frame capture scope itself is contradictory",

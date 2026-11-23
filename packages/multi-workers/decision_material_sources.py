@@ -90,13 +90,13 @@ class SourceMaterialError(ValueError):
                  allowed_fields: list[str] | None = None) -> None:
         self.issues = issues
         self.file_evidence = file_evidence or []
-        self.diagnostics = diagnostics or [
+        self.diagnostics = diagnostics if diagnostics is not None else [
             {"field": field, "code": (
                 "evidence-budget-exceeded" if detail.startswith("compression-required:")
                 else _SOURCE_ERROR_CODES.get(detail, "evidence-preparation-failed")
             )} for field, detail in issues
         ][:MAX_DIAGNOSTIC_ISSUES]
-        self.truncated = truncated or len(issues) > MAX_DIAGNOSTIC_ISSUES
+        self.truncated = truncated or len(self.diagnostics) < len(issues)
         self.allowed_fields = None if allowed_fields is None else allowed_fields[:MAX_DIAGNOSTIC_FIELDS]
         self.allowed_fields_truncated = allowed_fields is not None and len(allowed_fields) > MAX_DIAGNOSTIC_FIELDS
         super().__init__("; ".join(f"{field}: {issue}" for field, issue in issues))
