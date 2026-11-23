@@ -577,6 +577,29 @@ def execute(project: Path, req: dict) -> dict:
         if (not req.get("claim") or req["claim"] in {"—", "-"} or len(owners) != 1
                 or owners[0]["key"] != key or owners[0]["status"] != "active" or owners[0]["claim_id"] != req["claim"]):
             raise ValueError("current window does not own the active key")
+        if op in {"inspect_deadline_recovery", "authorize_deadline_recovery"}:
+            card_ref = req["card"]
+            pin = cards.card_digest(source_card(key_dir, card_ref))
+            approval = deadline_successor(project, key, None, card_ref, pin, req["parent"], review=True)
+            historical = approval.get("historical_review")
+            if not historical:
+                return {"state": "review-not-required", "approval": approval}
+            snapshot = digest(approval)
+            if op == "inspect_deadline_recovery":
+                return {"state": "review-required", "snapshot": snapshot, "approval": approval}
+            if req["snapshot"] != snapshot:
+                raise ValueError("deadline recovery evidence changed; inspect again")
+            reason = req["recovery_reason"].strip()
+            if not reason or len(reason) > 4000:
+                raise ValueError("explain why the reviewed historical evidence authorizes recovery")
+            target = local(key_dir / "evidence" / "deadline-recovery" / f"{snapshot}.json")
+            if not target.exists():
+                save(target, {"approval": approval, "reason": reason})
+            else:
+                saved = json.loads(body(target))
+                if saved.get("approval") != approval or not saved.get("reason"):
+                    raise ValueError("existing deadline recovery approval is damaged")
+            return {"state": "authorized", "snapshot": snapshot, "path": target.relative_to(project).as_posix()}
         if op == "trim_inventory":
             rows = worker_rows(project, key)
             active = [{"task": row["task_key"], "status": row["status"]} for row in rows
@@ -760,12 +783,13 @@ def unit_dependencies(by_card: dict, record: dict, unit: dict) -> set[str]:
     return dependencies
 
 
-def deadline_successor(project: Path, owner: str, task: str, card_ref: str, pin: str, parent: str) -> dict:
+def deadline_successor(project: Path, owner: str, task: str | None, card_ref: str, pin: str, parent: str,
+                       *, review: bool = False) -> dict:
     """Verify a frozen replan lineage against the exact timed-out run and live PM claim."""
     key_dir = local(project / ".agenticdoc" / identifier(owner))
-    if identifier(task) == parent.partition("@")[0]:
-        raise ValueError("deadline successor must use a new task")
     source_task = identifier(parent.partition("@")[0])
+    if task is not None and identifier(task) == source_task:
+        raise ValueError("deadline successor must use a new task")
     card = source_card(key_dir, card_ref)
     markdown = body(card)
     if (not markdown or cards.card_digest(card) != pin
@@ -779,7 +803,7 @@ def deadline_successor(project: Path, owner: str, task: str, card_ref: str, pin:
     source["dispatch_time"] = old.get("dispatched_at")
     if source.get("stop_kind") != "worker-deadline" or source.get("run_id") != parent:
         raise ValueError("deadline source identity changed")
-    seen = {task}
+    seen = {task} if task is not None else set()
     ancestor = parent
     while ancestor:
         ancestor_task = identifier(ancestor.partition("@")[0])
@@ -798,7 +822,16 @@ def deadline_successor(project: Path, owner: str, task: str, card_ref: str, pin:
         ancestor = envelope_parent
     known = records(key_dir)
     lineage = applied_lineage(known, card_ref)
-    if not lineage or lineage[-1][0]["source"] != source:
+    if not lineage:
+        raise ValueError("deadline successor requires an applied replan for this run and card")
+    original = lineage[-1][0]["source"]
+    # Older capture recorded the wall timeout and run identity before the
+    # structured stop marker and progress digest were added to run facts.
+    legacy = ("stop_kind" not in original and "progress_digest" not in original
+              and original.get("category") == "wall-timeout"
+              and original == {name: value for name, value in source.items()
+                               if name not in {"stop_kind", "progress_digest"}})
+    if original != source and not legacy:
         raise ValueError("deadline successor requires an applied replan for this run and card")
     if any(card_identity(record["source"]["card"]) == card_identity(card_ref)
            and record["state"] in {"applied", "publishing"} and record["plan"]["action"] != "schedule"
@@ -814,7 +847,7 @@ def deadline_successor(project: Path, owner: str, task: str, card_ref: str, pin:
     dispatched_tasks = {row["task_key"] for row in rows}
     dispatched_cards = {card_identity(mw_common.read_task_header_scalar(
         body(key_dir / "workers" / identifier(row["task_key"]) / "task.md"), "card_path") or "") for row in rows}
-    verified = []
+    verified, historical = [], []
     for record, unit in lineage:
         facts = record["source"]
         if facts["status"] == "unstarted" and (
@@ -822,12 +855,16 @@ def deadline_successor(project: Path, owner: str, task: str, card_ref: str, pin:
                 or card_identity(facts["card"]) in dispatched_cards):
             raise ValueError("deadline successor intermediate source is no longer unstarted")
         produced = source_card(key_dir, f"tasks/{unit['id']}.md")
-        current = source_context(key_dir, facts)
-        if (record.get("key") != owner or body(produced) != card_text(record, unit)
-                or current["snapshot"] != record["snapshot"]):
+        if record.get("key") != owner or body(produced) != card_text(record, unit):
             raise ValueError("deadline successor card or source evidence changed")
+        observed = source if record is lineage[-1][0] else facts
+        current = source_context(key_dir, observed)
+        if observed != facts or current["snapshot"] != record["snapshot"]:
+            historical.append({"card": f"tasks/{unit['id']}.md", "source_card": facts["card"],
+                               "record": f"evidence/replan/{record['id']}.json", "recorded": record["snapshot"],
+                               "observed": current["snapshot"]})
         proofs = retained_proof(project, key_dir, {**current, "facts": facts}, record["plan"].get("retained", {}))
-        version_fields = [record["id"], current["snapshot"], record["plan"]]
+        version_fields = [record["id"], record["snapshot"], record["plan"]]
         if proofs:
             version_fields.append(proofs)
         version = digest(version_fields)
@@ -851,6 +888,15 @@ def deadline_successor(project: Path, owner: str, task: str, card_ref: str, pin:
                 "version": verified[0]["version"], "claim": claim}
     if len(verified) > 1:
         approval["lineage"] = list(reversed(verified))
+    if historical:
+        approval["card"] = card_ref
+        approval["pin"] = pin
+        approval["historical_review"] = {"legacy_timeout": legacy, "snapshots": list(reversed(historical))}
+        if not review:
+            target = local(key_dir / "evidence" / "deadline-recovery" / f"{digest(approval)}.json")
+            saved = json.loads(body(target) or "{}")
+            if saved.get("approval") != approval or not saved.get("reason"):
+                raise ValueError("deadline successor source evidence changed; inspect and authorize deadline recovery")
     return approval
 
 

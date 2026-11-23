@@ -112,13 +112,14 @@ def test_offline_recovery_parallel_apply_and_dispatch(fixture):
     assert send("two").ok
 
 
-def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None):
+def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None, *, legacy=False):
     project, key, folder, _ = fixture
     put(key.parent / "_index.parallel", f"| demo | active | EXECUTE | {claim} | | | now |\n")
     run = json.loads(rp.body(folder / "run.json"))
-    run["stop_kind"] = "worker-deadline"
-    put(folder / "run.json", json.dumps(run))
-    (folder / "trace.log").unlink()
+    if not legacy:
+        run["stop_kind"] = "worker-deadline"
+        put(folder / "run.json", json.dumps(run))
+        (folder / "trace.log").unlink()
     put(folder / "report.md", "AC-001 PASS")
     progress = {
         "run_id": run["run_id"],
@@ -129,7 +130,7 @@ def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None):
     }
     put(folder / "run-progress.json", json.dumps(progress))
     inspected = tool(project, "inspect", task="old", claim=claim)
-    assert inspected["facts"]["stop_kind"] == "worker-deadline"
+    assert inspected["facts"].get("stop_kind") == (None if legacy else "worker-deadline")
     assert inspected["facts"]["run_id"] == run["run_id"]
     assert inspected["progress"] == progress
     assert "output.md" not in inspected["evidence_refs"]
@@ -157,6 +158,8 @@ def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None):
                           "units": [recovery]})
     decision_ref = answer(project, prepared, choice="narrow")
     tool(project, "apply", **args, version=prepared["version"], decision_id=decision_ref, claim=claim)
+    if legacy:
+        put(folder / "run.json", json.dumps({**run, "stop_kind": "worker-deadline"}))
     pin = dispatch.card_digest(key / "tasks/recover.md")
     return run["run_id"], pin
 
@@ -318,6 +321,51 @@ def test_deadline_successor_refuses_invalid_multihop_recovery(fixture, monkeypat
     envelope = dispatch.render_task_md("phase-writer", "check", loop="execute", attempt=1, card=card_data)
     assert reason in dispatch.dispatch_parent_refusal(project, "demo", child, envelope, allocation={})
     assert not (key / "workers" / child).exists()
+
+
+def test_historical_deadline_recovery_requires_current_review_and_fresh_budget(fixture, monkeypatch):
+    project, key, folder, _ = fixture
+    monkeypatch.setattr(rp.Path, "home", lambda: project)
+    parent, _ = deadline_plan(fixture, legacy=True)
+    put(key / "plan.md", "# Approved scope revision\n")
+    replan_unstarted(project, "recover", "leaf", parent)
+    args = {"card": "tasks/leaf.md", "parent": parent}
+    child = dispatch.task_key_for("demo", "leaf")
+    pin = dispatch.card_digest(key / args["card"])
+    historical_records = {path: path.read_bytes() for path in (key / "evidence" / "replan").glob("*.json")}
+    before = (folder / "run.json").read_bytes()
+
+    def dispatch_leaf():
+        return dispatch.dispatch(project, "demo", "leaf", "phase-writer", "check", loop="execute", attempt=1)
+
+    assert "inspect and authorize" in dispatch_leaf().reason
+    inspected = tool(project, "inspect_deadline_recovery", **args)
+    assert inspected["state"] == "review-required"
+    review = inspected["approval"]["historical_review"]
+    assert review["legacy_timeout"] and [s["card"] for s in review["snapshots"]] == ["tasks/recover.md"]
+    authorization = {**args, "snapshot": inspected["snapshot"], "recovery_reason": "Confirmed exact wall timeout"}
+    with pytest.raises(ValueError, match="does not own"):
+        tool(project, "authorize_deadline_recovery", **authorization, claim="other")
+    with pytest.raises(ValueError, match="inspect again"):
+        tool(project, "authorize_deadline_recovery", **{**authorization, "snapshot": "old"})
+
+    approved = tool(project, "authorize_deadline_recovery", **authorization)
+    assert approved["state"] == "authorized"
+    assert tool(project, "authorize_deadline_recovery", **authorization) == approved
+    assert (project / approved["path"]).is_file()
+    assert "allocation is missing" in dispatch_leaf().reason
+    deadline_grant(fixture, child, parent, pin, "leaf")
+
+    put(key / "plan.md", "# Another scope revision\n")
+    assert "inspect and authorize" in dispatch_leaf().reason
+    put(key / "plan.md", "# Approved scope revision\n")
+    put(folder / "run.json", json.dumps({**json.loads(before), "aborted": True}))
+    assert "parent-cancel" in dispatch_leaf().reason
+    put(folder / "run.json", before.decode())
+    assert dispatch_leaf().ok
+    assert not dispatch_leaf().ok
+    assert (folder / "run.json").read_bytes() == before
+    assert all(path.read_bytes() == content for path, content in historical_records.items())
 
 
 @pytest.mark.parametrize("change,reason", [

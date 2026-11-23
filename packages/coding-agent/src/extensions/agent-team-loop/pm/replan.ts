@@ -61,9 +61,15 @@ export function registerReplanTool(pi: ExtensionAPI, project: string, claim: () 
 		name: "replan_tasks",
 		label: "Replan remaining tasks",
 		description:
-			"Replan when remaining work must change, a retry is refused by replan-required, or the user requests replanning. Inspect the specific task; reuse issue/snapshot until source evidence changes. Routine resume and successful completion follow the existing plan. Key inventory defaults to a bounded issues page and counts; request section/offset only as needed. Preview only a proposed plan change, then apply the frozen plan. For split/narrow/direct-exec/escalate include preview.basis_id in the applicable prepared basis for ask_decision(dp-pm-steer); apply its matching decision_id. For an unstarted card omit DP task_key; otherwise use facts.task. For direct-exec/escalate first perform the action and pass its executed decision_receipt event_id as action_evidence. Apply records the actual publication and settlement. Schedule reorders existing independent work.",
+			"Replan when remaining work must change, a retry is refused by replan-required, or the user requests replanning. Inspect the specific task; reuse issue/snapshot until source evidence changes. Routine resume and successful completion follow the existing plan. Key inventory defaults to a bounded issues page and counts; request section/offset only as needed. Preview only a proposed plan change, then apply the frozen plan. For split/narrow/direct-exec/escalate include preview.basis_id in the applicable prepared basis for ask_decision(dp-pm-steer); apply its matching decision_id. For an unstarted card omit DP task_key; otherwise use facts.task. For direct-exec/escalate first perform the action and pass its executed decision_receipt event_id as action_evidence. Apply records the actual publication and settlement. Schedule reorders existing independent work. For changed historical deadline evidence, use inspect_deadline_recovery with card and exact parent run, review the observed differences, then authorize_deadline_recovery with the same card, parent, snapshot and recovery_reason. Dispatch still requires a fresh PM stage budget.",
 		parameters: Type.Object({
-			operation: Type.Union([Type.Literal("inspect"), Type.Literal("preview"), Type.Literal("apply")]),
+			operation: Type.Union([
+				Type.Literal("inspect"),
+				Type.Literal("preview"),
+				Type.Literal("apply"),
+				Type.Literal("inspect_deadline_recovery"),
+				Type.Literal("authorize_deadline_recovery"),
+			]),
 			key: Type.String(),
 			task: Type.Optional(
 				Type.String({
@@ -81,6 +87,9 @@ export function registerReplanTool(pi: ExtensionAPI, project: string, claim: () 
 			limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, description: "Inspect page size; default 20" })),
 			issue: Type.Optional(Type.String()),
 			snapshot: Type.Optional(Type.String()),
+			card: Type.Optional(Type.String({ description: "Frozen tasks/<card>.md for deadline recovery" })),
+			parent: Type.Optional(Type.String({ description: "Exact timed-out worker run ID for deadline recovery" })),
+			recovery_reason: Type.Optional(Type.String({ description: "Why the reviewed historical recovery is valid" })),
 			version: Type.Optional(Type.String()),
 			decision_id: Type.Optional(Type.String()),
 			action_evidence: Type.Optional(Type.String()),
