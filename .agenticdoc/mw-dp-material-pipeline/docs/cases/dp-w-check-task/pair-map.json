@@ -1,0 +1,44 @@
+[
+  {
+    "wire_id": "continueA",
+    "choice": "continue",
+    "basis_id": "continueA-basis",
+    "criterion": "continue：下一步条件已充足时继续；未知编码不能当成已知。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "terminateA",
+    "choice": "terminate",
+    "basis_id": "terminateA-basis",
+    "criterion": "terminate：条件不足且无法在原边界内补证时，真实交付未完成并结束本run。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "investigateA",
+    "choice": "investigate",
+    "basis_id": "investigateA-basis",
+    "criterion": "investigate：按probe做一次既有授权读取后重评，不能刷新原预算。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  }
+]

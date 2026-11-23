@@ -1,0 +1,342 @@
+{
+  "started": "2026-11-22T15:01:25+08:00",
+  "finished": "2026-11-22T15:01:25+08:00",
+  "projects_checked": 23,
+  "projects_with_receipts": 6,
+  "records": 193,
+  "distinct_event_ids": 193,
+  "duplicate_event_ids": {},
+  "by_reason": {
+    "input-incomplete": 137,
+    "disabled": 39,
+    "unconfigured": 11,
+    "upstream-error": 3,
+    "budget-exhausted": 2,
+    "failed": 1
+  },
+  "by_dp": {
+    "dp-w-type": 115,
+    "dp-pm-steer": 51,
+    "dp-QG": 23,
+    "dp-gate-approve": 2,
+    "dp-sign-key": 1,
+    "dp-w-check-task": 1
+  },
+  "by_stage": {
+    "request": 107,
+    "pre-transport": 42,
+    "preflight": 21,
+    "public-execute": 11,
+    "authorization": 8,
+    "receipt-validation": 2,
+    "identity-check": 1,
+    "signoff": 1
+  },
+  "diagnostic_issue_codes": {
+    "evidence-file-unresolved": 111,
+    "invalid-evidence-reference": 46,
+    "evidence-range-out-of-bounds": 6,
+    "evidence-read-denied": 4,
+    "evidence-budget-exceeded": 2,
+    "evidence-file-unreadable": 1
+  },
+  "inventory": [
+    {
+      "project": "Dark",
+      "root": "D:/Dark",
+      "discovery": [
+        "Codex project"
+      ],
+      "agenticdoc": false,
+      "receipt_dir": "D:/Dark/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "DarkGame",
+      "root": "D:/Dark/DarkGame",
+      "discovery": [
+        "Pi session"
+      ],
+      "agenticdoc": false,
+      "receipt_dir": "D:/Dark/DarkGame/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "H",
+      "root": "E:/Engine/H/p4",
+      "discovery": [
+        "Codex project"
+      ],
+      "agenticdoc": false,
+      "receipt_dir": "E:/Engine/H/p4/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "Bearing",
+      "root": "E:/gitlite/Bearing",
+      "discovery": [
+        "Codex project",
+        "workspace root"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked",
+      "files": 31,
+      "receipts": 31,
+      "state": "readable",
+      "first": "2026-11-19T20:56:54+08:00",
+      "last": "2026-11-22T14:33:59+08:00"
+    },
+    {
+      "project": "Multi-Workers",
+      "root": "E:/gitlite/Multi-Workers",
+      "discovery": [
+        "Codex project",
+        "workspace root",
+        "registered worktree"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked",
+      "files": 13,
+      "receipts": 13,
+      "state": "readable",
+      "first": "2026-11-19T19:37:25+08:00",
+      "last": "2026-11-22T02:58:42+08:00"
+    },
+    {
+      "project": "dp5",
+      "root": "E:/gitlite/Multi-Workers/.tmp/dp5",
+      "discovery": [
+        "registered worktree"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/gitlite/Multi-Workers/.tmp/dp5/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "implementation-worktree",
+      "root": "E:/gitlite/Multi-Workers/.tmp/dpc/implementation-worktree",
+      "discovery": [
+        "registered worktree"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/gitlite/Multi-Workers/.tmp/dpc/implementation-worktree/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "integration-candidate-20261110T0831",
+      "root": "E:/gitlite/Multi-Workers/.tmp/dpc/integration-candidate-20261110T0831",
+      "discovery": [
+        "registered worktree"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/gitlite/Multi-Workers/.tmp/dpc/integration-candidate-20261110T0831/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "integration-candidate-20261110T0831-r2",
+      "root": "E:/gitlite/Multi-Workers/.tmp/dpc/integration-candidate-20261110T0831-r2",
+      "discovery": [
+        "registered worktree"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/gitlite/Multi-Workers/.tmp/dpc/integration-candidate-20261110T0831-r2/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "integration-candidate-20261110T0902",
+      "root": "E:/gitlite/Multi-Workers/.tmp/dpc/integration-candidate-20261110T0902",
+      "discovery": [
+        "registered worktree"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/gitlite/Multi-Workers/.tmp/dpc/integration-candidate-20261110T0902/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "integration-candidate-H10-20261110T1020",
+      "root": "E:/gitlite/Multi-Workers/.tmp/dpc/integration-candidate-H10-20261110T1020",
+      "discovery": [
+        "registered worktree"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/gitlite/Multi-Workers/.tmp/dpc/integration-candidate-H10-20261110T1020/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "mw-release-wt",
+      "root": "E:/gitlite/Multi-Workers/.tmp/mw-release-wt",
+      "discovery": [
+        "registered worktree"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/gitlite/Multi-Workers/.tmp/mw-release-wt/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "native-compact-commits",
+      "root": "E:/gitlite/Multi-Workers/.tmp/native-compact-commits",
+      "discovery": [
+        "registered worktree"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/gitlite/Multi-Workers/.tmp/native-compact-commits/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "Overcode",
+      "root": "E:/gitlite/Overcode",
+      "discovery": [
+        "Codex project",
+        "workspace root"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/gitlite/Overcode/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "PKB",
+      "root": "E:/gitlite/PKB",
+      "discovery": [
+        "Codex project"
+      ],
+      "agenticdoc": false,
+      "receipt_dir": "E:/gitlite/PKB/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "AssetsGate",
+      "root": "E:/MWWS/AssetsGate",
+      "discovery": [
+        "Codex project",
+        "workspace root"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/MWWS/AssetsGate/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "Gaze",
+      "root": "E:/MWWS/Gaze",
+      "discovery": [
+        "Codex project",
+        "workspace root"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked",
+      "files": 47,
+      "receipts": 47,
+      "state": "readable",
+      "first": "2026-11-19T19:16:01+08:00",
+      "last": "2026-11-22T14:39:32+08:00"
+    },
+    {
+      "project": "RenderPerformance",
+      "root": "E:/MWWS/RenderPerformance",
+      "discovery": [
+        "workspace root"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked",
+      "files": 33,
+      "receipts": 33,
+      "state": "readable",
+      "first": "2026-11-19T21:17:50+08:00",
+      "last": "2026-11-22T12:38:07+08:00"
+    },
+    {
+      "project": "SceneProfiler",
+      "root": "E:/MWWS/SceneProfiler",
+      "discovery": [
+        "Codex project",
+        "workspace root"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked",
+      "files": 24,
+      "receipts": 24,
+      "state": "readable",
+      "first": "2026-11-19T21:05:31+08:00",
+      "last": "2026-11-20T19:59:11+08:00"
+    },
+    {
+      "project": "fmb",
+      "root": "E:/MWWS/SceneProfiler/outputs/fmb",
+      "discovery": [
+        "registered worktree"
+      ],
+      "agenticdoc": false,
+      "receipt_dir": "E:/MWWS/SceneProfiler/outputs/fmb/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "UEPerformanceFlow",
+      "root": "E:/MWWS/UEPerformanceFlow",
+      "discovery": [
+        "Codex project",
+        "workspace root"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked",
+      "files": 45,
+      "receipts": 45,
+      "state": "readable",
+      "first": "2026-11-19T22:35:09+08:00",
+      "last": "2026-11-22T06:08:54+08:00"
+    },
+    {
+      "project": "WLB",
+      "root": "E:/MWWS/WLB",
+      "discovery": [
+        "workspace root"
+      ],
+      "agenticdoc": false,
+      "receipt_dir": "E:/MWWS/WLB/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    },
+    {
+      "project": "mw-t15-c-20261117T072509Z",
+      "root": "E:/temp/mw-t15-c-20261117T072509Z",
+      "discovery": [
+        "Pi session"
+      ],
+      "agenticdoc": true,
+      "receipt_dir": "E:/temp/mw-t15-c-20261117T072509Z/.agenticdoc/_autopilot/dp-blocked",
+      "files": 0,
+      "receipts": 0,
+      "state": "no-receipt-directory"
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,60 @@
+[
+  {
+    "wire_id": "narrowA",
+    "choice": "narrow",
+    "basis_id": "narrowA-basis",
+    "criterion": "narrow：先处理原目标内的一块可完成工作，明确保留其它未完成项；不缩减原验收目标。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": [
+      "W2"
+    ]
+  },
+  {
+    "wire_id": "splitA",
+    "choice": "split",
+    "basis_id": "splitA-basis",
+    "criterion": "split：将可独立且写面协调的剩余工作拆分，保留整体回收和复核。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "directA",
+    "choice": "direct-exec",
+    "basis_id": "directA-basis",
+    "criterion": "direct-exec：PM在当前权限与预算内直接完成剩余工作，并保留必要独立复核。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "escalateA",
+    "choice": "escalate",
+    "basis_id": "escalateA-basis",
+    "criterion": "escalate：仅针对真实且不可自取的外部条件介入；普通未测/服务失败不等于缺授权。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  }
+]

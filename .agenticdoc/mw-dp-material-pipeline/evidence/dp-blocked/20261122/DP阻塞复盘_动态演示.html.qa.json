@@ -1,0 +1,105 @@
+{
+  "pages": 8,
+  "images": 0,
+  "duplicateIDs": [],
+  "brokenAnchors": [],
+  "layout": [
+    {
+      "page": 1,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 10561.453125,
+      "footerTop": 835
+    },
+    {
+      "page": 2,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 359.984375,
+      "footerTop": 835
+    },
+    {
+      "page": 3,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 709.484375,
+      "footerTop": 835
+    },
+    {
+      "page": 4,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 990.046875,
+      "footerTop": 835
+    },
+    {
+      "page": 5,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 1148.390625,
+      "footerTop": 835
+    },
+    {
+      "page": 6,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 803.875,
+      "footerTop": 835
+    },
+    {
+      "page": 7,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 1894.71875,
+      "footerTop": 835
+    },
+    {
+      "page": 8,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 1285.515625,
+      "footerTop": 835
+    }
+  ],
+  "tabAnchors": [],
+  "readModePages": 8,
+  "readModePanels": 0,
+  "totalPanels": 0,
+  "mobile": [
+    {
+      "page": 1,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 2,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 3,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 4,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 5,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 6,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 7,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 8,
+      "horizontalOverflow": false
+    }
+  ],
+  "failedImages": [],
+  "errors": [],
+  "screenshots": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\dp-blocked\\20261122\\DP阻塞复盘_动态演示.html.qa"
+}

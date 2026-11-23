@@ -1,0 +1,74 @@
+{
+  "references": {
+    "dp-sign-key": {
+      "kind": "decision_entry",
+      "content": "判断当前工作项是否满足交付承诺并可签收收尾。"
+    },
+    "dp-w-check-task": {
+      "kind": "decision_entry",
+      "content": "实际执行者判断当前任务继续、有界补证或如实结束本次执行。"
+    },
+    "dp-QG": {
+      "kind": "decision_entry",
+      "content": "对当前产物按完整验收标准和独立证据形成正式质量结论。"
+    },
+    "dp-pm-steer": {
+      "kind": "decision_entry",
+      "content": "判断剩余工作的组织方向：收窄本轮、拆分、管理者直执或真实外部介入。"
+    },
+    "dp-auto": {
+      "kind": "decision_entry",
+      "content": "在当前明确的现场问题所准备的真实方案之间选择。"
+    },
+    "dp-gate-approve": {
+      "kind": "decision_entry",
+      "content": "判断已有准入门是否允许当前具体动作。"
+    },
+    "dp-w-type": {
+      "kind": "decision_entry",
+      "content": "选择派发的执行者类型：写代码、取证、审查或识图。"
+    }
+  },
+  "terminology": {
+    "DP": {
+      "full_name": "Decision Point",
+      "meaning": "一个职责明确的决策入口；路由只选择入口，不批准入口对应动作。"
+    },
+    "ID": {
+      "full_name": "Identifier",
+      "meaning": "标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。"
+    },
+    "PM": {
+      "full_name": "Project Manager agent",
+      "meaning": "管理当前项目事项、组织任务并回收证据的项目管理Agent；不能冒充实际执行者或独立审查者。"
+    },
+    "QG": {
+      "full_name": "Quality Gate",
+      "meaning": "质量门禁/正式质量审核：按已确认验收标准、验证结果和独立审查形成pass/fix/reopen业务结论；不等于模型置信度。"
+    },
+    "Worker": {
+      "full_name": "Worker agent",
+      "meaning": "执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。"
+    },
+    "desc": {
+      "full_name": "description",
+      "meaning": "本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+    },
+    "gate": {
+      "full_name": "execution gate",
+      "meaning": "已有执行准入门，核本次具体动作是否满足既有条件和权限。"
+    },
+    "key": {
+      "full_name": "project work key",
+      "meaning": "项目工作项标识；本例讨论整个key交付时才属于签收，不能仅凭标识推测认领者。"
+    },
+    "直执": {
+      "full_name": "直接执行",
+      "meaning": "由当前项目管理者在原权限与剩余预算内直接完成工作，必要独立复核仍保留。"
+    },
+    "补证": {
+      "full_name": "补充证据",
+      "meaning": "通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+    }
+  }
+}

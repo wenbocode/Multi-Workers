@@ -1,0 +1,627 @@
+{
+  "title": "DP v0.5：完整设计、真实API返回与开发验证",
+  "output": "DP引用与术语_动态演示.html",
+  "sources": [
+    {
+      "id": "intro",
+      "path": "README.md"
+    },
+    {
+      "id": "rules",
+      "path": "window-rules.md"
+    },
+    {
+      "id": "live",
+      "path": "live-results.md"
+    },
+    {
+      "id": "dp-w-type",
+      "path": "dp-w-type.md"
+    },
+    {
+      "id": "dp-pm-steer",
+      "path": "dp-pm-steer.md"
+    },
+    {
+      "id": "dp-w-check-task",
+      "path": "dp-w-check-task.md"
+    },
+    {
+      "id": "dp-QG",
+      "path": "dp-QG.md"
+    },
+    {
+      "id": "dp-gate-approve",
+      "path": "dp-gate-approve.md"
+    },
+    {
+      "id": "dp-sign-key",
+      "path": "dp-sign-key.md"
+    },
+    {
+      "id": "dp-auto",
+      "path": "dp-auto.md"
+    },
+    {
+      "id": "dp-route",
+      "path": "dp-route.md"
+    },
+    {
+      "id": "actual-dp-w-type",
+      "path": "live-cases/dp-w-type.md"
+    },
+    {
+      "id": "actual-dp-pm-steer",
+      "path": "live-cases/dp-pm-steer.md"
+    },
+    {
+      "id": "actual-dp-w-check-task",
+      "path": "live-cases/dp-w-check-task.md"
+    },
+    {
+      "id": "actual-dp-QG",
+      "path": "live-cases/dp-QG.md"
+    },
+    {
+      "id": "actual-dp-gate-approve",
+      "path": "live-cases/dp-gate-approve.md"
+    },
+    {
+      "id": "actual-dp-sign-key",
+      "path": "live-cases/dp-sign-key.md"
+    },
+    {
+      "id": "actual-dp-auto",
+      "path": "live-cases/dp-auto.md"
+    },
+    {
+      "id": "actual-dp-route",
+      "path": "live-cases/dp-route.md"
+    },
+    {
+      "id": "api-return",
+      "path": "api-return.md"
+    },
+    {
+      "id": "auto-design",
+      "path": "auto-design.md"
+    },
+    {
+      "id": "prepare-worker",
+      "path": "prepare-worker.md"
+    },
+    {
+      "id": "development",
+      "path": "development-guide.md"
+    },
+    {
+      "id": "old-auto",
+      "path": "archive/dp-auto-before-integration.md"
+    },
+    {
+      "id": "current-auto-live",
+      "path": "live-cases/dp-auto-current.md"
+    }
+  ],
+  "pages": [
+    {
+      "id": "intro",
+      "title": "完整设计验证总览",
+      "chapter": "规范",
+      "refs": [
+        {
+          "source": "intro",
+          "whole": true
+        }
+      ]
+    },
+    {
+      "id": "api-return",
+      "title": "最新API原始返回：dp-auto",
+      "chapter": "API原始返回",
+      "refs": [
+        {
+          "source": "api-return",
+          "whole": true
+        }
+      ]
+    },
+    {
+      "id": "local",
+      "title": "八DP本地决策本与字段表",
+      "chapter": "一：本地",
+      "tabs": [
+        {
+          "title": "dp-w-type",
+          "refs": [
+            {
+              "source": "dp-w-type",
+              "heading": "dp-w-type：v0.5可理解的上下文"
+            },
+            {
+              "source": "dp-w-type",
+              "heading": "字段发送规则",
+              "children": true
+            },
+            {
+              "source": "dp-w-type",
+              "heading": "本地决策本",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-pm-steer",
+          "refs": [
+            {
+              "source": "dp-pm-steer",
+              "heading": "dp-pm-steer：v0.5可理解的上下文"
+            },
+            {
+              "source": "dp-pm-steer",
+              "heading": "字段发送规则",
+              "children": true
+            },
+            {
+              "source": "dp-pm-steer",
+              "heading": "本地决策本",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-w-check-task",
+          "refs": [
+            {
+              "source": "dp-w-check-task",
+              "heading": "dp-w-check-task：v0.5可理解的上下文"
+            },
+            {
+              "source": "dp-w-check-task",
+              "heading": "字段发送规则",
+              "children": true
+            },
+            {
+              "source": "dp-w-check-task",
+              "heading": "本地决策本",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-QG",
+          "refs": [
+            {
+              "source": "dp-QG",
+              "heading": "dp-QG：v0.5可理解的上下文"
+            },
+            {
+              "source": "dp-QG",
+              "heading": "字段发送规则",
+              "children": true
+            },
+            {
+              "source": "dp-QG",
+              "heading": "本地决策本",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-gate-approve",
+          "refs": [
+            {
+              "source": "dp-gate-approve",
+              "heading": "dp-gate-approve：v0.5可理解的上下文"
+            },
+            {
+              "source": "dp-gate-approve",
+              "heading": "字段发送规则",
+              "children": true
+            },
+            {
+              "source": "dp-gate-approve",
+              "heading": "本地决策本",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-sign-key",
+          "refs": [
+            {
+              "source": "dp-sign-key",
+              "heading": "dp-sign-key：v0.5可理解的上下文"
+            },
+            {
+              "source": "dp-sign-key",
+              "heading": "字段发送规则",
+              "children": true
+            },
+            {
+              "source": "dp-sign-key",
+              "heading": "本地决策本",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-auto",
+          "refs": [
+            {
+              "source": "dp-auto",
+              "heading": "dp-auto：v0.5整合后的当前设计"
+            },
+            {
+              "source": "dp-auto",
+              "heading": "字段发送规则",
+              "children": true
+            },
+            {
+              "source": "dp-auto",
+              "heading": "本地决策本",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-route",
+          "refs": [
+            {
+              "source": "dp-route",
+              "heading": "dp-route：v0.5可理解的上下文"
+            },
+            {
+              "source": "dp-route",
+              "heading": "字段发送规则",
+              "children": true
+            },
+            {
+              "source": "dp-route",
+              "heading": "本地决策本",
+              "children": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "payload",
+      "title": "八DP完整payload及定义",
+      "chapter": "二：模型输入",
+      "tabs": [
+        {
+          "title": "dp-w-type",
+          "refs": [
+            {
+              "source": "dp-w-type",
+              "heading": "最终模型payload",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-pm-steer",
+          "refs": [
+            {
+              "source": "dp-pm-steer",
+              "heading": "最终模型payload",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-w-check-task",
+          "refs": [
+            {
+              "source": "dp-w-check-task",
+              "heading": "最终模型payload",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-QG",
+          "refs": [
+            {
+              "source": "dp-QG",
+              "heading": "最终模型payload",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-gate-approve",
+          "refs": [
+            {
+              "source": "dp-gate-approve",
+              "heading": "最终模型payload",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-sign-key",
+          "refs": [
+            {
+              "source": "dp-sign-key",
+              "heading": "最终模型payload",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-auto",
+          "refs": [
+            {
+              "source": "dp-auto",
+              "heading": "最终模型payload",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-route",
+          "refs": [
+            {
+              "source": "dp-route",
+              "heading": "最终模型payload",
+              "children": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "post",
+      "title": "返回后的反解与业务检查",
+      "chapter": "三：返回后",
+      "tabs": [
+        {
+          "title": "dp-w-type",
+          "refs": [
+            {
+              "source": "dp-w-type",
+              "heading": "返回后的反解和检查",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-pm-steer",
+          "refs": [
+            {
+              "source": "dp-pm-steer",
+              "heading": "返回后的反解和检查",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-w-check-task",
+          "refs": [
+            {
+              "source": "dp-w-check-task",
+              "heading": "返回后的反解和检查",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-QG",
+          "refs": [
+            {
+              "source": "dp-QG",
+              "heading": "返回后的反解和检查",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-gate-approve",
+          "refs": [
+            {
+              "source": "dp-gate-approve",
+              "heading": "返回后的反解和检查",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-sign-key",
+          "refs": [
+            {
+              "source": "dp-sign-key",
+              "heading": "返回后的反解和检查",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-auto",
+          "refs": [
+            {
+              "source": "dp-auto",
+              "heading": "返回后的反解和检查",
+              "children": true
+            }
+          ]
+        },
+        {
+          "title": "dp-route",
+          "refs": [
+            {
+              "source": "dp-route",
+              "heading": "返回后的反解和检查",
+              "children": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rules",
+      "title": "准备方的覆盖与引用检查",
+      "chapter": "准备检查",
+      "refs": [
+        {
+          "source": "rules",
+          "whole": true
+        }
+      ]
+    },
+    {
+      "id": "live",
+      "title": "真实jev结果与用量",
+      "chapter": "真实验证",
+      "refs": [
+        {
+          "source": "live",
+          "whole": true
+        }
+      ]
+    },
+    {
+      "id": "actual",
+      "title": "八DP实际body与原始返回",
+      "chapter": "真实回放",
+      "tabs": [
+        {
+          "title": "dp-w-type",
+          "refs": [
+            {
+              "source": "actual-dp-w-type",
+              "whole": true
+            }
+          ]
+        },
+        {
+          "title": "dp-pm-steer",
+          "refs": [
+            {
+              "source": "actual-dp-pm-steer",
+              "whole": true
+            }
+          ]
+        },
+        {
+          "title": "dp-w-check-task",
+          "refs": [
+            {
+              "source": "actual-dp-w-check-task",
+              "whole": true
+            }
+          ]
+        },
+        {
+          "title": "dp-QG",
+          "refs": [
+            {
+              "source": "actual-dp-QG",
+              "whole": true
+            }
+          ]
+        },
+        {
+          "title": "dp-gate-approve",
+          "refs": [
+            {
+              "source": "actual-dp-gate-approve",
+              "whole": true
+            }
+          ]
+        },
+        {
+          "title": "dp-sign-key",
+          "refs": [
+            {
+              "source": "actual-dp-sign-key",
+              "whole": true
+            }
+          ]
+        },
+        {
+          "title": "dp-auto",
+          "refs": [
+            {
+              "source": "current-auto-live",
+              "whole": true
+            }
+          ]
+        },
+        {
+          "title": "dp-route",
+          "refs": [
+            {
+              "source": "actual-dp-route",
+              "whole": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "auto-design",
+      "title": "dp-auto路径与可区分性",
+      "chapter": "开发设计",
+      "refs": [
+        {
+          "source": "auto-design",
+          "whole": true
+        }
+      ]
+    },
+    {
+      "id": "prepare-worker",
+      "title": "prepare Worker完整流程",
+      "chapter": "开发设计",
+      "refs": [
+        {
+          "source": "prepare-worker",
+          "whole": true
+        }
+      ]
+    },
+    {
+      "id": "development",
+      "title": "开发接入与验收清单",
+      "chapter": "开发设计",
+      "refs": [
+        {
+          "source": "development",
+          "whole": true
+        }
+      ]
+    },
+    {
+      "id": "history",
+      "title": "dp-auto旧例及原始返回",
+      "chapter": "历史对照",
+      "tabs": [
+        {
+          "title": "旧设计与payload",
+          "refs": [
+            {
+              "source": "old-auto",
+              "whole": true
+            }
+          ]
+        },
+        {
+          "title": "旧API原始返回",
+          "refs": [
+            {
+              "source": "actual-dp-auto",
+              "whole": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "overview": {
+    "position": 2,
+    "title": "完整设计验证导航",
+    "intro": "第2页直接展示最新API原始返回；八DP按本地材料、完整入模body、返回检查展开；后半部是开发接入规范和历史对照。"
+  }
+}

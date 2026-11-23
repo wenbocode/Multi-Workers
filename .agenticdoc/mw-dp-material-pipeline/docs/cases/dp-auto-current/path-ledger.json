@@ -1,0 +1,42 @@
+{
+  "retryA": {
+    "start": "retry",
+    "steps": {
+      "retry": {
+        "seconds": 60,
+        "resource": "retry",
+        "next": [
+          "health",
+          "end"
+        ]
+      },
+      "health": {
+        "seconds": 120,
+        "resource": "health",
+        "next": [
+          "end"
+        ]
+      }
+    }
+  },
+  "diagnoseA": {
+    "start": "health",
+    "steps": {
+      "health": {
+        "seconds": 120,
+        "resource": "health",
+        "next": [
+          "retry",
+          "end"
+        ]
+      },
+      "retry": {
+        "seconds": 60,
+        "resource": "retry",
+        "next": [
+          "end"
+        ]
+      }
+    }
+  }
+}

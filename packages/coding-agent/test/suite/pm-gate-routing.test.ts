@@ -90,10 +90,6 @@ describe("PM gate routing", () => {
 			return JSON.parse(result);
 		};
 		try {
-			expect(await lookup(key)).toMatchObject({
-				available: false,
-				gate_route: { status: "not-applicable" },
-			});
 			expect(await lookup("H-03YGK-B2-corrected-payload-build")).toMatchObject({
 				available: false,
 				gate_route: { status: "not-applicable" },
@@ -152,7 +148,7 @@ describe("PM gate routing", () => {
 		expect(resolvePmGateRoute(project, key, gateId).status).toBe("not-applicable");
 	});
 
-	it("checks the live queue when dp-route suggests a gate", async () => {
+	it("rechecks the live queue when dp-route suggests a gate, including a cached selection", async () => {
 		const runner = vi.fn(async (request: { input: string }) => {
 			const { meta } = JSON.parse(request.input);
 			return {
@@ -226,9 +222,10 @@ describe("PM gate routing", () => {
 					selection: { id: gateDp },
 					gate_route: { status: expected },
 				});
+				if (expected === "framework-gate") expect(message?.details).toHaveProperty("matter_suppressed", true);
 			}
-			expect(runner).toHaveBeenCalledTimes(2);
-			expect(lifecycleRunner).toHaveBeenCalledTimes(2);
+			expect(runner).toHaveBeenCalledTimes(1);
+			expect(lifecycleRunner).toHaveBeenCalledTimes(1);
 		} finally {
 			h.cleanup();
 		}

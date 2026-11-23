@@ -1,0 +1,12 @@
+{
+  "status": "needs-evidence",
+  "sent": false,
+  "source_reference": "../v05/cases/dp-auto/reference.json",
+  "source_payload_sha256": "de5dd966dd1a80eccfdd535034344747eb5977924850134297ed55bcc8d52f6d",
+  "gaps": [
+    "未排定当前响应与原因诊断优先级",
+    "超时阶段未说明",
+    "快照实际新鲜度和适用范围未说明"
+  ],
+  "next": "原主体在原授权/预算内补目标或证据；否则承认两方案都合理，可按既有合法本地规则处置，不伪造DP结果。"
+}

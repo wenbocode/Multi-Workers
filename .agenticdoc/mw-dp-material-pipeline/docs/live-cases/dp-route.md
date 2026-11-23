@@ -1,0 +1,201 @@
+# dp-route：最终实际发送与返回
+
+合成规范材料的真实API验证；本次请求没有生产身份或业务副作用。
+
+响应时间：2026-11-18T07:44:19.941395+00:00；来源：中文简称覆盖修正后的实际调用。
+
+## 实际请求body
+
+以下来自实际Request.data，与本版payload.json逐字节一致；认证头不记录。
+
+```json
+{
+  "model": "jev-latest",
+  "state": {
+    "scenario": "合成案例：只评估下列材料并选择，不执行任何业务动作。",
+    "desc": "原PM当前需要判断一份产物是否满足已确认的质量标准。尚未提出整个key交付收尾，也不是申请执行gate动作。当前偏差是入口尚未归类，依据是这次明确的业务问题和审核范围。这里只选择责任入口，不代后续入口作质量判断；若已处于固定QG节点就无需再路由。",
+    "material": {
+      "actor_role": "pm",
+      "question": "这份当前产物能否满足已确认标准，应交哪个判断入口？"
+    },
+    "references": {
+      "dp-sign-key": {
+        "kind": "decision_entry",
+        "content": "判断当前工作项是否满足交付承诺并可签收收尾。"
+      },
+      "dp-w-check-task": {
+        "kind": "decision_entry",
+        "content": "实际执行者判断当前任务继续、有界补证或如实结束本次执行。"
+      },
+      "dp-QG": {
+        "kind": "decision_entry",
+        "content": "对当前产物按完整验收标准和独立证据形成正式质量结论。"
+      },
+      "dp-pm-steer": {
+        "kind": "decision_entry",
+        "content": "判断剩余工作的组织方向：收窄本轮、拆分、管理者直执或真实外部介入。"
+      },
+      "dp-auto": {
+        "kind": "decision_entry",
+        "content": "在当前明确的现场问题所准备的真实方案之间选择。"
+      },
+      "dp-gate-approve": {
+        "kind": "decision_entry",
+        "content": "判断已有准入门是否允许当前具体动作。"
+      },
+      "dp-w-type": {
+        "kind": "decision_entry",
+        "content": "选择派发的执行者类型：写代码、取证、审查或识图。"
+      }
+    },
+    "terminology": {
+      "DP": {
+        "full_name": "Decision Point",
+        "meaning": "一个职责明确的决策入口；路由只选择入口，不批准入口对应动作。"
+      },
+      "ID": {
+        "full_name": "Identifier",
+        "meaning": "标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。"
+      },
+      "PM": {
+        "full_name": "Project Manager agent",
+        "meaning": "管理当前项目事项、组织任务并回收证据的项目管理Agent；不能冒充实际执行者或独立审查者。"
+      },
+      "QG": {
+        "full_name": "Quality Gate",
+        "meaning": "质量门禁/正式质量审核：按已确认验收标准、验证结果和独立审查形成pass/fix/reopen业务结论；不等于模型置信度。"
+      },
+      "Worker": {
+        "full_name": "Worker agent",
+        "meaning": "执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。"
+      },
+      "desc": {
+        "full_name": "description",
+        "meaning": "本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+      },
+      "gate": {
+        "full_name": "execution gate",
+        "meaning": "已有执行准入门，核本次具体动作是否满足既有条件和权限。"
+      },
+      "key": {
+        "full_name": "project work key",
+        "meaning": "项目工作项标识；本例讨论整个key交付时才属于签收，不能仅凭标识推测认领者。"
+      },
+      "直执": {
+        "full_name": "直接执行",
+        "meaning": "由当前项目管理者在原权限与剩余预算内直接完成工作，必要独立复核仍保留。"
+      },
+      "补证": {
+        "full_name": "补充证据",
+        "meaning": "通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+      }
+    },
+    "enum_meanings": {
+      "pm": "项目管理Agent的角色标签，真实身份仍由宿主核验。"
+    }
+  },
+  "questions": {
+    "decision_selection": {
+      "type": "choice",
+      "instructions": "这个业务问题应交给哪个入口？只路由，不代目标入口判断。 只根据本次材料选择一个候选ID；选项是条件式判据，不是条件已成立的事实。不要输出额外原因或执行动作。",
+      "criteria": {
+        "route1": "dp-w-type：问题是选择派发类型时选择此入口；不代该入口裁决。",
+        "route2": "dp-pm-steer：问题是PM组织安排时选择此入口；不代该入口裁决。",
+        "route3": "dp-w-check-task：问题归当前Worker自身可达性时，仅交该Worker准备选择此入口；不代该入口裁决。",
+        "route4": "dp-QG：问题是对当前产物按标准做正式质量审查时选择此入口；不代该入口裁决。",
+        "route5": "dp-gate-approve：问题是既有gate对具体动作准入时选择此入口；不代该入口裁决。",
+        "route6": "dp-sign-key：问题是整个key交付收尾时选择此入口；不代该入口裁决。",
+        "route7": "dp-auto：问题是其它明确现场方案比较时选择此入口；不代该入口裁决。"
+      }
+    }
+  }
+}
+```
+
+请求SHA256：3b40984c3beb76a30204c0bf05af1a544429aa9f13dc897fcbb973421a30c3a8；4332 UTF-8字节。
+
+## 完整原始响应
+
+下方仅格式化展示，response.json保留完整原字节。
+
+```json
+{
+  "model": "jev-latest",
+  "answers": {
+    "decision_selection": {
+      "type": "choice",
+      "choice": "route4",
+      "confidence": 0.99,
+      "probabilities": {
+        "route1": 0.01,
+        "route2": 0.0,
+        "route3": 0.0,
+        "route4": 0.99,
+        "route5": 0.0,
+        "route6": 0.0,
+        "route7": 0.0
+      }
+    }
+  },
+  "usage": {
+    "input_tokens": 1889,
+    "output_tokens": 75,
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "id": "gen-2I3LZXb0eFzeIKNyl395vU7Cjj4ZtccAq6SA"
+}
+```
+
+## 实际反解与本地检查
+
+```json
+{
+  "official_decode": {
+    "valid": true,
+    "error": "",
+    "answers": {
+      "decision_selection": {
+        "value": "route4",
+        "confidence": 0.99,
+        "probabilities": {
+          "route1": 0.01,
+          "route2": 0.0,
+          "route3": 0.0,
+          "route4": 0.99,
+          "route5": 0.0,
+          "route6": 0.0,
+          "route7": 0.0
+        }
+      }
+    }
+  },
+  "local_decode": {
+    "valid": true,
+    "wire_id": "route4",
+    "choice": "dp-QG",
+    "basis_id": "route4-basis",
+    "finding_ids": [],
+    "remaining_ids": [],
+    "confidence": 0.99,
+    "probabilities": {
+      "route1": 0.01,
+      "route2": 0.0,
+      "route3": 0.0,
+      "route4": 0.99,
+      "route5": 0.0,
+      "route6": 0.0,
+      "route7": 0.0
+    },
+    "expected_match": true,
+    "confidence_policy": "not-evaluated-for-business",
+    "executed": false
+  },
+  "host_checks": "not-executed: synthetic reference, no real business owner/authorization",
+  "business_effects": false
+}
+```
+
+原始confidence和候选概率不互换；expected_match只表示在作者参考范围，不是业务采纳。没有执行生产派工、质量产品或签收。
+
+原始证据目录：.agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-route/；首轮完整目录另保留在evidence/live/。

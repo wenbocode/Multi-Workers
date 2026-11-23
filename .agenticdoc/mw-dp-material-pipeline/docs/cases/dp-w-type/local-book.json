@@ -1,0 +1,120 @@
+{
+  "schema": "dp-reference-v0.5-draft",
+  "sample_kind": "synthetic-reference",
+  "dp": "dp-w-type",
+  "role_scope": "pm",
+  "binding": {
+    "owner_ref": null,
+    "matter_ref": null,
+    "budget_ref": null,
+    "status": "合成参考，无生产身份"
+  },
+  "sources": [
+    {
+      "id": "S1",
+      "label": "获准任务",
+      "path": "sources/S1.txt",
+      "sha256": "7368e8afa33dc788e276e28d3a82786c638fe0e33ac9bb56813182f89d1cd80e",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    },
+    {
+      "id": "S2",
+      "label": "输入与能力",
+      "path": "sources/S2.txt",
+      "sha256": "877b4fb150345c24204c4a7903ff2365c97788be7b0321b91efcc1dc07bc9618",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    }
+  ],
+  "field_trace": {
+    "file": "field-trace.json",
+    "note": "真实原件与字段变换留本地；本例源正文见sources/。"
+  },
+  "preparation": {
+    "prepared_at": "由实际准备者/host落盘",
+    "basis_catalog": "见pair-map.json",
+    "material_refs": "每个选项关联本次材料",
+    "applies_to": "本地校验，不能据此裁剪固定候选",
+    "producer": "原PM/实际Worker，或受托prepare Worker起草后由原主体工具吸收"
+  },
+  "pair_map": {
+    "file": "pair-map.json"
+  },
+  "host_exclusions": [],
+  "execution_plan": {
+    "status": "未制定；选择方向后由原主体按授权准备",
+    "send": false
+  },
+  "expected": {
+    "choices": [
+      "coding"
+    ],
+    "status": "作者参考预期，禁止发给模型"
+  },
+  "actual_capture": {
+    "request": "not-sent-v0.5",
+    "response": "not-observed-v0.5"
+  },
+  "post_checks": "核当前任务/角色/写面和有效模型能力；vision须真实识图能力。通过后只是类型建议，派发另由原工具检查。",
+  "freeze": {
+    "file": "payload.json",
+    "sha256": "30fe499cefea039fff9756ad73bd0ae5982ef437c64a16adbfd3a28c52536cd5",
+    "bytes": 2795
+  },
+  "desc_preparation": {
+    "sentences": [
+      "目标是修复CSV导出对逗号和双引号的转义并补往返回归测试。",
+      "任务尚未执行，当前待决定的是交给哪类Worker，并非审核既有产物。",
+      "任务定义要求修改导出器和测试，禁止改格式协议。",
+      "已核输入都是文本代码和CSV样本，不需要解释图像。"
+    ],
+    "sentence_count": 4,
+    "max_sentences": 10,
+    "max_tokens": 1000,
+    "estimated_tokens": 102,
+    "token_count": null,
+    "meter": "existing-estimator-precheck; target-model exact count not available",
+    "source_note": "从v0.3合成来源归纳；QG/sign增加显式同范围fixture，非当前业务事实",
+    "source_pointers": [
+      "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-w-type\\reference.json"
+    ],
+    "sentence_sources": [
+      {
+        "sentence": 1,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-w-type\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 2,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-w-type\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 3,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-w-type\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 4,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-w-type\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      }
+    ],
+    "claims": "目标/偏差/事件/证据与未知，不写推荐答案"
+  },
+  "definition_sources": {
+    "AC": "已确认验收正文；本例来自v0.4合成scope",
+    "VC": "项目设计Verification Contract；本例来自v0.4合成review矩阵",
+    "other_refs": "本次来源中的发现/剩余工作/入口职责",
+    "registry": "仅使用当前请求出现的术语，未知项拒绝准备"
+  }
+}

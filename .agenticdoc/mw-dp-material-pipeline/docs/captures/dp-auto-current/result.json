@@ -1,0 +1,65 @@
+{
+  "dp": "dp-auto",
+  "version": "v0.6-draft",
+  "sample_kind": "synthetic-reference",
+  "started_utc": "2026-11-18T08:22:47.073534+00:00",
+  "finished_utc": "2026-11-18T08:22:48.318217+00:00",
+  "method": "POST",
+  "endpoint": "http://api.timiai.woa.com/ai_api_manage/llmproxy/v1/decisions",
+  "model": "jev-latest",
+  "attempts": 1,
+  "http_status": 200,
+  "latency_ms": 1250,
+  "failure": null,
+  "capture": "complete",
+  "request_sha256": "ffa98bc1193a7bd1e08aa2c424e1ab85d11ba7d58bd5b690e64d759b165c4225",
+  "request_bytes": 7081,
+  "response_sha256": "d1c12bbfe2375a48e9481470241a4c9c355d151f176246d8bfb4151abe6e4690",
+  "response_bytes": 318,
+  "response_content_type": "application/json",
+  "usage": {
+    "input_tokens": 2847,
+    "output_tokens": 39,
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "business_effects": false,
+  "official_decode": {
+    "valid": true,
+    "error": "",
+    "answers": {
+      "decision_selection": {
+        "value": "retryA",
+        "confidence": 1.0,
+        "probabilities": {
+          "diagnoseA": 0.0,
+          "retryA": 1.0
+        }
+      }
+    }
+  },
+  "local_decode": {
+    "valid": true,
+    "wire_id": "retryA",
+    "choice": "retry",
+    "basis_id": "retryA-basis",
+    "finding_ids": [],
+    "remaining_ids": [],
+    "confidence": 1.0,
+    "probabilities": {
+      "diagnoseA": 0.0,
+      "retryA": 1.0
+    },
+    "expected_match": true,
+    "confidence_policy": "not-evaluated-for-business",
+    "executed": false
+  },
+  "local_input_checks": {
+    "passed": true,
+    "errors": []
+  },
+  "host_checks": {
+    "status": "not-executed",
+    "reason": "Synthetic fixture has no production owner, scope grant, cancellation state or current execution ledger."
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "output": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-material-pipeline\\evidence\\dp-blocked\\20261122\\DP阻塞复盘_动态演示.html",
+  "title": "DP 阻塞分布与 v0.5 验收对照",
+  "sources": [
+    {
+      "id": "stats",
+      "path": "blocked-distribution.md",
+      "sha256": "0f183f9a635ac74064e210f0375249a99f48793ba88f98b8e75f3354c154ca47"
+    },
+    {
+      "id": "cases",
+      "path": "v05-blocked-comparison.md",
+      "sha256": "59841942a7905f51e73980eae5316476a48c3cd71c95d95ff8f8d26ad92854e6"
+    }
+  ],
+  "pages": [
+    {
+      "id": "explore",
+      "title": "先看分布",
+      "chapter": "分布与明细",
+      "layout": "vertical",
+      "page": 1
+    },
+    {
+      "id": "overview",
+      "title": "阅读导航",
+      "chapter": "总览",
+      "layout": "overview",
+      "page": 2
+    },
+    {
+      "id": "project-dp",
+      "title": "项目与 DP",
+      "chapter": "分布与明细",
+      "layout": "vertical",
+      "page": 3
+    },
+    {
+      "id": "reason-project",
+      "title": "原因与项目",
+      "chapter": "分布与明细",
+      "layout": "vertical",
+      "page": 4
+    },
+    {
+      "id": "reason-dp",
+      "title": "原因与 DP",
+      "chapter": "分布与明细",
+      "layout": "vertical",
+      "page": 5
+    },
+    {
+      "id": "method",
+      "title": "分类口径",
+      "chapter": "分布与明细",
+      "layout": "vertical",
+      "page": 6
+    },
+    {
+      "id": "cases",
+      "title": "典型回执与 v0.5 四段",
+      "chapter": "案例与开发差额",
+      "layout": "vertical",
+      "page": 7
+    },
+    {
+      "id": "coverage",
+      "title": "当前代码覆盖与任务更新",
+      "chapter": "案例与开发差额",
+      "layout": "vertical",
+      "page": 8
+    }
+  ],
+  "coverage": {
+    "omissions": [],
+    "duplicates": []
+  },
+  "resources": [
+    {
+      "href": "report.md",
+      "media": false
+    },
+    {
+      "href": "receipts.jsonl",
+      "media": false
+    },
+    {
+      "href": "reason-index.json",
+      "media": false
+    },
+    {
+      "href": "../../../docs/reference-records/dp-QG.md",
+      "media": false
+    },
+    {
+      "href": "../../../docs/reference-records/dp-w-type.md",
+      "media": false
+    },
+    {
+      "href": "../../../docs/reference-records/dp-pm-steer.md",
+      "media": false
+    },
+    {
+      "href": "../../../docs/reference-records/dp-sign-key.md",
+      "media": false
+    }
+  ],
+  "receipt_explorer": {
+    "receipts.jsonl": "1cb0233825ced5ef1dad060ce30683f2a6285d1ff7f0322bf03c3e6744b0f2c7",
+    "reason-index.json": "b3f8e246f625df068fbd35caa81fc7061dbff3e4385a4d9d3fc901a3c9f4b033",
+    "receipt-explorer.js": "f0e419b8ac62a5495752988a840fb412f36ee2fce5517a934a9c026a561b94e1",
+    "output_sha256": "ea87b2cb5ad265a4dd54879781dc0108cd9d60e45131ec8715960da387c30bdc"
+  }
+}

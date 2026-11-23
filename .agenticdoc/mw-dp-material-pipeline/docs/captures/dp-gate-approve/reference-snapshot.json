@@ -1,0 +1,629 @@
+{
+  "schema": "v0.5-draft",
+  "dp": "dp-gate-approve",
+  "sample_kind": "synthetic-reference",
+  "local_book": {
+    "schema": "dp-reference-v0.5-draft",
+    "sample_kind": "synthetic-reference",
+    "dp": "dp-gate-approve",
+    "role_scope": "pm",
+    "binding": {
+      "owner_ref": null,
+      "matter_ref": null,
+      "budget_ref": null,
+      "status": "合成参考，无生产身份"
+    },
+    "sources": [
+      {
+        "id": "S1",
+        "label": "现有gate条件与授权",
+        "path": "sources/S1.txt",
+        "sha256": "536e0164a8102002444f4581f7a003471a3faef8f31694f6620eaf0c212d180f",
+        "version": "synthetic-v1",
+        "kind": "synthetic-original"
+      },
+      {
+        "id": "S2",
+        "label": "当前计划和条件检查",
+        "path": "sources/S2.txt",
+        "sha256": "ae6101069d18e89f5c26f643b1cfaeadc3e86dd94829c260fe75c59caba0a4be",
+        "version": "synthetic-v1",
+        "kind": "synthetic-original"
+      }
+    ],
+    "field_trace": {
+      "file": "field-trace.json",
+      "note": "真实原件与字段变换留本地；本例源正文见sources/。"
+    },
+    "preparation": {
+      "prepared_at": "由实际准备者/host落盘",
+      "basis_catalog": "见pair-map.json",
+      "material_refs": "每个选项关联本次材料",
+      "applies_to": "本地校验，不能据此裁剪固定候选",
+      "producer": "原PM/实际Worker，或受托prepare Worker起草后由原主体工具吸收"
+    },
+    "pair_map": {
+      "file": "pair-map.json"
+    },
+    "host_exclusions": [],
+    "execution_plan": {
+      "status": "未制定；选择方向后由原主体按授权准备",
+      "send": false
+    },
+    "expected": {
+      "choices": [
+        "approve"
+      ],
+      "status": "作者参考预期，禁止发给模型"
+    },
+    "actual_capture": {
+      "request": "not-sent-v0.5",
+      "response": "not-observed-v0.5"
+    },
+    "post_checks": "核已有授权、当前条件、预算/停止和动作范围；approve不增加权限，其它分支按既有接续处理，不自动释放gate。",
+    "freeze": {
+      "file": "payload.json",
+      "sha256": "9c6a7b8e72dfe75aad4e126c334abc6afccb2861a861b9d5480fcadba4080aad",
+      "bytes": 3257
+    },
+    "desc_preparation": {
+      "sentences": [
+        "当前拟在隔离输入上做一次只读回放并保存完整差异。",
+        "这道既有gate要求无产品写入且差异保存开启，两项当前检查均满足。",
+        "预计耗时10分钟，原余额20分钟，原授权已包含本次动作。",
+        "没有观察到准入条件偏差，覆盖仅限这份固定样本；依据是当前配置和条件检查，不是历史审批。"
+      ],
+      "sentence_count": 4,
+      "max_sentences": 10,
+      "max_tokens": 1000,
+      "estimated_tokens": 122,
+      "token_count": null,
+      "meter": "existing-estimator-precheck; target-model exact count not available",
+      "source_note": "从v0.3合成来源归纳；QG/sign增加显式同范围fixture，非当前业务事实",
+      "source_pointers": [
+        "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-gate-approve\\reference.json"
+      ],
+      "sentence_sources": [
+        {
+          "sentence": 1,
+          "sources": [
+            "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-gate-approve\\reference.json"
+          ],
+          "kind": "synthetic-sourced-example"
+        },
+        {
+          "sentence": 2,
+          "sources": [
+            "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-gate-approve\\reference.json"
+          ],
+          "kind": "synthetic-sourced-example"
+        },
+        {
+          "sentence": 3,
+          "sources": [
+            "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-gate-approve\\reference.json"
+          ],
+          "kind": "synthetic-sourced-example"
+        },
+        {
+          "sentence": 4,
+          "sources": [
+            "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-gate-approve\\reference.json"
+          ],
+          "kind": "synthetic-sourced-example"
+        }
+      ],
+      "claims": "目标/偏差/事件/证据与未知，不写推荐答案"
+    },
+    "definition_sources": {
+      "AC": "已确认验收正文；本例来自v0.4合成scope",
+      "VC": "项目设计Verification Contract；本例来自v0.4合成review矩阵",
+      "other_refs": "本次来源中的发现/剩余工作/入口职责",
+      "registry": "仅使用当前请求出现的术语，未知项拒绝准备"
+    }
+  },
+  "request": {
+    "model": "jev-latest",
+    "state": {
+      "scenario": "合成案例：只评估下列材料并选择，不执行任何业务动作。",
+      "desc": "当前拟在隔离输入上做一次只读回放并保存完整差异。这道既有gate要求无产品写入且差异保存开启，两项当前检查均满足。预计耗时10分钟，原余额20分钟，原授权已包含本次动作。没有观察到准入条件偏差，覆盖仅限这份固定样本；依据是当前配置和条件检查，不是历史审批。",
+      "material": {
+        "proposed_action": [
+          {
+            "action": "用冻结输入做一次只读回放",
+            "expected_result": "保存本次差异，不改产品数据"
+          }
+        ],
+        "conditions": [
+          {
+            "id": "C1",
+            "rule": "无产品写入"
+          },
+          {
+            "id": "C2",
+            "rule": "保留完整差异"
+          }
+        ],
+        "condition_results": [
+          {
+            "criterion_id": "C1",
+            "status": "pass",
+            "observation": "当前回放器配置只读"
+          },
+          {
+            "criterion_id": "C2",
+            "status": "pass",
+            "observation": "差异保存已启用"
+          }
+        ],
+        "effects": [
+          {
+            "outcome": "本次计划得到可审查差异",
+            "resource_cost": "估计10分钟；当前原余额20分钟",
+            "risks": "只覆盖这份冻结样本"
+          }
+        ],
+        "authority_constraints": [
+          {
+            "rule": "当前授权含此次隔离只读回放；拒绝仅整理证据，不执行额外清理。",
+            "status": "known"
+          }
+        ]
+      },
+      "references": {
+        "C1": {
+          "kind": "gate_condition",
+          "scope": "本次具体动作的既有准入门",
+          "content": "无产品写入"
+        },
+        "C2": {
+          "kind": "gate_condition",
+          "scope": "本次具体动作的既有准入门",
+          "content": "保留完整差异"
+        }
+      },
+      "terminology": {
+        "ID": {
+          "full_name": "Identifier",
+          "meaning": "标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。"
+        },
+        "PM": {
+          "full_name": "Project Manager agent",
+          "meaning": "管理当前项目事项、组织任务并回收证据的项目管理Agent；不能冒充实际执行者或独立审查者。"
+        },
+        "desc": {
+          "full_name": "description",
+          "meaning": "本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+        },
+        "gate": {
+          "full_name": "execution gate",
+          "meaning": "已有执行准入门，核本次具体动作是否满足既有条件和权限。"
+        }
+      },
+      "enum_meanings": {
+        "approve": "既有准入条件允许当前限定动作。",
+        "known": "对应约束或条件已由本次来源确认。",
+        "need_fix": "推进安排明确，但存在具体技术或材料缺口。",
+        "pass": "在当前检查/审核上下文满足要求；不能由局部检查扩大为整体验收。",
+        "reject": "拒绝当前推进方案，不隐含额外清理/写权限。",
+        "steer": "组织安排需由管理Agent调整。"
+      }
+    },
+    "questions": {
+      "decision_selection": {
+        "type": "choice",
+        "instructions": "当前具体动作是否满足这道gate，应approve、steer、need_fix还是reject？ 只根据本次材料选择一个候选ID；选项是条件式判据，不是条件已成立的事实。不要输出额外原因或执行动作。",
+        "criteria": {
+          "approveA": "approve：当前计划满足C1/C2且仍在原权限/预算内时批准该限定动作。",
+          "steerA": "steer：若问题在组织/执行安排，交PM重排，不扩大当前动作范围。",
+          "needFixA": "need_fix：若安排明确但存在技术/材料缺口，交PM形成具体修复。",
+          "rejectA": "reject：若计划不应推进则拒绝；仅允许原授权的证据整理。"
+        }
+      }
+    }
+  },
+  "pair_map": [
+    {
+      "wire_id": "approveA",
+      "choice": "approve",
+      "basis_id": "approveA-basis",
+      "criterion": "approve：当前计划满足C1/C2且仍在原权限/预算内时批准该限定动作。",
+      "material_refs": [
+        "state.desc",
+        "state.material",
+        "state.references",
+        "state.terminology"
+      ],
+      "finding_ids": [],
+      "remaining_ids": []
+    },
+    {
+      "wire_id": "steerA",
+      "choice": "steer",
+      "basis_id": "steerA-basis",
+      "criterion": "steer：若问题在组织/执行安排，交PM重排，不扩大当前动作范围。",
+      "material_refs": [
+        "state.desc",
+        "state.material",
+        "state.references",
+        "state.terminology"
+      ],
+      "finding_ids": [],
+      "remaining_ids": []
+    },
+    {
+      "wire_id": "needFixA",
+      "choice": "need_fix",
+      "basis_id": "needFixA-basis",
+      "criterion": "need_fix：若安排明确但存在技术/材料缺口，交PM形成具体修复。",
+      "material_refs": [
+        "state.desc",
+        "state.material",
+        "state.references",
+        "state.terminology"
+      ],
+      "finding_ids": [],
+      "remaining_ids": []
+    },
+    {
+      "wire_id": "rejectA",
+      "choice": "reject",
+      "basis_id": "rejectA-basis",
+      "criterion": "reject：若计划不应推进则拒绝；仅允许原授权的证据整理。",
+      "material_refs": [
+        "state.desc",
+        "state.material",
+        "state.references",
+        "state.terminology"
+      ],
+      "finding_ids": [],
+      "remaining_ids": []
+    }
+  ],
+  "send_policy": [
+    {
+      "field": "desc",
+      "send": "发送",
+      "target": "state.desc",
+      "meaning": "当前目标、偏差、事件、证据和未知，<=10句/1000tokens；由原主体确认",
+      "present": true
+    },
+    {
+      "field": "proposed_action",
+      "send": "发送",
+      "target": "state.material.proposed_action",
+      "present": true,
+      "meaning": "当前待准入的具体动作、预期结果和范围；不发送完整执行脚本。",
+      "source_ids": [
+        "S2"
+      ]
+    },
+    {
+      "field": "conditions",
+      "send": "发送",
+      "target": "state.material.conditions",
+      "present": true,
+      "meaning": "已有gate实际要求判断的条件正文。",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "field": "condition_results",
+      "send": "发送",
+      "target": "state.material.condition_results",
+      "present": true,
+      "meaning": "逐条件的真实满足/失败/未知及观测。",
+      "source_ids": [
+        "S2"
+      ]
+    },
+    {
+      "field": "effects",
+      "send": "按需发送",
+      "target": "state.material.effects",
+      "present": true,
+      "meaning": "影响准入选择的后果/预计成本/风险；不造空泛效果段。",
+      "source_ids": [
+        "S2"
+      ]
+    },
+    {
+      "field": "authority_constraints",
+      "send": "按需发送",
+      "target": "state.material.authority_constraints",
+      "present": true,
+      "meaning": "与本动作相关的现有授权/停止边界的可读含义；凭证与身份检查留本地。",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "field": "model",
+      "send": "发送",
+      "target": "model",
+      "present": true,
+      "meaning": "调用参数；由实际timi配置选择jev-latest，不是业务事实。",
+      "source_ids": []
+    },
+    {
+      "field": "scenario",
+      "send": "发送",
+      "target": "state.scenario",
+      "present": true,
+      "meaning": "本包合成验证身份；真实业务请求以真实场景替换，不伪造授权。",
+      "source_ids": []
+    },
+    {
+      "field": "evidence_sources",
+      "send": "按需发送",
+      "target": "state.evidence_sources",
+      "present": false,
+      "meaning": "需要原文才能理解/复核时发必要正文和限制；已在material达意则不重复；路径/hash不替正文。",
+      "source_ids": []
+    },
+    {
+      "field": "decision_selection.type/instructions/criteria",
+      "send": "发送",
+      "target": "questions.decision_selection",
+      "present": true,
+      "meaning": "一个单选题，完整合法候选及可读判据；依据在选项内表达一次。",
+      "source_ids": []
+    },
+    {
+      "field": "references",
+      "send": "发送",
+      "target": "state.references",
+      "meaning": "当前引用项完整正文/含义和适用范围；AC/VC/发现/工作项/入口在请求内可解",
+      "present": true
+    },
+    {
+      "field": "terminology",
+      "send": "发送",
+      "target": "state.terminology",
+      "meaning": "desc、材料、题干、选项及业务字段实际使用的缩写/术语解释",
+      "present": true
+    },
+    {
+      "field": "enum_meanings",
+      "send": "按需发送",
+      "target": "state.enum_meanings",
+      "meaning": "本请求使用的状态/业务选项代码和资源单位含义",
+      "present": true
+    }
+  ],
+  "field_trace": [
+    {
+      "path": "/model",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/scenario",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/desc",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/proposed_action/0/action",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/proposed_action/0/expected_result",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/conditions/0/id",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/conditions/0/rule",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/conditions/1/id",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/conditions/1/rule",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/condition_results/0/criterion_id",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/condition_results/0/status",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/condition_results/0/observation",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/condition_results/1/criterion_id",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/condition_results/1/status",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/condition_results/1/observation",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/effects/0/outcome",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/effects/0/resource_cost",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/effects/0/risks",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/authority_constraints/0/rule",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/material/authority_constraints/0/status",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/references/C1/kind",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/references/C1/scope",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/references/C1/content",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/references/C2/kind",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/references/C2/scope",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/references/C2/content",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/terminology/ID/full_name",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/terminology/ID/meaning",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/terminology/PM/full_name",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/terminology/PM/meaning",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/terminology/desc/full_name",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/terminology/desc/meaning",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/terminology/gate/full_name",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/terminology/gate/meaning",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/enum_meanings/approve",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/enum_meanings/known",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/enum_meanings/need_fix",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/enum_meanings/pass",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/enum_meanings/reject",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/state/enum_meanings/steer",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/questions/decision_selection/type",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/questions/decision_selection/instructions",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/questions/decision_selection/criteria/approveA",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/questions/decision_selection/criteria/steerA",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/questions/decision_selection/criteria/needFixA",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    },
+    {
+      "path": "/questions/decision_selection/criteria/rejectA",
+      "send": "发送",
+      "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+    }
+  ],
+  "actual": "not-called-v0.5",
+  "source_reference": ".agenticdoc\\mw-dp-runtime-reference\\v04\\cases\\dp-gate-approve\\reference.json"
+}

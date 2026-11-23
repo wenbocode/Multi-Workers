@@ -1,0 +1,312 @@
+[
+  {
+    "path": "/model",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/scenario",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/desc",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/delivery_scope/subject",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/delivery_scope/criteria/0/id",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/delivery_scope/criteria/0/text",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/delivery_scope/criteria/1/id",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/delivery_scope/criteria/1/text",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/requirement_results/0/criterion_id",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/requirement_results/0/status",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/requirement_results/0/observation",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/requirement_results/1/criterion_id",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/requirement_results/1/status",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/requirement_results/1/observation",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/verification/0/criterion_id",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/verification/0/check",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/verification/0/review_status",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/verification/1/criterion_id",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/verification/1/check",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/verification/1/review_status",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/remaining_impact/0/unfinished",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/remaining_impact/0/impact",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/remaining_impact/0/resolution_scope",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/goal",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/deviation/unmet_or_unverified/0",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/deviation/impact",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/deviation/external_condition",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/qg_summary/verdict",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/qg_summary/review_scope",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/qg_summary/open_items/0",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/material/qg_summary/freshness",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/references/AC-001/kind",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/references/AC-001/scope",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/references/AC-001/content",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/references/AC-002/kind",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/references/AC-002/scope",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/references/AC-002/content",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/AC/full_name",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/AC/meaning",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/ID/full_name",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/ID/meaning",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/QG/full_name",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/QG/meaning",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/desc/full_name",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/desc/meaning",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/review/full_name",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/review/meaning",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/独审/full_name",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/独审/meaning",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/补证/full_name",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/terminology/补证/meaning",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/enum_meanings/continue",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/enum_meanings/finalize",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/enum_meanings/fix",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/enum_meanings/pass",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/enum_meanings/unknown",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/state/enum_meanings/user-confirm",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/questions/decision_selection/type",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/questions/decision_selection/instructions",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/questions/decision_selection/criteria/finalizeA",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/questions/decision_selection/criteria/continueA",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  },
+  {
+    "path": "/questions/decision_selection/criteria/confirmA",
+    "send": "发送",
+    "note": "仅此请求内必需定义/事实进入模型；准备元数据留本地"
+  }
+]

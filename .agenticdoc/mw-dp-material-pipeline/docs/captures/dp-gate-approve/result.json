@@ -1,0 +1,63 @@
+{
+  "dp": "dp-gate-approve",
+  "version": "v0.5-draft",
+  "started_utc": "2026-11-18T07:40:44.705793+00:00",
+  "finished_utc": "2026-11-18T07:40:45.591340+00:00",
+  "method": "POST",
+  "endpoint": "http://api.timiai.woa.com/ai_api_manage/llmproxy/v1/decisions",
+  "model": "jev-latest",
+  "attempts": 1,
+  "http_status": 200,
+  "latency_ms": 891,
+  "failure": null,
+  "capture": "complete",
+  "request_sha256": "9c6a7b8e72dfe75aad4e126c334abc6afccb2861a861b9d5480fcadba4080aad",
+  "request_bytes": 3257,
+  "response_sha256": "c853de9d2fffbe27940bd038e2e40e04d8dffcbfb696d977a4def873301d2572",
+  "response_bytes": 352,
+  "response_content_type": "application/json",
+  "usage": {
+    "input_tokens": 1519,
+    "output_tokens": 56,
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "business_effects": false,
+  "official_decode": {
+    "valid": true,
+    "error": "",
+    "answers": {
+      "decision_selection": {
+        "value": "approveA",
+        "confidence": 1.0,
+        "probabilities": {
+          "approveA": 1.0,
+          "needFixA": 0.0,
+          "rejectA": 0.0,
+          "steerA": 0.0
+        }
+      }
+    }
+  },
+  "local_decode": {
+    "valid": true,
+    "wire_id": "approveA",
+    "choice": "approve",
+    "basis_id": "approveA-basis",
+    "finding_ids": [],
+    "remaining_ids": [],
+    "confidence": 1.0,
+    "probabilities": {
+      "approveA": 1.0,
+      "needFixA": 0.0,
+      "rejectA": 0.0,
+      "steerA": 0.0
+    },
+    "expected_match": true,
+    "confidence_policy": "not-evaluated-for-business",
+    "executed": false
+  },
+  "host_checks": "not-executed: synthetic reference, no real business owner/authorization",
+  "additional_transport_attempts": 0,
+  "reused_identical_initial_capture": true
+}

@@ -14,7 +14,7 @@ from collections.abc import Mapping
 import decision
 
 
-def recall_input_block(project: pathlib.Path, logical_id: str, dp: str,
+def recall_prepared_block(project: pathlib.Path, logical_id: str, dp: str,
                        key: str, task_key: str | None) -> dict | None:
     if not re.fullmatch(r"[0-9a-f-]{36}", logical_id):
         return None
@@ -26,11 +26,17 @@ def recall_input_block(project: pathlib.Path, logical_id: str, dp: str,
         event = json.loads((directory / f"{event_id}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if (
+    if not (
         isinstance(event, dict)
         and (event.get("logical_id"), event.get("dp"), event.get("key"), event.get("task_key"))
         == (logical_id, dp, key, task_key)
-        and event.get("reason") in ("input-incomplete", "budget-exhausted")
+        and event.get("source") == "mw-decide-run" and event.get("stage") == "request"
+    ):
+        return None
+    if event.get("reason") == decision.REASON_TRANSPORT_UNKNOWN:
+        return event
+    if (
+        event.get("reason") in ("input-incomplete", "budget-exhausted")
         and isinstance(event.get("input_diagnostics"), dict)
         and event["input_diagnostics"].get("stage") == "evidence-preparation"
         and event["input_diagnostics"].get("transport") == "not-sent"
@@ -105,7 +111,8 @@ def record(
         print(f"[mw decide] could not record DP block ({type(exc).__name__})", file=sys.stderr)
         return None
     logical_id = event["logical_id"]
-    if (source == "mw-decide-run" and stage == "request" and "input_diagnostics" in event
+    if (source == "mw-decide-run" and stage == "request"
+            and ("input_diagnostics" in event or event["reason"] == decision.REASON_TRANSPORT_UNKNOWN)
             and isinstance(logical_id, str) and re.fullmatch(r"[0-9a-f-]{36}", logical_id)):
         index = directory / "by-logical-id"
         try:

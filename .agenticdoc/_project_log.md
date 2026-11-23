@@ -58,3 +58,4 @@
 | 2026-10-22 21:24 | 54f194d69 | claim-driven-review-orchestration | 散文 review 拆分被证伪（E1 全部单元 manual-only、E2 判定层机检 0/39）；交付三档开关 MW_REVIEW_SPLIT(默认 off) + claim-extract/claim-pack/split-manifest/review-split-plan/review-split-gate 五个纯模块 + Python 解析下沉，off 路径逐字节不变 | — |
 | 2026-11-08 15:21 | 5e2b67884 | mw-codex-pm-workflow | Codex PM dispatches AgenticTask coding cards through MW, reconnects by key and records independent acceptance results. | — |
 | 2026-11-22T16:59:21.248826+00:00 | 8f73e160d | mw-dp-material-pipeline | DP 材料链路与本地预算验收通过，QG 39 项、v0.5 36 项及正式签收已核对 | — |
+| 2026-11-22T08:25:25.987435+00:00 | 5216ae701 | mw-dp-call-policy | 常规路由直接判断，明确卡类型和独审签收采用本地证据 | — |

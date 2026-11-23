@@ -1,0 +1,89 @@
+{
+  "key": "mw-dp-call-policy",
+  "summary": "\u5e38\u89c4\u8def\u7531\u76f4\u63a5\u5224\u65ad\uff0c\u660e\u786e\u5361\u7c7b\u578b\u548c\u72ec\u5ba1\u7b7e\u6536\u91c7\u7528\u672c\u5730\u8bc1\u636e",
+  "checks": [
+    {
+      "key": "mw-dp-call-policy",
+      "task": null,
+      "criteria": [
+        "AC-001",
+        "AC-002"
+      ],
+      "argv": [
+        "powershell.exe",
+        "-NoProfile",
+        "-Command",
+        "Set-Location packages/coding-agent; node ../../node_modules/vitest/dist/cli.js --run test/suite/pm-gate-routing.test.ts test/suite/pm-type-fallback.test.ts; exit $LASTEXITCODE"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "basis": {
+        "contract_sha256": "7ab7d77727292ccdbdc77b5acadce178df179c84c628fcf79feb844b5ca91880",
+        "source_sha256": "8f4c2af663e33df43b1e297cfb3aca0136723b3efa3f33780e0932ad8b470cec"
+      },
+      "started": "2026-11-22T08:22:55.900399+00:00",
+      "verdict": "stale",
+      "exit_code": 0,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-call-policy\\evidence\\codex-pm\\self\\1795335775899877800-_lucbakr\\command.log",
+      "finished": "2026-11-22T08:23:06.101948+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-call-policy\\evidence\\codex-pm\\self\\1795335775899877800-_lucbakr\\result.json"
+    },
+    {
+      "key": "mw-dp-call-policy",
+      "task": null,
+      "criteria": [
+        "AC-003",
+        "AC-004"
+      ],
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "E:\\gitlite\\Multi-Workers\\.tmp\\dp-sign-83ae3d",
+        "packages/multi-workers/test_pm_default_evidence_signoff.py"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "basis": {
+        "contract_sha256": "7ab7d77727292ccdbdc77b5acadce178df179c84c628fcf79feb844b5ca91880",
+        "source_sha256": "8f4c2af663e33df43b1e297cfb3aca0136723b3efa3f33780e0932ad8b470cec"
+      },
+      "started": "2026-11-22T08:23:48.054185+00:00",
+      "verdict": "stale",
+      "exit_code": 0,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-call-policy\\evidence\\codex-pm\\self\\1795335828053161600-fce1ofzw\\command.log",
+      "finished": "2026-11-22T08:23:53.998313+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-call-policy\\evidence\\codex-pm\\self\\1795335828053161600-fce1ofzw\\result.json"
+    },
+    {
+      "key": "mw-dp-call-policy",
+      "task": null,
+      "criteria": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004"
+      ],
+      "argv": [
+        "powershell.exe",
+        "-NoProfile",
+        "-Command",
+        "Push-Location packages/coding-agent; node ../../node_modules/vitest/dist/cli.js --run test/suite/pm-gate-routing.test.ts test/suite/pm-type-fallback.test.ts; $code=$LASTEXITCODE; Pop-Location; if ($code -ne 0) { exit $code }; python -m pytest -q -p no:cacheprovider --basetemp (Join-Path $env:TEMP \"sign\") packages/multi-workers/test_pm_default_evidence_signoff.py; exit $LASTEXITCODE"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "basis": {
+        "contract_sha256": "ad01788855c72ec8ea197256d54be04c0fd2398543e63eacf02ad9ddfd8dd03d",
+        "source_sha256": "8f4c2af663e33df43b1e297cfb3aca0136723b3efa3f33780e0932ad8b470cec"
+      },
+      "started": "2026-11-22T08:25:08.171698+00:00",
+      "verdict": "passed",
+      "exit_code": 0,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-call-policy\\evidence\\codex-pm\\self\\1795335908169989300-xwerk4wj\\command.log",
+      "finished": "2026-11-22T08:25:20.583300+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-call-policy\\evidence\\codex-pm\\self\\1795335908169989300-xwerk4wj\\result.json"
+    }
+  ],
+  "verified_at": "2026-11-22T08:25:25.914920+00:00"
+}

@@ -14,7 +14,7 @@ import { cardDigest } from "../shared/card-digest.ts";
 import { runProxyCommand } from "../shared/codex-local.ts";
 import { readConcurrencySnapshot, taskQueueStatus } from "../shared/concurrency-view.ts";
 import { runContextCommand } from "../shared/context-extension.ts";
-import type { DecisionPreparation } from "../shared/decide-policy.ts";
+import { claimedPmKey, type DecisionPreparation } from "../shared/decide-policy.ts";
 import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.ts";
 import {
 	CLAIM_GATE_DEFAULT,
@@ -2017,24 +2017,46 @@ export function planDispatchFrontmatter(input: {
 					: "Vision dispatch requires an actual image input.",
 			};
 	}
-	// Confirm the decision before creating the task. The reviewed card owns
-	// its role and write scope, including when the model suggests a different type.
-	const triage = computeDispatchTriage({
-		projectDir: input.cwd,
-		dispatchedType: input.taskType,
-		policy,
-		run: input.triageRun,
-		dp1: {
-			key: input.dp1?.key,
-			taskKey: input.dp1?.taskKey,
-			taskBefore: input.dp1?.taskBefore,
-			preparation: input.dp1?.preparation,
-			imagesRequired: imagesRequested,
-			taskType: input.taskType,
-			sections: input.dp1?.sections,
-		},
-	});
-	if (governed && triage) {
+	// The normal dispatch already has a reviewed role. Supplying decision
+	// preparation keeps the existing, explicitly requested model comparison.
+	const dp1 = input.dp1;
+	const localType =
+		governed &&
+		dp1?.sections?.type === input.taskType &&
+		dp1.preparation === undefined &&
+		Boolean(dp1.key && !process.env.PI_WORKER_TASK && claimedPmKey(input.cwd, dp1.key) === dp1.key) &&
+		buildDp1DecisionMaterial({ ...dp1, taskType: input.taskType, imagesRequired: imagesRequested }).ok;
+	const localSelection = localType
+		? JSON.stringify({ source: "task-card", type: input.taskType, reason: "declared-type", transport_attempts: 0 })
+		: undefined;
+	if (localSelection) headLines.push(`type-selection: ${localSelection}`);
+	const triage: DispatchTriage | null = localSelection
+		? {
+				result: { available: false, confidences: {}, confidence_source: "unknown", latency_ms: 0 },
+				alertOnDisagreement: false,
+				notifyOnUnavailable: false,
+				dispatchedType: input.taskType,
+				disagreement: false,
+				statePath: "skipped",
+				receipt: `[triage] ${localSelection}`,
+				stateTrace: `[TYPE_SELECTION] ${localSelection}`,
+			}
+		: computeDispatchTriage({
+				projectDir: input.cwd,
+				dispatchedType: input.taskType,
+				policy,
+				run: input.triageRun,
+				dp1: {
+					key: input.dp1?.key,
+					taskKey: input.dp1?.taskKey,
+					taskBefore: input.dp1?.taskBefore,
+					preparation: input.dp1?.preparation,
+					imagesRequired: imagesRequested,
+					taskType: input.taskType,
+					sections: input.dp1?.sections,
+				},
+			});
+	if (governed && triage && !localSelection) {
 		if (!triage.result.available || !triage.result.basis) {
 			const reason = triage.result.reason ?? "bad-response";
 			const built =
@@ -3372,7 +3394,7 @@ export function registerWorkerTools(
 		name: "dispatch_worker",
 		label: "dispatch_worker",
 		description:
-			"Dispatch a task to a background worker agent. Creates .agenticdoc/<owner key>/workers/<task_key>/task.md and queues it for execution by the mw worker service. Returns the task key on success. " +
+			"Dispatch a task to a background worker agent. Use the reviewed card's type for routine dispatch. Provide decision_preparation only when explicitly requesting a model comparison. Creates .agenticdoc/<owner key>/workers/<task_key>/task.md and queues it for execution by the mw worker service. Returns the task key on success. " +
 			'Cross-key writes are refused: a key another window holds live is READ-ONLY here — read it with list_tasks { scope: "all" } and take it over with switch_key before writing into it.',
 		parameters: Type.Object({
 			task_key: Type.String({
@@ -3409,7 +3431,7 @@ export function registerWorkerTools(
 			type: Type.Optional(
 				Type.String({
 					description:
-						"Task type: 'coding' | 'review' | 'research' | 'rag-research' | 'vision' | 'decide_prepare'. Selects the dispatch.yml role (and the worker tool allowlist). Use 'vision' for tasks that must read image files (screenshots/mockups). Default: derived from cli (pi -> coding, claude -> review, codex -> codex).",
+						"Task type: 'coding' | 'review' | 'research' | 'rag-research' | 'vision' | 'decide_prepare'. Selects the dispatch.yml role (and the worker tool allowlist). Use 'vision' for tasks that must read image files (screenshots/mockups). Default: the task card's type, then the CLI default if undeclared.",
 				}),
 			),
 			images: Type.Optional(
@@ -3485,10 +3507,13 @@ export function registerWorkerTools(
 				};
 			}
 
-			// Task type is declarable (mw-dispatch-role-escape): without it a pi
-			// worker could never reach the review/research dispatch.yml role or tool
-			// allowlist, which is what forced hand-written model overrides.
-			const typeResolution = resolveDispatchType(cli, type ?? "");
+			// Without an explicit type, read the same validated card used by the
+			// dispatch gate before running the type-dependent guards.
+			const cardInput = { cardPath: card_path ?? "", ownerKey, agenticdocRoot, projectDir };
+			const typedCard = type?.trim() ? undefined : readDispatchCard(cardInput);
+			if (typedCard && !typedCard.ok)
+				return { content: [{ type: "text", text: dispatchCardRefusal(typedCard) }], details: undefined };
+			const typeResolution = resolveDispatchType(cli, type?.trim() || typedCard?.sections.type || "");
 			if (!typeResolution.ok) {
 				return { content: [{ type: "text", text: typeResolution.message }], details: undefined };
 			}
@@ -3574,12 +3599,7 @@ export function registerWorkerTools(
 			// carry the §1 envelope + §1.2 type extras BEFORE any task.md is written
 			// or a queue row lands. Placed after the earlier guards so their own
 			// refusals stay byte-identical; still decisively before mkdir/queue.
-			const cardGate = readDispatchCard({
-				cardPath: card_path ?? "",
-				ownerKey,
-				agenticdocRoot,
-				projectDir,
-			});
+			const cardGate = typedCard ?? readDispatchCard(cardInput);
 			if (!cardGate.ok) {
 				return { content: [{ type: "text", text: dispatchCardRefusal(cardGate) }], details: undefined };
 			}
@@ -4162,13 +4182,6 @@ export function registerWorkerCommands(
 				return;
 			}
 
-			// Task type: declarable, else the legacy cli-derived mapping.
-			const typeResolution = resolveDispatchType(cli, typeArg);
-			if (!typeResolution.ok) {
-				ctx.ui.notify(typeResolution.message, "warning");
-				return;
-			}
-			const typeField = typeResolution.type;
 			const provider = cli === "pi" ? "timi" : "";
 
 			// RAG dispatcher gate (VC-003): refuse before creating any task.md.
@@ -4194,6 +4207,18 @@ export function registerWorkerCommands(
 				ctx.ui.notify(crossKeyRefusal, "warning");
 				return;
 			}
+			const cardInput = { cardPath: cardArg, ownerKey, agenticdocRoot, projectDir };
+			const typedCard = typeArg.trim() ? undefined : readDispatchCard(cardInput);
+			if (typedCard && !typedCard.ok) {
+				ctx.ui.notify(dispatchCardRefusal(typedCard), "warning");
+				return;
+			}
+			const typeResolution = resolveDispatchType(cli, typeArg.trim() || typedCard?.sections.type || "");
+			if (!typeResolution.ok) {
+				ctx.ui.notify(typeResolution.message, "warning");
+				return;
+			}
+			const typeField = typeResolution.type;
 			// AC-005a (T-02): the SAME write-intent judgement the dispatch_worker
 			// tool runs — a writeless role without bash cannot satisfy an external
 			// write order, so it is refused before mkdir/task.md/queue. A shell role
@@ -4232,12 +4257,7 @@ export function registerWorkerCommands(
 			// G-1 tool-layer envelope gate (T-02): same decision function as the
 			// dispatch_worker tool — an incomplete/missing card refuses before
 			// mkdir/task.md/queue with zero side effects.
-			const cardGate = readDispatchCard({
-				cardPath: cardArg,
-				ownerKey,
-				agenticdocRoot,
-				projectDir,
-			});
+			const cardGate = typedCard ?? readDispatchCard(cardInput);
 			if (!cardGate.ok) {
 				ctx.ui.notify(dispatchCardRefusal(cardGate), "warning");
 				return;

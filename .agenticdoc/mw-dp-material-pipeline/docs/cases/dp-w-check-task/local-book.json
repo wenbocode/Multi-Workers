@@ -1,0 +1,128 @@
+{
+  "schema": "dp-reference-v0.5-draft",
+  "sample_kind": "synthetic-reference",
+  "dp": "dp-w-check-task",
+  "role_scope": "worker",
+  "binding": {
+    "owner_ref": null,
+    "matter_ref": null,
+    "budget_ref": null,
+    "status": "合成参考，无生产身份"
+  },
+  "sources": [
+    {
+      "id": "S1",
+      "label": "自身任务",
+      "path": "sources/S1.txt",
+      "sha256": "bb7d3a39cbbebcacb6fa6b86bbb4932b99614686bd7ced49376e044d27be673b",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    },
+    {
+      "id": "S2",
+      "label": "原host读范围与预算",
+      "path": "sources/S2.txt",
+      "sha256": "80fae9c01b9a734c1f6bb5b9cefccf3c9ace06da2db6fca93b09d01fcf89b8fc",
+      "version": "synthetic-v1",
+      "kind": "synthetic-original"
+    }
+  ],
+  "field_trace": {
+    "file": "field-trace.json",
+    "note": "真实原件与字段变换留本地；本例源正文见sources/。"
+  },
+  "preparation": {
+    "prepared_at": "由实际准备者/host落盘",
+    "basis_catalog": "见pair-map.json",
+    "material_refs": "每个选项关联本次材料",
+    "applies_to": "本地校验，不能据此裁剪固定候选",
+    "producer": "原PM/实际Worker，或受托prepare Worker起草后由原主体工具吸收"
+  },
+  "pair_map": {
+    "file": "pair-map.json"
+  },
+  "host_exclusions": [],
+  "execution_plan": {
+    "status": "未制定；选择方向后由原主体按授权准备",
+    "send": false
+  },
+  "expected": {
+    "choices": [
+      "investigate"
+    ],
+    "status": "作者参考预期，禁止发给模型"
+  },
+  "actual_capture": {
+    "request": "not-sent-v0.5",
+    "response": "not-observed-v0.5"
+  },
+  "post_checks": "只由该Worker提交；investigate核指定read、一次边界和原累计预算，continue不刷新deadline，terminate只结束本run并交付真实状态。",
+  "freeze": {
+    "file": "payload.json",
+    "sha256": "78b07296bbb25852ade5ade79f3738c72479818a4af237048702e7e379681ef4",
+    "bytes": 3700
+  },
+  "desc_preparation": {
+    "sentences": [
+      "当前Worker要验证非ASCII字段解析，ASCII样本已经通过。",
+      "偏差是输入编码约定仍未知，不能把非ASCII验证写成完成。",
+      "本run的host记录表明还剩8分钟和一次最多1024字节的合法读取。",
+      "已授权encoding-note可以提供编码说明，但正文尚未读取。",
+      "需要判断继续、一次有界补证或真实收尾本run，不能刷新原预算。"
+    ],
+    "sentence_count": 5,
+    "max_sentences": 10,
+    "max_tokens": 1000,
+    "estimated_tokens": 126,
+    "token_count": null,
+    "meter": "existing-estimator-precheck; target-model exact count not available",
+    "source_note": "从v0.3合成来源归纳；QG/sign增加显式同范围fixture，非当前业务事实",
+    "source_pointers": [
+      "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-w-check-task\\reference.json"
+    ],
+    "sentence_sources": [
+      {
+        "sentence": 1,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-w-check-task\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 2,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-w-check-task\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 3,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-w-check-task\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 4,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-w-check-task\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      },
+      {
+        "sentence": 5,
+        "sources": [
+          "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\cases\\dp-w-check-task\\reference.json"
+        ],
+        "kind": "synthetic-sourced-example"
+      }
+    ],
+    "claims": "目标/偏差/事件/证据与未知，不写推荐答案"
+  },
+  "definition_sources": {
+    "AC": "已确认验收正文；本例来自v0.4合成scope",
+    "VC": "项目设计Verification Contract；本例来自v0.4合成review矩阵",
+    "other_refs": "本次来源中的发现/剩余工作/入口职责",
+    "registry": "仅使用当前请求出现的术语，未知项拒绝准备"
+  }
+}

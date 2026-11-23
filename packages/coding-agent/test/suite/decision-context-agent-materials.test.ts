@@ -222,6 +222,7 @@ function decideRunner(answer = '{"handling":{"value":"c2","confidence":0.9}}'): 
 			status: 0,
 			stdout: JSON.stringify({
 				available: true,
+				file_evidence: [],
 				mode: "auto",
 				acted: false,
 				confidence_source: "api",
@@ -279,6 +280,7 @@ function signRunner(conclusion: "finalize" | "continue" | "user-confirm" = "fina
 			status: 0,
 			stdout: JSON.stringify({
 				dp: "dp-sign-key",
+				file_evidence: [],
 				key: request.key,
 				logical_id: meta.logical_id,
 				decision_id: `dp-sign-key:${meta.logical_id}`,
@@ -1002,6 +1004,7 @@ describe("worker dp3 producer (worker-mode, AC-005/AC-006)", () => {
 				status: 0,
 				stdout: JSON.stringify({
 					available: true,
+					file_evidence: [],
 					mode: "auto",
 					acted: false,
 					confidence_source: "api",
@@ -1108,7 +1111,7 @@ function writeStubMw(dir: string): { stubPath: string; seenDir: string } {
 			"    assert '--stdin' in args, args",
 			"    assert 'material' in payload and 'meta' in payload, payload",
 			"    assert 'meta' not in payload['material'], payload",
-			"    print(json.dumps({'available': True, 'mode': 'auto', 'acted': False,",
+			"    print(json.dumps({'available': True, 'file_evidence': [], 'mode': 'auto', 'acted': False,",
 			"                      'confidence_source': 'api', 'latency_ms': 3,",
 			"                      'decision_id': 'dp-auto:'+payload['meta']['logical_id'],",
 			"                      'answers': {'handling': {'value': 'c3', 'confidence': 0.8}, 'basis_id': {'value': 'reason'}}}))",
@@ -1312,6 +1315,7 @@ it.each([
 			stderr: "",
 			stdout: JSON.stringify({
 				available: true,
+				file_evidence: [],
 				decision_id: `${request.dp}:${meta.logical_id}`,
 				mode: "suggest",
 				acted: false,

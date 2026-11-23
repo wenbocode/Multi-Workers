@@ -59,6 +59,7 @@ import uuid
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import mw_common
+import decision_prepare
 import replan_tasks
 import review_observation
 import tree_watch
@@ -2954,25 +2955,41 @@ def _spawn(
         target_config = _worker_target_config(project_dir)
         _check_config_tear(entry, target_config)
         check_rag_tear(entry, project_dir)
-        if model_override is not None:
+        task_path = pathlib.Path(entry["task_path"])
+        task_envelope = task_path.read_text(encoding="utf-8", errors="replace")
+        prepare_profile = mw_common.read_task_header_scalar(task_envelope, "prepare_profile")
+        if prepare_profile is not None:
+            model_value = decision_prepare.spawn_model(project_dir, task_path, task_envelope)
+            if model_override is not None:
+                raise ValueError("restricted preparation cannot change its pinned model or restart its allocation")
+            model_source = "prepare-card"
+        elif model_override is not None:
             model_value, model_source = model_override, "fallback"
         else:
             model_value, model_source = _resolve_entry_model(entry, project_dir)
         effective = _effective_entry(entry, model_value)
+        if prepare_profile is not None:
+            provider = effective.get("provider")
+            credential = config.get("providers", {}).get(provider, {}).get("credential", provider)
+            if effective["cli"] != "pi" or provider not in decision_prepare.PREPARE_PROVIDERS or credential != provider:
+                raise ValueError("restricted preparation requires a separate direct model credential")
         # RAG static-config strip set (T-07/D-010): declared token env NAMES
         # are removed by _build_env; the enabled subset is re-added by the
         # post-step so none of _build_env's six return paths needs RAG code.
         rag_config, _rag_error = mw_common.load_rag_config(project_dir)
         env = _build_env(effective, config, rag_config)
-        inject_rag_env(env, effective, project_dir)
-        inject_fallback_env(
-            env,
-            effective,
-            project_dir,
-            main_value=main_model or _main_model_value(effective, model_value),
-            index=fallback_index,
-            tried=tried_models,
-        )
+        if prepare_profile is None:
+            inject_rag_env(env, effective, project_dir)
+            inject_fallback_env(
+                env,
+                effective,
+                project_dir,
+                main_value=main_model or _main_model_value(effective, model_value),
+                index=fallback_index,
+                tried=tried_models,
+            )
+        else:
+            env.pop("TIMI_API_KEY", None)
         session_id = _usage_session_id(effective)
         is_pi = effective["cli"].lower() == "pi"
         thinking, thinking_source = (
@@ -2994,7 +3011,6 @@ def _spawn(
         override_note = _model_override_note(entry, project_dir, model_value, model_source)
         if override_note:
             print(override_note, flush=True)
-        task_envelope = pathlib.Path(entry["task_path"]).read_text(encoding="utf-8", errors="replace")
         if (mw_common.read_task_header_scalar(task_envelope, "parent_worker_run")
                 or mw_common.read_task_header_scalar(task_envelope, "deadline_successor") == "yes"):
             reason = autopilot_dispatch.dispatch_parent_refusal(

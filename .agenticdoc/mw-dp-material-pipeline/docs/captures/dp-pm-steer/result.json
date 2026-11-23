@@ -1,0 +1,63 @@
+{
+  "dp": "dp-pm-steer",
+  "version": "v0.5-draft",
+  "started_utc": "2026-11-18T07:44:12.960128+00:00",
+  "finished_utc": "2026-11-18T07:44:14.343567+00:00",
+  "method": "POST",
+  "endpoint": "http://api.timiai.woa.com/ai_api_manage/llmproxy/v1/decisions",
+  "model": "jev-latest",
+  "attempts": 1,
+  "http_status": 200,
+  "latency_ms": 1375,
+  "failure": null,
+  "capture": "complete",
+  "request_sha256": "39c9b2d52b4fc8f2199ee2456c2830b12af9e8df31e5070ddc066ccb43547cb6",
+  "request_bytes": 3723,
+  "response_sha256": "a8c3d77c239b0ecc300c4f70bc5d9675befc99b85ab66381fa761d5719cadcd2",
+  "response_bytes": 353,
+  "response_content_type": "application/json",
+  "usage": {
+    "input_tokens": 1692,
+    "output_tokens": 57,
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "business_effects": false,
+  "additional_transport_attempts": 1,
+  "reused_identical_initial_capture": false,
+  "official_decode": {
+    "valid": true,
+    "error": "",
+    "answers": {
+      "decision_selection": {
+        "value": "splitA",
+        "confidence": 0.92,
+        "probabilities": {
+          "directA": 0.06,
+          "escalateA": 0.0,
+          "narrowA": 0.0,
+          "splitA": 0.94
+        }
+      }
+    }
+  },
+  "local_decode": {
+    "valid": true,
+    "wire_id": "splitA",
+    "choice": "split",
+    "basis_id": "splitA-basis",
+    "finding_ids": [],
+    "remaining_ids": [],
+    "confidence": 0.92,
+    "probabilities": {
+      "directA": 0.06,
+      "escalateA": 0.0,
+      "narrowA": 0.0,
+      "splitA": 0.94
+    },
+    "expected_match": true,
+    "confidence_policy": "not-evaluated-for-business",
+    "executed": false
+  },
+  "host_checks": "not-executed: synthetic reference, no real business owner/authorization"
+}

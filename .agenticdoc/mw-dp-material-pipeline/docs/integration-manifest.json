@@ -1,0 +1,167 @@
+{
+  "kind": "design-validation-integration",
+  "new_API_calls": 0,
+  "dp_auto_current_case": "cases/dp-auto-current",
+  "dp_auto_baseline_case": "cases/dp-auto",
+  "current_capture": {
+    "dp-w-type": "captures/dp-w-type",
+    "dp-pm-steer": "captures/dp-pm-steer",
+    "dp-w-check-task": "captures/dp-w-check-task",
+    "dp-QG": "captures/dp-QG",
+    "dp-gate-approve": "captures/dp-gate-approve",
+    "dp-sign-key": "captures/dp-sign-key",
+    "dp-auto": "captures/dp-auto-current",
+    "dp-route": "captures/dp-route"
+  },
+  "raw_provenance": [
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-w-type/request.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-w-type/request.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-w-type/response.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-w-type/response.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-w-type/reference-snapshot.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-w-type/reference-snapshot.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-w-type/result.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-w-type/result.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-pm-steer/request.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-pm-steer/request.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-pm-steer/response.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-pm-steer/response.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-pm-steer/reference-snapshot.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-pm-steer/reference-snapshot.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-pm-steer/result.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-pm-steer/result.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-w-check-task/request.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-w-check-task/request.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-w-check-task/response.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-w-check-task/response.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-w-check-task/reference-snapshot.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-w-check-task/reference-snapshot.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-w-check-task/result.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-w-check-task/result.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-QG/request.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-QG/request.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-QG/response.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-QG/response.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-QG/reference-snapshot.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-QG/reference-snapshot.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-QG/result.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-QG/result.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-gate-approve/request.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-gate-approve/request.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-gate-approve/response.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-gate-approve/response.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-gate-approve/reference-snapshot.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-gate-approve/reference-snapshot.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-gate-approve/result.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-gate-approve/result.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-sign-key/request.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-sign-key/request.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-sign-key/response.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-sign-key/response.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-sign-key/reference-snapshot.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-sign-key/reference-snapshot.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-sign-key/result.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-sign-key/result.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-auto/request.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-auto-baseline/request.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-auto/response.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-auto-baseline/response.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-auto/reference-snapshot.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-auto-baseline/reference-snapshot.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-auto/result.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-auto-baseline/result.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-route/request.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-route/request.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-route/response.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-route/response.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-route/reference-snapshot.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-route/reference-snapshot.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-terms-jev/evidence/live-final/dp-route/result.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-route/result.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-auto-discrimination/evidence/live/dp-auto/preflight.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-auto-current/preflight.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-auto-discrimination/evidence/live/dp-auto/reference-snapshot.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-auto-current/reference-snapshot.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-auto-discrimination/evidence/live/dp-auto/request.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-auto-current/request.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-auto-discrimination/evidence/live/dp-auto/response.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-auto-current/response.json"
+    },
+    {
+      "source": ".agenticdoc/mw-dp-auto-discrimination/evidence/live/dp-auto/result.json",
+      "destination": ".agenticdoc/mw-dp-runtime-reference/v05/captures/dp-auto-current/result.json"
+    }
+  ],
+  "production_prepare_status": "proposal-not-implemented"
+}

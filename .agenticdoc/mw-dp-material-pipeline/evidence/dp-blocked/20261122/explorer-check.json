@@ -1,0 +1,13 @@
+{
+  "total": 193,
+  "cause_groups": 13,
+  "ueperformanceflow": 45,
+  "ueperf_qg": 4,
+  "ueperf_qg_field_limit": 2,
+  "ueperf_qg_basis_choice": 2,
+  "unresolved_file_receipts": 42,
+  "event_link": true,
+  "id_search": true,
+  "mobile_width": 390,
+  "errors": []
+}

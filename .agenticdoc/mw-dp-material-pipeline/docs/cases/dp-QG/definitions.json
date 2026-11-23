@@ -1,0 +1,82 @@
+{
+  "references": {
+    "AC-001": {
+      "kind": "acceptance_criterion",
+      "scope": "导入事务适配器",
+      "content": "拒绝重复键且失败时不写入"
+    },
+    "VC-001": {
+      "kind": "verification_contract",
+      "scope": "导入事务适配器",
+      "ac_ids": [
+        "AC-001"
+      ],
+      "content": "重复键拒绝后检查写入数",
+      "expected_result": "拒绝重复键且失败时不写入"
+    },
+    "AC-002": {
+      "kind": "acceptance_criterion",
+      "scope": "导入事务适配器",
+      "content": "并发导入保持规定顺序"
+    },
+    "VC-002": {
+      "kind": "verification_contract",
+      "scope": "导入事务适配器",
+      "ac_ids": [
+        "AC-002"
+      ],
+      "content": "并发顺序检查",
+      "expected_result": "并发导入保持规定顺序"
+    },
+    "F1": {
+      "kind": "review_finding",
+      "scope": "导入事务适配器",
+      "ac_ids": [
+        "AC-001"
+      ],
+      "content": "重复键拒绝仍有写入"
+    },
+    "F2": {
+      "kind": "review_finding",
+      "scope": "导入事务适配器",
+      "ac_ids": [
+        "AC-002"
+      ],
+      "content": "并发顺序未验证"
+    }
+  },
+  "terminology": {
+    "AC": {
+      "full_name": "Acceptance Criterion / Acceptance Criteria",
+      "meaning": "验收标准：已确认的应达到的业务结果；具体编号的完整正文在references中。"
+    },
+    "ID": {
+      "full_name": "Identifier",
+      "meaning": "标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。"
+    },
+    "QG": {
+      "full_name": "Quality Gate",
+      "meaning": "质量门禁/正式质量审核：按已确认验收标准、验证结果和独立审查形成pass/fix/reopen业务结论；不等于模型置信度。"
+    },
+    "VC": {
+      "full_name": "Verification Contract",
+      "meaning": "验证合同/验证项：本项目设计文档规定如何验证关联验收标准、应观察什么结果；具体编号定义在references中。"
+    },
+    "desc": {
+      "full_name": "description",
+      "meaning": "本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+    },
+    "review": {
+      "full_name": "independent review",
+      "meaning": "独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+    },
+    "独审": {
+      "full_name": "独立审查",
+      "meaning": "由与实现/准备角色独立的审查来源核对当前标准、实际证据和未覆盖面，不能以作者自评替代。"
+    },
+    "补证": {
+      "full_name": "补充证据",
+      "meaning": "通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+    }
+  }
+}

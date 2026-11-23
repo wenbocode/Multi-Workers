@@ -1,0 +1,20 @@
+{
+  "sample_kind": "synthetic-QG-fixture-not-a-production-verdict",
+  "artifact": "稳定导出",
+  "version": "demo-export-v04",
+  "verdict": "fix",
+  "open_ac_ids": [
+    "AC-002"
+  ],
+  "open_items": [
+    "中断不留半成品尚未验证"
+  ],
+  "review_scope": "特殊字符往返与中断恢复两项当前交付标准",
+  "freshness": "与本sign示例交付对象和当前版本一致",
+  "note": "不引用导入适配器QG，不把v0.3 jev响应伪装成此处QG产品",
+  "criteria_version": "demo-export-criteria-v04",
+  "scope_ac_ids": [
+    "AC-001",
+    "AC-002"
+  ]
+}

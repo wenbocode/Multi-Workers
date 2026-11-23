@@ -1,0 +1,90 @@
+{
+  "AC": {
+    "full_name": "Acceptance Criterion / Acceptance Criteria",
+    "meaning": "验收标准：已确认的应达到的业务结果；具体编号的完整正文在references中。"
+  },
+  "VC": {
+    "full_name": "Verification Contract",
+    "meaning": "验证合同/验证项：本项目设计文档规定如何验证关联验收标准、应观察什么结果；具体编号定义在references中。"
+  },
+  "QG": {
+    "full_name": "Quality Gate",
+    "meaning": "质量门禁/正式质量审核：按已确认验收标准、验证结果和独立审查形成pass/fix/reopen业务结论；不等于模型置信度。"
+  },
+  "PM": {
+    "full_name": "Project Manager agent",
+    "meaning": "管理当前项目事项、组织任务并回收证据的项目管理Agent；不能冒充实际执行者或独立审查者。"
+  },
+  "DP": {
+    "full_name": "Decision Point",
+    "meaning": "一个职责明确的决策入口；路由只选择入口，不批准入口对应动作。"
+  },
+  "ID": {
+    "full_name": "Identifier",
+    "meaning": "标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。"
+  },
+  "CSV": {
+    "full_name": "Comma-Separated Values",
+    "meaning": "逗号分隔值文本格式；本例需正确转义逗号和双引号并保持往返解析一致。"
+  },
+  "ASCII": {
+    "full_name": "American Standard Code for Information Interchange",
+    "meaning": "美国信息交换标准代码字符集；本例ASCII样本通过不能证明非ASCII字段可按真实编码正确解析。"
+  },
+  "API": {
+    "full_name": "Application Programming Interface",
+    "meaning": "应用程序接口；接口调用成功不等于对应业务要求已满足。"
+  },
+  "HTTP": {
+    "full_name": "Hypertext Transfer Protocol",
+    "meaning": "超文本传输协议；HTTP状态只说明传输/接口状态，不代替业务验收。"
+  },
+  "JSON": {
+    "full_name": "JavaScript Object Notation",
+    "meaning": "结构化数据交换格式；本请求的字段和引用必须能在当前body内解释。"
+  },
+  "Worker": {
+    "full_name": "Worker agent",
+    "meaning": "执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。"
+  },
+  "host": {
+    "full_name": "host runtime",
+    "meaning": "执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。"
+  },
+  "run": {
+    "full_name": "task execution run",
+    "meaning": "一次具体任务执行；结束本run不等于取消整个目标或项目事项。"
+  },
+  "key": {
+    "full_name": "project work key",
+    "meaning": "项目工作项标识；本例讨论整个key交付时才属于签收，不能仅凭标识推测认领者。"
+  },
+  "gate": {
+    "full_name": "execution gate",
+    "meaning": "已有执行准入门，核本次具体动作是否满足既有条件和权限。"
+  },
+  "review": {
+    "full_name": "independent review",
+    "meaning": "独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+  },
+  "desc": {
+    "full_name": "description",
+    "meaning": "本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+  },
+  "独审": {
+    "full_name": "独立审查",
+    "meaning": "由与实现/准备角色独立的审查来源核对当前标准、实际证据和未覆盖面，不能以作者自评替代。"
+  },
+  "直执": {
+    "full_name": "直接执行",
+    "meaning": "由当前项目管理者在原权限与剩余预算内直接完成工作，必要独立复核仍保留。"
+  },
+  "补证": {
+    "full_name": "补充证据",
+    "meaning": "通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+  },
+  "未测": {
+    "full_name": "尚未执行验证",
+    "meaning": "对应验证尚未运行，不表示通过。"
+  }
+}

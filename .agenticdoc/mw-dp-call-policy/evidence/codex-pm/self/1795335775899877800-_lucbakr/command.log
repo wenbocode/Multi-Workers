@@ -1,0 +1,10 @@
+
+ RUN  v4.1.9 E:/gitlite/Multi-Workers/packages/coding-agent
+
+··············
+
+ Test Files  2 passed (2)
+      Tests  14 passed (14)
+   Start at  16:22:57
+   Duration  3.97s (transform 3.75s, setup 0ms, import 6.01s, tests 1.09s, environment 0ms)
+

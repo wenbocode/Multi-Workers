@@ -1,0 +1,13 @@
+{
+  "references": {},
+  "terminology": {
+    "ID": {
+      "full_name": "Identifier",
+      "meaning": "标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。"
+    },
+    "desc": {
+      "full_name": "description",
+      "meaning": "本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+    }
+  }
+}

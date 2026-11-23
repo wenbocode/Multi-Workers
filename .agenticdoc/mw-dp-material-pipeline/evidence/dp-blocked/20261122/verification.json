@@ -1,0 +1,15 @@
+{
+  "result": "pass",
+  "scope": "planning, historical receipt grouping and chart verification",
+  "records": 193,
+  "cause_groups": 13,
+  "typical_cases": 10,
+  "future_v05_acceptance_rows": 36,
+  "spec_sha256": "de35aceec1f74f7ea7745c1708e77989328635d3a6f2fb881132b852a9a64e37",
+  "existing_v05_assets_unchanged": true,
+  "links_checked": 95,
+  "python_pass": 101,
+  "python_skip": 2,
+  "ts_pass": 31,
+  "product_implementation": "not-started"
+}

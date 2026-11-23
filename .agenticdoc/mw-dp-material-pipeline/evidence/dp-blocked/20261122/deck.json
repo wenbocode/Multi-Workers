@@ -1,0 +1,104 @@
+{
+  "title": "DP 阻塞分布与 v0.5 验收对照",
+  "output": "DP阻塞复盘_动态演示.html",
+  "sources": [
+    {
+      "id": "stats",
+      "path": "blocked-distribution.md"
+    },
+    {
+      "id": "cases",
+      "path": "v05-blocked-comparison.md"
+    }
+  ],
+  "overview": {
+    "position": 1,
+    "title": "阅读导航"
+  },
+  "pages": [
+    {
+      "id": "explore",
+      "title": "先看分布",
+      "chapter": "分布与明细",
+      "refs": [
+        {
+          "source": "stats",
+          "heading": "先看分布",
+          "children": true
+        }
+      ]
+    },
+    {
+      "id": "project-dp",
+      "title": "项目与 DP",
+      "chapter": "分布与明细",
+      "refs": [
+        {
+          "source": "stats",
+          "heading": "项目与 DP",
+          "children": true
+        }
+      ]
+    },
+    {
+      "id": "reason-project",
+      "title": "原因与项目",
+      "chapter": "分布与明细",
+      "refs": [
+        {
+          "source": "stats",
+          "heading": "原因与项目",
+          "children": true
+        }
+      ]
+    },
+    {
+      "id": "reason-dp",
+      "title": "原因与 DP",
+      "chapter": "分布与明细",
+      "refs": [
+        {
+          "source": "stats",
+          "heading": "原因与 DP",
+          "children": true
+        }
+      ]
+    },
+    {
+      "id": "method",
+      "title": "分类口径",
+      "chapter": "分布与明细",
+      "refs": [
+        {
+          "source": "stats",
+          "heading": "分类口径",
+          "children": true
+        }
+      ]
+    },
+    {
+      "id": "cases",
+      "title": "典型回执与 v0.5 四段",
+      "chapter": "案例与开发差额",
+      "refs": [
+        {
+          "source": "cases",
+          "heading": "典型回执与 v0.5 四段",
+          "children": true
+        }
+      ]
+    },
+    {
+      "id": "coverage",
+      "title": "当前代码覆盖与任务更新",
+      "chapter": "案例与开发差额",
+      "refs": [
+        {
+          "source": "cases",
+          "heading": "当前代码覆盖与任务更新",
+          "children": true
+        }
+      ]
+    }
+  ]
+}

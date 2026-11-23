@@ -1,6 +1,6 @@
 # mw-dp-material-pipeline
 
-状态：仅规划，未实施。用户于2026-11-19要求新建key、复制当前设计，再编写spec/design和规范任务；本轮没有代码改动、派工、产品测试或模型请求。
+本 key 已结案，认领已释放。正式验收及回执见 [交付记录](achieved.md) 和 [v0.5 九例四段对账](evidence/acceptance/ac003-local-budget/v05-four-stage-comparison.md)。以下保留 2026-11-19 规划时的文件索引与范围决定。
 
 | 文档 | 用途 |
 | --- | --- |
@@ -26,4 +26,4 @@ docs复制了v05中150个文件、原字节和必要相对链接，未复制大�
 
 v3纠正范围：现有v0.5记录已组成四段范本，T10负责未来接入离线校验；T11新真实采集要求撤回，10个待执行任务+1撤回记录，T09不再等live采集。前三段实录、第四段当前PM参考均有明确来源，不伪造历史执行。
 
-开发范本：[八DP四段全记录](docs/reference-records/index.md)；[现有v0.5图表](../mw-dp-runtime-reference/v05/DP引用与术语_动态演示.html)按DP查看四个页签。
+开发范本：[八DP四段全记录](docs/reference-records/index.md)；[v0.5 图表](docs/DP引用与术语_动态演示.html)按 DP 查看。

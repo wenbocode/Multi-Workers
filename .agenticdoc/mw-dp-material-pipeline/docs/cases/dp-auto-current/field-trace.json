@@ -1,0 +1,689 @@
+[
+  {
+    "path": "/model",
+    "send": true,
+    "sources": [
+      "existing official timi protocol"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/scenario",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/desc",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/question",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/decision_scope/unit",
+    "send": true,
+    "sources": [
+      "current_goal"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/decision_scope/source",
+    "send": true,
+    "sources": [
+      "current_goal"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/objective/status",
+    "send": true,
+    "sources": [
+      "current_goal"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/objective/source",
+    "send": true,
+    "sources": [
+      "current_goal"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/objective/success",
+    "send": true,
+    "sources": [
+      "current_goal"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/objective/priorities/0",
+    "send": true,
+    "sources": [
+      "current_goal"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/objective/priorities/1",
+    "send": true,
+    "sources": [
+      "current_goal"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/objective/priorities/2",
+    "send": true,
+    "sources": [
+      "current_goal"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/evidence/0/source",
+    "send": true,
+    "sources": [
+      "timeout_record"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/evidence/0/kind",
+    "send": true,
+    "sources": [
+      "timeout_record"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/evidence/0/timeout_stage",
+    "send": true,
+    "sources": [
+      "timeout_record"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/evidence/0/failure_count",
+    "send": true,
+    "sources": [
+      "timeout_record"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/evidence/0/implication",
+    "send": true,
+    "sources": [
+      "timeout_record"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/evidence/1/source",
+    "send": true,
+    "sources": [
+      "health_contract"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/evidence/1/kind",
+    "send": true,
+    "sources": [
+      "health_contract"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/evidence/1/scope",
+    "send": true,
+    "sources": [
+      "health_contract"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/evidence/1/sampling_period_seconds",
+    "send": true,
+    "sources": [
+      "health_contract"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/evidence/1/freshness",
+    "send": true,
+    "sources": [
+      "health_contract"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/evidence/1/implication",
+    "send": true,
+    "sources": [
+      "health_contract"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/0/unknown",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/0/affects/0",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/0/affects/1",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/0/evidence_needed",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/0/available_before_choice",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/1/unknown",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/1/affects/0",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/1/affects/1",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/1/evidence_needed",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/1/available_before_choice",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/2/unknown",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/2/affects/0",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/2/affects/1",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/2/evidence_needed",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/unknowns/2/available_before_choice",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/source",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/remaining_seconds_at_preparation",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/report_reserve_seconds",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/max_status_retries",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/max_health_reads",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/retry_deadline_seconds",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/health_deadline_seconds",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/stop_conditions/0",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/stop_conditions/1",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/stop_conditions/2",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/stop_conditions/3",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/stop_conditions/4",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/material/constraints/clock_rule",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/references/current_goal/kind",
+    "send": true,
+    "sources": [
+      "current_goal"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/references/current_goal/scope",
+    "send": true,
+    "sources": [
+      "current_goal"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/references/current_goal/content",
+    "send": true,
+    "sources": [
+      "current_goal"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/references/timeout_record/kind",
+    "send": true,
+    "sources": [
+      "timeout_record"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/references/timeout_record/scope",
+    "send": true,
+    "sources": [
+      "timeout_record"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/references/timeout_record/content",
+    "send": true,
+    "sources": [
+      "timeout_record"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/references/health_contract/kind",
+    "send": true,
+    "sources": [
+      "health_contract"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/references/health_contract/scope",
+    "send": true,
+    "sources": [
+      "health_contract"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/references/health_contract/content",
+    "send": true,
+    "sources": [
+      "health_contract"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/references/limits/kind",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/references/limits/scope",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/references/limits/content",
+    "send": true,
+    "sources": [
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/terminology/ID/full_name",
+    "send": true,
+    "sources": [
+      "v05 terminology registry"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/terminology/ID/meaning",
+    "send": true,
+    "sources": [
+      "v05 terminology registry"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/terminology/desc/full_name",
+    "send": true,
+    "sources": [
+      "v05 terminology registry"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/terminology/desc/meaning",
+    "send": true,
+    "sources": [
+      "v05 terminology registry"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/terminology/host/full_name",
+    "send": true,
+    "sources": [
+      "v05 terminology registry"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/terminology/host/meaning",
+    "send": true,
+    "sources": [
+      "v05 terminology registry"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/enum_meanings/explicit",
+    "send": true,
+    "sources": [
+      "v06 explicit schema meanings"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/enum_meanings/synthetic-observation",
+    "send": true,
+    "sources": [
+      "v06 explicit schema meanings"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/enum_meanings/synthetic-source-contract",
+    "send": true,
+    "sources": [
+      "v06 explicit schema meanings"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/enum_meanings/synthetic-accepted-premise",
+    "send": true,
+    "sources": [
+      "v06 explicit schema meanings"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/state/enum_meanings/synthetic-budget-premise",
+    "send": true,
+    "sources": [
+      "v06 explicit schema meanings"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/questions/decision_selection/type",
+    "send": true,
+    "sources": [
+      "existing official timi protocol"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/questions/decision_selection/instructions",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/questions/decision_selection/criteria/retryA",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  },
+  {
+    "path": "/questions/decision_selection/criteria/diagnoseA",
+    "send": true,
+    "sources": [
+      "current_goal",
+      "timeout_record",
+      "health_contract",
+      "limits"
+    ],
+    "transformation": "结构化提取或有界路径编制，非运行时自动抽取"
+  }
+]

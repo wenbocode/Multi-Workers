@@ -1,0 +1,63 @@
+{
+  "dp": "dp-w-type",
+  "version": "v0.5-draft",
+  "started_utc": "2026-11-18T07:40:39.981547+00:00",
+  "finished_utc": "2026-11-18T07:40:41.353468+00:00",
+  "method": "POST",
+  "endpoint": "http://api.timiai.woa.com/ai_api_manage/llmproxy/v1/decisions",
+  "model": "jev-latest",
+  "attempts": 1,
+  "http_status": 200,
+  "latency_ms": 1375,
+  "failure": null,
+  "capture": "complete",
+  "request_sha256": "30fe499cefea039fff9756ad73bd0ae5982ef437c64a16adbfd3a28c52536cd5",
+  "request_bytes": 2795,
+  "response_sha256": "813a38c31a5f083214444f6ef6a74dae262f2bb30fd70edeb666e9e43e5c15f7",
+  "response_bytes": 352,
+  "response_content_type": "application/json",
+  "usage": {
+    "input_tokens": 1308,
+    "output_tokens": 56,
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "business_effects": false,
+  "official_decode": {
+    "valid": true,
+    "error": "",
+    "answers": {
+      "decision_selection": {
+        "value": "codingA",
+        "confidence": 1.0,
+        "probabilities": {
+          "codingA": 1.0,
+          "researchA": 0.0,
+          "reviewA": 0.0,
+          "visionA": 0.0
+        }
+      }
+    }
+  },
+  "local_decode": {
+    "valid": true,
+    "wire_id": "codingA",
+    "choice": "coding",
+    "basis_id": "codingA-basis",
+    "finding_ids": [],
+    "remaining_ids": [],
+    "confidence": 1.0,
+    "probabilities": {
+      "codingA": 1.0,
+      "researchA": 0.0,
+      "reviewA": 0.0,
+      "visionA": 0.0
+    },
+    "expected_match": true,
+    "confidence_policy": "not-evaluated-for-business",
+    "executed": false
+  },
+  "host_checks": "not-executed: synthetic reference, no real business owner/authorization",
+  "additional_transport_attempts": 0,
+  "reused_identical_initial_capture": true
+}

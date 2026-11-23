@@ -1,0 +1,17 @@
+{
+  "result": "pass",
+  "request_response_exact": true,
+  "current_matches_sent_snapshot": true,
+  "historical_wire_unchanged": true,
+  "single_real_API_call": true,
+  "official_and_local_decode": "pass",
+  "negative_cases": 21,
+  "html_pages": 9,
+  "html_full_payload_and_raw_return_present": true,
+  "html_qa": "pass",
+  "source_scope": "synthetic-reference",
+  "prepare_worker": "proposal-not-implemented",
+  "repo_check": "failed-before-later-stages: nine foreign evidence snapshot nested Biome roots",
+  "review": "author self-check; no independent review",
+  "business_effects": 0
+}

@@ -2,6 +2,8 @@ import { listGates, readConfig, readRoadmap } from "../autopilot/status-model.ts
 import { gateApprovalRow } from "../shared/decide-policy.ts";
 
 export const PM_GATE_ROUTING_RULE =
+	"For routine work choose the existing entry directly from the trigger, current phase, and pending framework gate, without a dp-route model call. " +
+	"If these facts do not determine the entry, identify the missing fact. Reserve dp-route for an explicit advisory request. " +
 	"Use dp-gate-approve only for the action named by an existing pending framework gate in the claimed key or its stage. " +
 	"Use its gate ID as the trigger. A build, deployment, readiness check, or dp-route suggestion alone does not create a gate. " +
 	"Ordinary work follows its recorded authorization, workspace rules and hard checks.";

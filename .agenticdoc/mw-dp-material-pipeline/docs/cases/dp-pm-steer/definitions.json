@@ -1,0 +1,36 @@
+{
+  "references": {
+    "W1": {
+      "kind": "remaining_work",
+      "scope": "本次任务",
+      "content": "证明权限拒绝无副作用"
+    },
+    "W2": {
+      "kind": "remaining_work",
+      "scope": "本次任务",
+      "content": "证明过期版本冲突无副作用"
+    }
+  },
+  "terminology": {
+    "ID": {
+      "full_name": "Identifier",
+      "meaning": "标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。"
+    },
+    "PM": {
+      "full_name": "Project Manager agent",
+      "meaning": "管理当前项目事项、组织任务并回收证据的项目管理Agent；不能冒充实际执行者或独立审查者。"
+    },
+    "desc": {
+      "full_name": "description",
+      "meaning": "本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+    },
+    "未测": {
+      "full_name": "尚未执行验证",
+      "meaning": "对应验证尚未运行，不表示通过。"
+    },
+    "直执": {
+      "full_name": "直接执行",
+      "meaning": "由当前项目管理者在原权限与剩余预算内直接完成工作，必要独立复核仍保留。"
+    }
+  }
+}

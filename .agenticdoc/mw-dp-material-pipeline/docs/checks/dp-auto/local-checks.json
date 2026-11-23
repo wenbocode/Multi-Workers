@@ -1,0 +1,116 @@
+{
+  "result": "pass",
+  "positive": "synthetic-v06-ready",
+  "negative_count": 21,
+  "negatives": [
+    {
+      "case": "missing-priority",
+      "expected_error": "needs-evidence:priority",
+      "passed": true
+    },
+    {
+      "case": "unknown-priority",
+      "expected_error": "needs-evidence:priority",
+      "passed": true
+    },
+    {
+      "case": "undefined-source",
+      "expected_error": "undefined-source-reference",
+      "passed": true
+    },
+    {
+      "case": "misquoted-source",
+      "expected_error": "source-content-mismatch",
+      "passed": true
+    },
+    {
+      "case": "missing-comparison",
+      "expected_error": "pairwise-coverage",
+      "passed": true
+    },
+    {
+      "case": "missing-reversal",
+      "expected_error": "comparison-evidence-or-reversal-missing",
+      "passed": true
+    },
+    {
+      "case": "stale-report",
+      "expected_error": "stale-discriminability-report",
+      "passed": true
+    },
+    {
+      "case": "budget-insufficient",
+      "expected_error": "path-over-budget",
+      "passed": true
+    },
+    {
+      "case": "new-retry-budget",
+      "expected_error": "resource-reset",
+      "passed": true
+    },
+    {
+      "case": "cycle",
+      "expected_error": "path-loop-or-missing-node",
+      "passed": true
+    },
+    {
+      "case": "missing-stop",
+      "expected_error": "stop-or-clock-missing",
+      "passed": true
+    },
+    {
+      "case": "single-candidate",
+      "expected_error": "real-candidates-2..5",
+      "passed": true
+    },
+    {
+      "case": "unknown-marked-known",
+      "expected_error": "unknown-availability-misrepresented",
+      "passed": true
+    },
+    {
+      "case": "source-drift",
+      "expected_error": "source-version-drift",
+      "passed": true
+    },
+    {
+      "case": "undefined-abbreviation",
+      "expected_error": "undefined-term",
+      "passed": true
+    },
+    {
+      "case": "candidate-pair-drift",
+      "expected_error": "pair-map",
+      "passed": true
+    },
+    {
+      "case": "skip-discriminability",
+      "passed": true,
+      "scope": "executable contract example, no production tool interception"
+    },
+    {
+      "case": "publish-unvalidated",
+      "passed": true,
+      "scope": "executable contract example, no production tool interception"
+    },
+    {
+      "case": "publish-stale",
+      "passed": true,
+      "scope": "executable contract example, no production tool interception"
+    },
+    {
+      "case": "publish-equivalent",
+      "passed": true,
+      "scope": "executable contract example, no production tool interception"
+    },
+    {
+      "case": "original-auto-missing-priority",
+      "passed": true,
+      "status": "needs-evidence",
+      "sent": false
+    }
+  ],
+  "old_wire_unchanged": true,
+  "exact_desc_token_count": null,
+  "scope": "reference mechanical checks and author semantic review; production host checks not executed"
+}

@@ -88,7 +88,65 @@ function fixture(type = "coding") {
 	return { project, root, cardPath, sections, material, preparation };
 }
 
+/** R1 contract: one real child per unchanged matter. The two identical asks
+ *  in the harness below must not buy a second classifier call or a second
+ *  scope budget; the retained rejection cases prove the safety gates survive. */
 describe("PM type selection after classifier unavailability", () => {
+	it("uses the claimed card's review type and records real dispatch without a classifier call", async () => {
+		const f = fixture("review");
+		const classifier = vi.fn(() => {
+			throw new Error("The reviewed type is already fixed");
+		});
+		const lifecycle = vi.fn(async () => ({ status: 0, stdout: "{}", stderr: "", timedOut: false }));
+		const store = new WorkerStore(f.root);
+		const h = await createHarness({
+			extensionFactories: [
+				(pi) =>
+					registerWorkerTools(
+						pi,
+						store,
+						new AckStore(f.root),
+						new IndexStore(f.root),
+						f.root,
+						{ key: "fallback" },
+						f.project,
+						classifier,
+						lifecycle,
+					),
+			],
+		});
+		harnesses.push(h);
+		h.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall("dispatch_worker", {
+						task_key: "card-review",
+						key: "fallback",
+						card_path: f.cardPath,
+						description: "Review the original card.",
+					}),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done"),
+		]);
+		await h.session.prompt("Dispatch the reviewed task card.");
+		const report = h.session.messages.filter((message) => message.role === "toolResult").at(-1);
+		expect(JSON.stringify(report?.content)).toContain("Dispatched worker");
+		expect(JSON.stringify(report?.content)).toContain("task-card");
+		expect(store.readAll()).toHaveLength(1);
+		const taskDir = path.join(f.root, "fallback/workers/card-review");
+		const task = fs.readFileSync(path.join(taskDir, "task.md"), "utf8");
+		expect(task).toMatch(/^type: review$/m);
+		expect(task).toContain(
+			'type-selection: {"source":"task-card","type":"review","reason":"declared-type","transport_attempts":0}',
+		);
+		expect(task).toMatch(/^card_sha256: [a-f0-9]{64}$/m);
+		expect(task).not.toMatch(/^decision:/m);
+		expect(classifier).not.toHaveBeenCalled();
+		expect(lifecycle).not.toHaveBeenCalled();
+	});
+
 	it.each(["coding", "research", "review"])("dispatches %s through real tools after failed asks", async (type) => {
 		const f = fixture(type);
 		const asyncRunner = vi.fn(async () => ({ status: 1, stdout: "", stderr: "offline", timedOut: false }));
@@ -153,6 +211,16 @@ describe("PM type selection after classifier unavailability", () => {
 			expect(text).not.toContain("等待人工");
 			expect(text).not.toContain("TERMINAL");
 		}
+		// R1: the second identical ask is the SAME matter. It replays the frozen
+		// feedback with no new DP child (one runner for two asks), and the real
+		// dispatch/claim/material/basis/type/lifecycle gates below stay effective.
+		const secondContent = results[1]?.content as Array<{ type: string; text: string }> | undefined;
+		const secondPayload = JSON.parse((secondContent?.[0]?.text ?? "").split("\n")[0] ?? "") as {
+			matter_suppressed?: boolean;
+			action?: string;
+		};
+		expect(secondPayload.matter_suppressed).toBe(true);
+		expect(secondPayload.action).toBe("pm-select-type");
 		expect(JSON.stringify(results[2]?.content)).toContain("Dispatched worker");
 		expect(JSON.stringify(results[2]?.content)).toContain("source");
 		expect(store.readAll()).toHaveLength(1);
@@ -167,7 +235,7 @@ describe("PM type selection after classifier unavailability", () => {
 		// A failed classifier writes no consumed lifecycle fact and mints no
 		// decision id; only the real PM dispatch runs once.
 		expect(lifecycle).not.toHaveBeenCalled();
-		expect(asyncRunner).toHaveBeenCalledTimes(2);
+		expect(asyncRunner).toHaveBeenCalledTimes(1);
 		expect(syncRunner).toHaveBeenCalledTimes(1);
 	});
 

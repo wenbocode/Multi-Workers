@@ -1,0 +1,825 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DP 阻塞分布与 v0.5 验收对照</title><style>:root{--ink:#17324b;--muted:#657b8d;--line:#d7e2e9;--accent:#07828a;--sidebar:235px}*{box-sizing:border-box}html{scroll-padding-top:90px}body{margin:0;color:var(--ink);background:#fff;font:18px/1.8 "Microsoft YaHei","Segoe UI",sans-serif}a{color:var(--accent);text-decoration:none}button,select{font:14px "Microsoft YaHei",sans-serif;color:var(--ink);background:#fff;border:1px solid #c8d9e5;border-radius:4px;padding:9px 13px;cursor:pointer}button:disabled{opacity:.35}a:focus-visible,button:focus-visible,select:focus-visible,img:focus-visible{outline:3px solid #43acb3;outline-offset:3px}header{position:fixed;inset:0 0 auto;height:66px;display:flex;align-items:center;gap:16px;padding:0 24px;background:#fffffff5;border-bottom:1px solid var(--line);z-index:20}header strong{font-size:20px;white-space:nowrap}#current-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;color:var(--muted)}aside{position:fixed;top:66px;bottom:0;width:var(--sidebar);padding:30px 22px;background:#f2f6f8;border-right:1px solid var(--line);overflow:auto;z-index:15}aside nav a{display:block;border-left:2px solid transparent;padding:10px;color:#526b80;font-size:15px}aside nav a.active{background:#e7f2f4;border-color:var(--accent);color:var(--accent);font-weight:600}aside p{font-size:12px;color:var(--muted);margin-top:32px}main{margin-left:var(--sidebar);padding:90px 30px 100px}.frame{max-width:1400px;margin:0 auto;padding:30px 44px;overflow-wrap:anywhere;scroll-margin-top:90px}.present .frame{display:none;min-height:calc(100dvh - 190px)}.present .frame.current{display:block}.eyebrow{font-size:12px;letter-spacing:1.5px;color:var(--accent);margin-bottom:12px}h1,h2,h3,h4,h5{line-height:1.45;scroll-margin-top:90px}h1{font-size:32px;margin:0 0 24px}h2{font-size:28px;margin:12px 0 22px}h3{font-size:25px;margin:26px 0 16px}h4,h5{font-size:21px;margin:24px 0 14px}.frame>h1:has(+h2),.frame>h2:has(+h3),.frame>h3:has(+h4){font-size:15px;color:var(--muted);margin-bottom:8px}p{margin:17px 0}img{display:block;max-width:100%;width:auto;height:auto;margin:25px auto;cursor:zoom-in}table{border-collapse:collapse;width:100%;font-size:16px;line-height:1.65}th,td{border:1px solid var(--line);padding:12px 14px;text-align:left;vertical-align:top}th{color:#fff;background:var(--ink)}tbody tr:nth-child(odd){background:#f1f6f8}.table-scroll{max-width:100%;overflow:auto;margin:24px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:18px 22px;background:#f0f5f7;border-left:3px solid var(--accent);font-size:15px}code{font-family:Consolas,monospace}video{display:block;width:100%;max-height:calc(100dvh - 360px);min-height:220px;object-fit:contain;background:#111;margin:20px 0}.video-actions{display:flex;gap:18px;align-items:center;flex-wrap:wrap;font-size:14px}.video-actions a{margin-left:auto}footer{position:fixed;bottom:0;left:var(--sidebar);right:0;height:65px;display:flex;align-items:center;gap:16px;padding:0 28px;border-top:1px solid var(--line);background:#fffffff5;z-index:20}#jump{flex:1;min-width:0;max-width:700px}#counter{margin-left:auto;font-size:13px;white-space:nowrap;color:var(--muted)}#progress{position:fixed;top:64px;left:0;height:2px;background:var(--accent);z-index:30}.tabs{display:flex;flex-wrap:wrap;gap:24px;border-bottom:1px solid var(--line);margin:20px 0 24px}.tabs button{border:0;border-bottom:3px solid transparent;border-radius:0;padding:9px 0;font-size:17px;color:var(--muted)}.tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}.present .panel{display:none}.present .panel.selected{display:block}.present .reading-label{display:none}body:not(.present) .tabs{display:none}body:not(.present) .frame{border:1px solid var(--line);margin-bottom:30px}.layout-scroll img{width:100%;max-height:none}.overview-layout{display:grid;grid-template-columns:1.2fr 1fr;gap:36px;align-items:start}.dag{position:relative;display:grid;gap:22px;padding:4px 0}.dag svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}.dag-node{position:relative;display:block;border:1px solid #afc9d9;border-radius:4px;background:#f2f8fb;text-align:center;padding:12px;line-height:1.5;font-size:18px;color:var(--ink)}.edges path{stroke:#7896a6;stroke-width:1.5;fill:none;marker-end:url(#arrow)}.outline a{display:block;padding:9px 0;border-bottom:1px solid var(--line);color:var(--ink)}.outline strong{display:block;font-size:17px;line-height:1.5}.outline span{display:block;font-size:12px;color:var(--muted)}dialog{width:max-content;max-width:96vw;max-height:96vh;padding:18px;border:1px solid #cbd8e0;border-radius:5px}dialog::backdrop{background:#071522da}.viewer-bar{display:flex;gap:12px;align-items:center;margin-bottom:14px}.viewer-bar span{flex:1;max-width:65vw;overflow:hidden;text-overflow:ellipsis;font-size:13px}.viewer-body{max-width:91vw;max-height:80vh;overflow:auto}.viewer-body img{margin:0;max-width:91vw;max-height:79vh;object-fit:contain;cursor:default}.viewer-body.actual img{max-width:none;max-height:none}body.sidebar-hidden aside{display:none}body.sidebar-hidden main{margin-left:0}body.sidebar-hidden footer{left:0}@media(max-width:1000px){aside{display:none;width:250px;box-shadow:4px 0 20px #17324b18}.menu-open aside{display:block}main{margin-left:0;padding:85px 16px}.frame{padding:22px}footer{left:0;padding:0 14px;gap:8px}.overview-layout{grid-template-columns:1fr}header{padding:0 15px;gap:10px}}@media(max-width:600px){body{font-size:16px}.frame{padding:18px 8px}header strong{font-size:16px;flex:1}header button{padding:7px 9px;font-size:12px}#current-title{display:none}h1{font-size:28px}h2{font-size:25px}.table-scroll table{min-width:600px}footer button{font-size:12px;padding:7px}#jump{font-size:12px;padding:7px 4px}#counter{font-size:11px}.tabs{gap:18px}.tabs button{font-size:14px}.video-actions a{margin-left:0}}@media print{header,aside,footer,#progress,dialog,.tabs,.video-actions{display:none!important}main{margin:0;padding:0}body .frame,body.present .frame{display:block;min-height:0;border:0;padding:18px 0;break-after:page;font-size:13px}body.present .panel{display:block}body.present .reading-label{display:block}img{max-height:85vh;break-inside:avoid}table{font-size:11px}h1,h2,h3,h4,h5{break-after:avoid}video{display:none}.table-scroll{overflow:visible}.overview-layout{grid-template-columns:1fr}}
+</style></head><body class="present"><header><button id="menu" aria-label="切换目录">☰</button><strong>DP 阻塞分布与 v0.5 验收对照</strong><span id="current-title"></span><button id="mode">连续阅读</button><button id="fullscreen">全屏</button></header><aside><nav><a href="#explore" data-chapter="分布与明细">分布与明细</a><a href="#overview" data-chapter="总览">分享总览</a><a href="#cases" data-chapter="案例与开发差额">案例与开发差额</a></nav><p>方向键翻页 · F 全屏<br>长页向下滚动 · 点击图片放大</p><button id="print">打印 / PDF</button></aside><main><section class="frame layout-vertical" id="explore" data-title="先看分布" data-chapter="分布与明细"><div class="eyebrow">分布与明细</div><h2 id="stats-5150862ba896">先看分布</h2><p>193 条独立回执来自 6 个有记录的项目。图表可按项目、DP、合并原因筛选，列表可查事件 ID 和原文件。统计单位为事件，同一事项可能多次进入。此次快照包含 2 条 PM 事后审计记录，原始分类在明细中保留。</p>
+<div id="receipt-explorer"></div><p><a href="report.md">汇总及扫描范围</a> · <a href="receipts.jsonl">原始回执全集</a> · <a href="reason-index.json">合并分类及索引</a></p>
+</section>
+<section class="frame layout-overview" id="overview" data-title="阅读导航" data-chapter="总览"><div class="eyebrow">总览</div><h1>阅读导航</h1><div class="overview-layout"><div class="dag" style="grid-template-columns:repeat(1,minmax(0,1fr))" data-edges="[]"><svg aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#7896a6"/></marker></defs><g class="edges"></g></svg><a class="dag-node" style="grid-row:1;grid-column:1 / -1" id="node-2450032a1232" href="#explore">分布与明细</a><a class="dag-node" style="grid-row:2;grid-column:1 / -1" id="node-77fd39083304" href="#cases">案例与开发差额</a></div><nav class="outline"><a href="#explore"><strong>分布与明细</strong><span>第 1–6 页</span></a><a href="#cases"><strong>案例与开发差额</strong><span>第 7–8 页</span></a></nav></div></section>
+<section class="frame layout-vertical" id="project-dp" data-title="项目与 DP" data-chapter="分布与明细"><div class="eyebrow">分布与明细</div><h2 id="stats-ff946cb4de43">项目与 DP</h2><div class="table-scroll"><table>
+<thead>
+<tr>
+<th>分类</th>
+<th align="right">dp-w-type</th>
+<th align="right">dp-pm-steer</th>
+<th align="right">dp-QG</th>
+<th align="right">dp-gate-approve</th>
+<th align="right">dp-sign-key</th>
+<th align="right">dp-w-check-task</th>
+<th align="right">dp-auto</th>
+<th align="right">dp-route</th>
+<th align="right">合计</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Gaze</td>
+<td align="right">38</td>
+<td align="right">7</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">47</td>
+</tr>
+<tr>
+<td>UEPerformanceFlow</td>
+<td align="right">27</td>
+<td align="right">13</td>
+<td align="right">4</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">45</td>
+</tr>
+<tr>
+<td>RenderPerformance</td>
+<td align="right">14</td>
+<td align="right">8</td>
+<td align="right">9</td>
+<td align="right">2</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">33</td>
+</tr>
+<tr>
+<td>Bearing</td>
+<td align="right">14</td>
+<td align="right">12</td>
+<td align="right">5</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">31</td>
+</tr>
+<tr>
+<td>SceneProfiler</td>
+<td align="right">20</td>
+<td align="right">2</td>
+<td align="right">2</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">24</td>
+</tr>
+<tr>
+<td>Multi-Workers</td>
+<td align="right">2</td>
+<td align="right">9</td>
+<td align="right">2</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">13</td>
+</tr>
+<tr>
+<td>合计</td>
+<td align="right">115</td>
+<td align="right">51</td>
+<td align="right">23</td>
+<td align="right">2</td>
+<td align="right">1</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">193</td>
+</tr>
+</tbody></table></div>
+</section>
+<section class="frame layout-vertical" id="reason-project" data-title="原因与项目" data-chapter="分布与明细"><div class="eyebrow">分布与明细</div><h2 id="stats-f72990856cbb">原因与项目</h2><div class="table-scroll"><table>
+<thead>
+<tr>
+<th>分类</th>
+<th align="right">Gaze</th>
+<th align="right">UEPerformanceFlow</th>
+<th align="right">RenderPerformance</th>
+<th align="right">Bearing</th>
+<th align="right">SceneProfiler</th>
+<th align="right">Multi-Workers</th>
+<th align="right">合计</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>文件证据准备失败</td>
+<td align="right">3</td>
+<td align="right">30</td>
+<td align="right">22</td>
+<td align="right">22</td>
+<td align="right">12</td>
+<td align="right">9</td>
+<td align="right">98</td>
+</tr>
+<tr>
+<td>DP 禁用</td>
+<td align="right">38</td>
+<td align="right">0</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">39</td>
+</tr>
+<tr>
+<td>依据与选项绑定</td>
+<td align="right">5</td>
+<td align="right">9</td>
+<td align="right">4</td>
+<td align="right">2</td>
+<td align="right">1</td>
+<td align="right">2</td>
+<td align="right">23</td>
+</tr>
+<tr>
+<td>DP 未配置</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">2</td>
+<td align="right">0</td>
+<td align="right">9</td>
+<td align="right">0</td>
+<td align="right">11</td>
+</tr>
+<tr>
+<td>单字段超限</td>
+<td align="right">0</td>
+<td align="right">2</td>
+<td align="right">0</td>
+<td align="right">2</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">4</td>
+</tr>
+<tr>
+<td>凭据扫描拒绝</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">4</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">4</td>
+</tr>
+<tr>
+<td>仅知前置检查失败</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">3</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">4</td>
+</tr>
+<tr>
+<td>上游 DNS 失败</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">2</td>
+<td align="right">1</td>
+<td align="right">3</td>
+</tr>
+<tr>
+<td>接回凭据绑定失败</td>
+<td align="right">0</td>
+<td align="right">2</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">2</td>
+</tr>
+<tr>
+<td>材料超预算</td>
+<td align="right">0</td>
+<td align="right">2</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">2</td>
+</tr>
+<tr>
+<td>原 key 未认领</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">1</td>
+<td align="right">1</td>
+</tr>
+<tr>
+<td>签收材料准备失败</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">1</td>
+</tr>
+<tr>
+<td>依据与材料字段绑定</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">1</td>
+</tr>
+<tr>
+<td>合计</td>
+<td align="right">47</td>
+<td align="right">45</td>
+<td align="right">33</td>
+<td align="right">31</td>
+<td align="right">24</td>
+<td align="right">13</td>
+<td align="right">193</td>
+</tr>
+</tbody></table></div>
+</section>
+<section class="frame layout-vertical" id="reason-dp" data-title="原因与 DP" data-chapter="分布与明细"><div class="eyebrow">分布与明细</div><h2 id="stats-09f6c37708ae">原因与 DP</h2><div class="table-scroll"><table>
+<thead>
+<tr>
+<th>分类</th>
+<th align="right">dp-w-type</th>
+<th align="right">dp-pm-steer</th>
+<th align="right">dp-QG</th>
+<th align="right">dp-gate-approve</th>
+<th align="right">dp-sign-key</th>
+<th align="right">dp-w-check-task</th>
+<th align="right">dp-auto</th>
+<th align="right">dp-route</th>
+<th align="right">合计</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>文件证据准备失败</td>
+<td align="right">63</td>
+<td align="right">26</td>
+<td align="right">9</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">98</td>
+</tr>
+<tr>
+<td>DP 禁用</td>
+<td align="right">38</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">39</td>
+</tr>
+<tr>
+<td>依据与选项绑定</td>
+<td align="right">0</td>
+<td align="right">16</td>
+<td align="right">6</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">23</td>
+</tr>
+<tr>
+<td>DP 未配置</td>
+<td align="right">8</td>
+<td align="right">3</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">11</td>
+</tr>
+<tr>
+<td>单字段超限</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">4</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">4</td>
+</tr>
+<tr>
+<td>凭据扫描拒绝</td>
+<td align="right">1</td>
+<td align="right">3</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">4</td>
+</tr>
+<tr>
+<td>仅知前置检查失败</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">4</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">4</td>
+</tr>
+<tr>
+<td>上游 DNS 失败</td>
+<td align="right">2</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">3</td>
+</tr>
+<tr>
+<td>接回凭据绑定失败</td>
+<td align="right">2</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">2</td>
+</tr>
+<tr>
+<td>材料超预算</td>
+<td align="right">0</td>
+<td align="right">2</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">2</td>
+</tr>
+<tr>
+<td>原 key 未认领</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">1</td>
+</tr>
+<tr>
+<td>签收材料准备失败</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">1</td>
+</tr>
+<tr>
+<td>依据与材料字段绑定</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">1</td>
+</tr>
+<tr>
+<td>合计</td>
+<td align="right">115</td>
+<td align="right">51</td>
+<td align="right">23</td>
+<td align="right">2</td>
+<td align="right">1</td>
+<td align="right">1</td>
+<td align="right">0</td>
+<td align="right">0</td>
+<td align="right">193</td>
+</tr>
+</tbody></table></div>
+</section>
+<section class="frame layout-vertical" id="method" data-title="分类口径" data-chapter="分布与明细"><div class="eyebrow">分布与明细</div><h2 id="stats-227456f4f23a">分类口径</h2><p>每条回执按可确认的阻塞阶段、detail 或字段问题归入一个主类，附带问题继续显示。文件证据错误以一个事件计数。凭据扫描记录只说明拦截，原字段缺失时不推断误判。前置检查缺字段和细节时保留未知。DP 禁用、未配置和 DNS 单列。两条接回绑定引用 PM 事后审计，实际模型阶段需关联原链核实。</p>
+<p>结构化诊断可一条事件包含多个问题。</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>诊断代码</th>
+<th align="right">问题项次数</th>
+<th align="right">含此代码的事件</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>evidence-file-unresolved</td>
+<td align="right">111</td>
+<td align="right">42</td>
+</tr>
+<tr>
+<td>invalid-evidence-reference</td>
+<td align="right">46</td>
+<td align="right">16</td>
+</tr>
+<tr>
+<td>evidence-range-out-of-bounds</td>
+<td align="right">6</td>
+<td align="right">3</td>
+</tr>
+<tr>
+<td>evidence-read-denied</td>
+<td align="right">4</td>
+<td align="right">4</td>
+</tr>
+<tr>
+<td>evidence-budget-exceeded</td>
+<td align="right">2</td>
+<td align="right">2</td>
+</tr>
+<tr>
+<td>evidence-file-unreadable</td>
+<td align="right">1</td>
+<td align="right">1</td>
+</tr>
+</tbody></table></div>
+<p>本快照中 dp-auto 和 dp-route 均为 0 条回执。历史阻塞没有记录的路径和实际启用状态，应另查运行记录。</p>
+</section>
+<section class="frame layout-vertical" id="cases" data-title="典型回执与 v0.5 四段" data-chapter="案例与开发差额"><div class="eyebrow">案例与开发差额</div><h2 id="cases-45577127e2b2">典型回执与 v0.5 四段</h2><p>四段分别核决策本、实际模型输入、原始模型返回、PM 接回。生产回执只填写能从原件证实的阶段，其余标为未知。右栏链接到同类 DP 的 v0.5 完整范本，范本是独立的设计验证记录。点击事件 ID 可打开筛选页中的对应回执。</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>案例</th>
+<th>决策本和实际材料证据</th>
+<th>模型输入</th>
+<th>原始返回</th>
+<th>PM 接回证据</th>
+<th>v0.5 参照与验收差额</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1 · UEPerformanceFlow QG <a href="#event-896ec525-cf6f-4d4e-ab5d-f6dd5f747074">字段超限</a></td>
+<td><code>ueperf-platform</code>，<code>review_evidence[0]</code> 报 <code>max-bytes</code>。完整决策本未关联。</td>
+<td>工具执行入口拒绝，未见已发 body。</td>
+<td>未发分支无模型回包。</td>
+<td>回执只记录阻塞。</td>
+<td><a href="../../../docs/reference-records/dp-QG.md">QG</a> 的 payload 直接提供 AC/VC、F1/F2 与来源。验收覆盖字段超限时的精确原因、合规摘录及必要事实保留。</td>
+</tr>
+<tr>
+<td>2 · UEPerformanceFlow QG <a href="#event-b97cb967-a92d-4d7c-adb7-7bf1a3bcb907">选项绑定</a></td>
+<td>同一 key 的 <code>basis_catalog[1].applies_to</code> 校验失败。回执缺原值，无法确定填了哪个选项。</td>
+<td>工具执行入口拒绝。实际 wire 候选未知。</td>
+<td>未见原始回包。</td>
+<td>回执只记录阻塞。</td>
+<td><a href="../../../docs/reference-records/dp-QG.md">QG</a> 的历史实际候选 <code>passA/fixA/fixB</code>，<code>fixB→fix+F1/F2</code>。范本缺 reopen 与本次绑定失败分别校验。</td>
+</tr>
+<tr>
+<td>3 · UEPerformanceFlow w-type <a href="#event-c95485d7-59b8-45fc-a807-850e5d4d9096">路径未解析</a></td>
+<td><code>material.task_goal</code> 含路径。3 项 <code>evidence-file-unresolved</code>，另有 1 项读范围拒绝。</td>
+<td>证据准备标 <code>not-sent</code>。没有最终请求。</td>
+<td>无。</td>
+<td>回执没有后继执行。</td>
+<td><a href="../../../docs/reference-records/dp-w-type.md">w-type</a> 发代码/测试判据和约束，回 <code>codingA</code> 后 PM 参考准备 coding 任务。将目标正文、待产物和有范围的来源明确分开。</td>
+</tr>
+<tr>
+<td>4 · RenderPerformance steer <a href="#event-6c17a1c6-9884-446d-bd75-08ba5d537693">绑定路径无效</a></td>
+<td><code>evidence_refs[0].field</code> 无效，回执列出可用绑定落点。</td>
+<td><code>not-sent</code>。</td>
+<td>无。</td>
+<td>回执只记录阻塞。</td>
+<td><a href="../../../docs/reference-records/dp-pm-steer.md">steer</a> 的模型材料给 W1/W2、约束和预算判据，回 <code>splitA</code>，PM 复核预算后规划分拆。检查新投影的实际叶子路径和提示一致。</td>
+</tr>
+<tr>
+<td>5 · UEPerformanceFlow steer <a href="#event-f0170bb5-37d8-4e42-b897-76fc19244185">保护最小项超预算</a></td>
+<td><code>evidence_sources</code> 返回 <code>compression-required</code>，核心材料和保护内容仍超预算。</td>
+<td><code>not-sent</code>。缩窄行范围或准备有来源摘要后，才能重新组装。</td>
+<td>无。</td>
+<td>未见继续执行或追加额度。</td>
+<td><a href="../../../docs/reference-records/dp-pm-steer.md">steer</a> 保留真正影响分拆的来源和预算。验收验证临界值、原额度及受保护事实不丢。</td>
+</tr>
+<tr>
+<td>6 · Bearing steer <a href="#event-b2ab3612-2d7c-4263-8e91-acf94fe4af37">凭据扫描</a></td>
+<td><code>work-memory</code> 材料凭据检查拒绝，未保留命中字串。</td>
+<td>回执明确未发送。</td>
+<td>无。</td>
+<td>未见接回结果。</td>
+<td><a href="../../../docs/reference-records/dp-pm-steer.md">steer</a> 的术语区说明缩写。对照已有术语例外及真实凭据拦截。该事件是否误判待绑定原输入及加载版本后判断。</td>
+</tr>
+<tr>
+<td>7 · Gaze w-type <a href="#event-1360d8d6-d6af-444b-86ee-7ba597a84343">禁用</a></td>
+<td>只有事项引用和窗口拒绝状态，未见决定材料。</td>
+<td>pre-transport 阻塞。</td>
+<td>无。</td>
+<td>实际接回未关联。</td>
+<td><a href="../../../docs/reference-records/dp-w-type.md">w-type</a> 是模型启用时的参考。禁用时核原 PM 有界分类和业务动作的单独证据。</td>
+</tr>
+<tr>
+<td>8 · SceneProfiler w-type <a href="#event-97b212a2-33e4-468d-be16-b8f79d9720cb">DNS</a></td>
+<td>记录了请求标识，完整决策本未关联。</td>
+<td>到传输阶段，是否有可读冻结 body 需关联 wire。</td>
+<td>无模型回包证据，错误为 <code>getaddrinfo failed</code>。</td>
+<td>未关联。</td>
+<td><a href="../../../docs/reference-records/dp-w-type.md">w-type</a> 返回模型选择。此例验收传输失败分类，以及与已发结果未知不同的处置。</td>
+</tr>
+<tr>
+<td>9 · UEPerformanceFlow w-type <a href="#event-0d83d716-8c5b-4888-a099-f7e51506aa2c">接回绑定</a></td>
+<td>事后审计记录原 ask 无 <code>task_key</code>。</td>
+<td>原 body 未关联。</td>
+<td>原返回未关联。</td>
+<td>审计记载补填 <code>task_after</code> 被拒。原 host 生命周期收据未关联。</td>
+<td><a href="../../../docs/reference-records/dp-w-type.md">w-type</a> 把选型参考和真实派工分开。验证正常/错绑回收，未知任务不靠模型或事后填值补造。</td>
+</tr>
+<tr>
+<td>10 · Gaze sign <a href="#event-38f7d52e-3205-4a6c-acf3-6b861928fac9">签收准备失败</a></td>
+<td>sign 路径报告文件证据准备失败，具体字段未记录。</td>
+<td>明确未发送。</td>
+<td>无签收结论。</td>
+<td>回执未给签收写入证据。</td>
+<td><a href="../../../docs/reference-records/dp-sign-key.md">sign</a> 的 <code>continueA</code> 来自带目标、偏差、当前 QG 的实际请求，参考处置是补证后复核。验收核源准备/refusal 与 writer 状态分别入记录。</td>
+</tr>
+</tbody></table></div>
+<p>原 <code>ueperf-platform</code> 共四条 QG：两条 <code>max-bytes</code>、两条 <code>applies_to</code>。其余两条可在图表按 key 筛选。当前随附 QG 样例只有 <code>fixA</code> 是独立源码观测。回执既没有记录这个候选集，也没有证明四条事件因单候选阻塞。</p>
+</section>
+<section class="frame layout-vertical" id="coverage" data-title="当前代码覆盖与任务更新" data-chapter="案例与开发差额"><div class="eyebrow">案例与开发差额</div><h2 id="cases-1dc12d62b6f4">当前代码覆盖与任务更新</h2><p>状态按当前仓库源码和可追溯回归判断。项目进程的部署版本及历史事件复跑仍需各自取证。配对、文件、来源新鲜度和授权策略定向回归为 101 通过、2 跳过。以下把现有能力、诊断改进与剩余工作分别落到责任卡。</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>合并原因</th>
+<th align="right">条数</th>
+<th>现在已覆盖或已修复的部分</th>
+<th>还要补的验收或行为</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>文件证据准备失败</td>
+<td align="right">98</td>
+<td><code>5af9b8529</code> 正文注入、稳定快照和来源新鲜度，<code>19203773e</code> 精确读授权，<code>eaefe72d9</code> 结构化字段及 <code>allowed_fields</code>。最新仍有文件不可达、绑定错误等拒绝。</td>
+<td>AC-002/004/005 · T02/T03/T04。区分必要引用和计划产物，真实 producer 用新投影的可绑定路径，测试读范围和已授权正文。合并视图保留多个诊断代码。</td>
+</tr>
+<tr>
+<td>单字段超限 / 材料超预算</td>
+<td align="right">4 / 2</td>
+<td><code>5af9b8529</code> 在整请求预算内做机械摘录，保护最小项仍超限时明确返回 <code>compression-required</code>。</td>
+<td>AC-002/003/004 · T02/T03。区分原始字段限额和 hydration 后请求限额。保留失败、未知、AC/VC 和判据，验证窄范围或有来源摘要的成功对照。</td>
+</tr>
+<tr>
+<td>依据与选项 / 材料字段绑定</td>
+<td align="right">23 / 1</td>
+<td><code>6bbed2f2d</code>、<code>bda661a3b</code> 修正引用提示与缺项/非法分类，<code>901846b97</code> 提前展示注册表选项及具体绑定错误。新版提示能处理同型输入。</td>
+<td>AC-001/004/010 · T01/T03/T05/T06。复用诊断，验收 Python 最终合法业务选项覆盖与固定集合、同版原因反解。TS preview 的允许值只是输入词汇。</td>
+</tr>
+<tr>
+<td>凭据扫描拒绝</td>
+<td align="right">4</td>
+<td>明确有保护性拒绝。<code>94183b11f</code> 已修特定 Bearer 术语误命中。</td>
+<td>AC-004/005 · T03。回归术语和真实凭据正反例。四条原阻塞的命中原因仍待原输入证据，尤其保留修复提交之后的 Bearing 回执。</td>
+</tr>
+<tr>
+<td>禁用 / 未配置 / 上游 DNS</td>
+<td align="right">39 / 11 / 3</td>
+<td><code>e1737950e</code> 有窗口控制，<code>18d478fa4</code> 有原 PM 分类，continuity 已有原预算和角色接回。DNS 记录已有具体底层错误。</td>
+<td>AC-011/012/013 · T06/T07。分别观测拒绝阶段、真实尝试数和接回/执行。在原额度内验证，不因 reload 或修材料清零。</td>
+</tr>
+<tr>
+<td>接回绑定 / 未认领</td>
+<td align="right">2 / 1</td>
+<td>已有无绑定 <code>task_key</code> 时拒绝 <code>task_after</code> 的检查，<code>68e52f89a</code> 补充认领拒绝解释。</td>
+<td>AC-012/013 · T06/T07。将同一次请求和原主体接回联结，区分历史审计与实际 writer 证据。准备权限和正式认领分开检查。</td>
+</tr>
+<tr>
+<td>签收材料准备失败</td>
+<td align="right">1</td>
+<td>已有来源准备拒绝与独审签收复用入口。</td>
+<td>AC-006/012 · T05/T07。引用实际 QG 对象/版本，按阶段保存来源错误、未发、无结论及 writer 状态。签收写入的 Windows 环境限制另查。</td>
+</tr>
+<tr>
+<td>仅知前置检查失败</td>
+<td align="right">4</td>
+<td>原回执没有字段或 detail。现有诊断入口提供补充采样点。</td>
+<td>AC-012/017 · T07/T08。保留未知，后续仅按确定阶段与信息完整度验收。</td>
+</tr>
+</tbody></table></div>
+<p>实施验收保留 v0.5 九例四段的 36 行。跨项目回执合并后取典型场景补充回归，以事件 ID、实际阶段和字段证据为锚点。T08 复用已有回归，T09 对照拒绝点、业务影响和证据来源。完整条目仍可在图表筛选。</p>
+</section></main><footer><button id="prev">← 上一页</button><select id="jump" aria-label="跳转到指定内容"></select><span id="counter"></span><button id="next">下一页 →</button></footer><div id="progress"></div><dialog id="viewer" aria-label="图片查看器"><div class="viewer-bar"><span id="image-name"></span><button id="image-size">原尺寸</button><button id="image-close">关闭</button></div><div class="viewer-body"><img id="full-image" alt=""></div></dialog><script>(()=>{
+const frames=[...document.querySelectorAll('.frame')],jump=document.querySelector('#jump'),viewer=document.querySelector('#viewer'),videos=[...document.querySelectorAll('video')];let index=0,present=true;
+function draw(){for(const dag of document.querySelectorAll('.dag')){if(!dag.getBoundingClientRect().width)continue;const area=dag.getBoundingClientRect(),g=dag.querySelector('.edges');g.replaceChildren();for(const[a,b]of JSON.parse(dag.dataset.edges)){const start=document.getElementById(a).getBoundingClientRect(),end=document.getElementById(b).getBoundingClientRect(),x=start.left+start.width/2-area.left,y=start.bottom-area.top,x2=end.left+end.width/2-area.left,y2=end.top-area.top;const p=document.createElementNS('http://www.w3.org/2000/svg','path');p.setAttribute('d',`M ${x} ${y} C ${x} ${(y+y2)/2} ${x2} ${(y+y2)/2} ${x2} ${y2}`);g.append(p)}}}
+for(const group of document.querySelectorAll('.tabs')){const tabs=[...group.querySelectorAll('[role=tab]')];const select=n=>tabs.forEach((t,i)=>{t.setAttribute('aria-selected',String(i===n));t.tabIndex=i===n?0:-1;const panel=document.getElementById(t.getAttribute('aria-controls'));panel.classList.toggle('selected',i===n);if(i===n)panel.querySelectorAll('img').forEach(im=>im.loading='eager')});tabs.forEach((t,i)=>{t.onclick=()=>select(i);t.onkeydown=e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();e.stopPropagation();const n=e.key==='Home'?0:e.key==='End'?tabs.length-1:(i+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;select(n);tabs[n].focus()}});select(0)}
+frames.forEach((f,i)=>{const o=document.createElement('option');o.value=i;o.textContent=String(i+1).padStart(2,'0')+' '+f.dataset.title;jump.append(o)});
+function update(){const f=frames[index];jump.value=index;document.querySelector('#counter').textContent=`${index+1} / ${frames.length}`;document.querySelector('#current-title').textContent=f.dataset.title;document.querySelector('#progress').style.width=(index+1)/frames.length*100+'%';document.querySelector('#prev').disabled=index===0;document.querySelector('#next').disabled=index===frames.length-1;document.querySelectorAll('aside nav a').forEach(a=>{const on=a.dataset.chapter===f.dataset.chapter;a.classList.toggle('active',on);if(on)a.setAttribute('aria-current','true');else a.removeAttribute('aria-current')})}
+function go(n,hash){index=Math.max(0,Math.min(frames.length-1,n));for(const v of videos)if(!frames[index].contains(v))v.pause();frames.forEach((f,i)=>f.classList.toggle('current',i===index));frames[index].querySelectorAll('img').forEach(i=>i.loading='eager');update();if(present)window.scrollTo({top:0,behavior:'instant'});else frames[index].scrollIntoView({block:'start'});history.replaceState(null,'',hash||'#'+frames[index].id);document.body.classList.remove('menu-open');requestAnimationFrame(draw)}
+function anchor(hash){const el=document.getElementById(decodeURIComponent(hash.slice(1))),frame=el?.closest('.frame');if(!frame)return false;const panel=el.closest('.panel');if(panel)document.getElementById(panel.getAttribute('aria-labelledby')).click();go(frames.indexOf(frame),hash);if(el!==frame)el.scrollIntoView({block:'start'});return true}
+document.addEventListener('click',e=>{const a=e.target.closest('a[href^="#"]');if(a&&anchor(a.hash))e.preventDefault()});jump.onchange=()=>go(+jump.value);document.querySelector('#prev').onclick=()=>go(index-1);document.querySelector('#next').onclick=()=>go(index+1);document.querySelector('#mode').onclick=()=>{present=!present;document.body.classList.toggle('present',present);document.querySelector('#mode').textContent=present?'连续阅读':'演示模式';go(index)};document.querySelector('#print').onclick=()=>window.print();document.querySelector('#menu').onclick=()=>{document.body.classList.toggle(innerWidth>1000?'sidebar-hidden':'menu-open');requestAnimationFrame(draw)};
+async function full(el){try{if(document.fullscreenElement)await document.exitFullscreen();else await el.requestFullscreen()}catch{}}
+document.querySelector('#fullscreen').onclick=()=>full(document.documentElement);for(const v of videos){const f=v.closest('.frame');f.querySelector('.video-speed')?.addEventListener('change',e=>v.playbackRate=+e.target.value);f.querySelector('.video-full')?.addEventListener('click',()=>full(v))}
+const observer=new IntersectionObserver(entries=>entries.forEach(e=>{if(!e.isIntersecting&&!e.target.paused)e.target.pause()}));videos.forEach(v=>observer.observe(v));
+for(const im of document.querySelectorAll('.frame img')){const open=()=>{const full=document.querySelector('#full-image');full.src=im.src;full.alt=im.alt;document.querySelector('#image-name').textContent=decodeURI(im.getAttribute('src'));document.querySelector('.viewer-body').classList.remove('actual');document.querySelector('#image-size').textContent='原尺寸';viewer.showModal()};im.onclick=open;im.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}}}
+document.querySelector('#image-close').onclick=()=>viewer.close();document.querySelector('#image-size').onclick=()=>{const actual=document.querySelector('.viewer-body').classList.toggle('actual');document.querySelector('#image-size').textContent=actual?'适应屏幕':'原尺寸'};
+document.addEventListener('keydown',e=>{if(viewer.open||e.ctrlKey||e.altKey||e.metaKey||e.target.closest('input,select,textarea,video,button,[contenteditable]'))return;if(e.key.toLowerCase()==='f'){e.preventDefault();full(document.documentElement)}if(!present)return;if(['ArrowRight','PageDown'].includes(e.key)){e.preventDefault();go(index+1)}else if(['ArrowLeft','PageUp'].includes(e.key)){e.preventDefault();go(index-1)}else if(e.key==='Home'){e.preventDefault();go(0)}else if(e.key==='End'){e.preventDefault();go(frames.length-1)}});
+let ticking=false;window.addEventListener('scroll',()=>{if(present||ticking)return;ticking=true;requestAnimationFrame(()=>{for(let i=0;i<frames.length;i++)if(frames[i].getBoundingClientRect().top<innerHeight*.4)index=i;update();ticking=false})},{passive:true});window.addEventListener('resize',draw);new ResizeObserver(draw).observe(document.querySelector('main'));window.addEventListener('hashchange',()=>anchor(location.hash));const initial=location.hash;go(0);if(initial)anchor(initial);document.fonts.ready.then(draw);
+})();
+</script><script type="application/json" id="receipt-data">{"rows":[{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"authorization","id":"dc8e3cc4-e9d1-4853-93bf-442466bb60bf","key":"gaze-integration-spike","ts":"2026-11-19T11:16:01.538001+00:00","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/dc8e3cc4-e9d1-4853-93bf-442466bb60bf.json","detail":"the current decision-point configuration disables this entry or could not be read","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"authorization","id":"3b21632b-ba6b-4b32-8dae-dc05c6c44295","key":"gaze-integration-spike","ts":"2026-11-19T11:16:02.292068+00:00","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/3b21632b-ba6b-4b32-8dae-dc05c6c44295.json","detail":"the current decision-point configuration disables this entry or could not be read","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Multi-Workers","dp":"dp-w-type","reason":"原 key 未认领","code":"input-incomplete","stage":"identity-check","id":"47b44f67-c360-4ccf-816d-bffb0e57419f","key":null,"ts":"2026-11-19T11:37:25.397Z","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/47b44f67-c360-4ccf-816d-bffb0e57419f.json","detail":"key-inactive","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"2ee6520a-8fd2-41c4-97a9-73aacad7909a","key":"gaze-integration-spike","ts":"2026-11-19T12:40:39.959Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/2ee6520a-8fd2-41c4-97a9-73aacad7909a.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"2f3d297e-4854-4617-80f5-1360e3bcfe9c","key":"gaze-integration-spike","ts":"2026-11-19T12:40:39.997Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/2f3d297e-4854-4617-80f5-1360e3bcfe9c.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-QG","reason":"单字段超限","code":"input-incomplete","stage":"public-execute","id":"3e3a572f-9d26-41a1-bd83-d99b8b841570","key":"work-memory","ts":"2026-11-19T12:56:54.165Z","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/3e3a572f-9d26-41a1-bd83-d99b8b841570.json","detail":null,"kind":"recorded-block","fields":["review_evidence[10] · max-bytes"],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"DP 未配置","code":"unconfigured","stage":"pre-transport","id":"27f5a3e5-c261-4c2f-aefb-ccbd954d39e6","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T13:05:31.729Z","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/27f5a3e5-c261-4c2f-aefb-ccbd954d39e6.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"DP 未配置","code":"unconfigured","stage":"pre-transport","id":"fa89639e-99f5-4e7e-b0d5-0fb56651a266","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T13:07:03.648Z","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/fa89639e-99f5-4e7e-b0d5-0fb56651a266.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-pm-steer","reason":"DP 未配置","code":"unconfigured","stage":"pre-transport","id":"cec4de40-5666-4383-994d-1725f8cfa461","key":"m0-environment-baseline","ts":"2026-11-19T13:17:50.249Z","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/cec4de40-5666-4383-994d-1725f8cfa461.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"DP 未配置","code":"unconfigured","stage":"pre-transport","id":"aff80669-777d-4ae2-b3c7-2483d41cc701","key":"scene-profiler-shadow-cache-auto","ts":"2026-11-19T13:18:57.948Z","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/aff80669-777d-4ae2-b3c7-2483d41cc701.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"DP 未配置","code":"unconfigured","stage":"pre-transport","id":"3d8a7718-5336-414d-bf0a-355536e234a6","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T13:25:55.576Z","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/3d8a7718-5336-414d-bf0a-355536e234a6.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"DP 未配置","code":"unconfigured","stage":"pre-transport","id":"b395168c-a122-4450-bae8-b7fdd2bca2d2","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T13:25:55.583Z","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/b395168c-a122-4450-bae8-b7fdd2bca2d2.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"DP 未配置","code":"unconfigured","stage":"pre-transport","id":"63e37f49-aeec-4c7f-a6e8-8ea83136cdf0","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T13:25:55.588Z","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/63e37f49-aeec-4c7f-a6e8-8ea83136cdf0.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"5c3d78f4-a3b9-451a-a514-589475b7e75e","key":"work-memory","ts":"2026-11-19T13:30:19.666688+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/5c3d78f4-a3b9-451a-a514-589475b7e75e.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.pm_decision_background · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-pm-steer","reason":"DP 未配置","code":"unconfigured","stage":"pre-transport","id":"f13b2202-3b36-4a15-a0c8-6dd2ac475252","key":"m0-environment-baseline","ts":"2026-11-19T13:47:15.710Z","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/f13b2202-3b36-4a15-a0c8-6dd2ac475252.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"DP 未配置","code":"unconfigured","stage":"pre-transport","id":"1d2ce012-cb2b-4cd7-af07-277148ccc89b","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T13:48:43.207Z","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/1d2ce012-cb2b-4cd7-af07-277148ccc89b.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"DP 未配置","code":"unconfigured","stage":"pre-transport","id":"255315a3-6ec4-428d-aec5-7386d817b047","key":"scene-profiler-shadow-cache-auto","ts":"2026-11-19T13:50:51.111Z","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/255315a3-6ec4-428d-aec5-7386d817b047.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"37edbb82-b8b4-40b1-8ff5-e9c2786b1a42","key":"gaze-integration-spike","ts":"2026-11-19T13:51:07.824Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/37edbb82-b8b4-40b1-8ff5-e9c2786b1a42.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"784803e2-8507-4bf9-8e58-0227fa633af0","key":"m0-environment-baseline","ts":"2026-11-19T13:54:11.975899+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/784803e2-8507-4bf9-8e58-0227fa633af0.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-QG","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"dc70472f-463b-4a56-90c6-269807cb0f58","key":"work-memory","ts":"2026-11-19T13:56:06.577545+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/dc70472f-463b-4a56-90c6-269807cb0f58.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.review_findings · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"1f5f629b-eebe-4770-9921-51537db3f5aa","key":"m0-environment-baseline","ts":"2026-11-19T13:56:07.511016+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/1f5f629b-eebe-4770-9921-51537db3f5aa.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.pm_decision_background · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"8b9e49eb-ead9-4c3e-a12d-a22087172994","key":"gaze-integration-spike","ts":"2026-11-19T14:08:43.053Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/8b9e49eb-ead9-4c3e-a12d-a22087172994.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"6d26d528-df43-40a8-9bb7-b78c371119f9","key":"gaze-integration-spike","ts":"2026-11-19T14:15:55.549Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/6d26d528-df43-40a8-9bb7-b78c371119f9.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-pm-steer","reason":"DP 未配置","code":"unconfigured","stage":"pre-transport","id":"92500127-250d-4a37-be83-e16a3c1acc18","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T14:34:20.456Z","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/92500127-250d-4a37-be83-e16a3c1acc18.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-QG","reason":"单字段超限","code":"input-incomplete","stage":"public-execute","id":"896ec525-cf6f-4d4e-ab5d-f6dd5f747074","key":"ueperf-platform","ts":"2026-11-19T14:35:09.139Z","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/896ec525-cf6f-4d4e-ab5d-f6dd5f747074.json","detail":null,"kind":"recorded-block","fields":["review_evidence[0] · max-bytes"],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-QG","reason":"单字段超限","code":"input-incomplete","stage":"public-execute","id":"0bb8aeba-d936-4fd5-8037-28391dd85ff5","key":"ueperf-platform","ts":"2026-11-19T14:35:09.165Z","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/0bb8aeba-d936-4fd5-8037-28391dd85ff5.json","detail":null,"kind":"recorded-block","fields":["review_evidence[0] · max-bytes"],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-QG","reason":"依据与选项绑定","code":"input-incomplete","stage":"public-execute","id":"b97cb967-a92d-4d7c-adb7-7bf1a3bcb907","key":"ueperf-platform","ts":"2026-11-19T14:36:17.203Z","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/b97cb967-a92d-4d7c-adb7-7bf1a3bcb907.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-QG","reason":"依据与选项绑定","code":"input-incomplete","stage":"public-execute","id":"69fca2f7-0c6c-487e-8af5-50f0249318d8","key":"ueperf-platform","ts":"2026-11-19T14:36:17.227Z","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/69fca2f7-0c6c-487e-8af5-50f0249318d8.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-QG","reason":"依据与选项绑定","code":"input-incomplete","stage":"public-execute","id":"9b8f8c1a-406e-48f7-b922-7bfa79a2595b","key":"gaze-integration-spike","ts":"2026-11-19T14:41:54.514Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/9b8f8c1a-406e-48f7-b922-7bfa79a2595b.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-sign-key","reason":"签收材料准备失败","code":"failed","stage":"signoff","id":"38f7d52e-3205-4a6c-acf3-6b861928fac9","key":"gaze-integration-spike","ts":"2026-11-19T14:47:55.576686+00:00","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/38f7d52e-3205-4a6c-acf3-6b861928fac9.json","detail":"dp-sign-key did not produce a conclusion (input-incomplete) | file evidence preparation failed; no request sent","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"d3472348-065b-4b44-99dd-cc0ec46f6ac6","key":"gaze-agent-contracts","ts":"2026-11-19T14:54:24.480Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/d3472348-065b-4b44-99dd-cc0ec46f6ac6.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"8f5ceb31-db2e-4f6b-bdf4-d86965372825","key":"gaze-agent-contracts","ts":"2026-11-19T14:54:24.487Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/8f5ceb31-db2e-4f6b-bdf4-d86965372825.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"public-execute","id":"d16a6df8-e645-4636-9403-911320702116","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T14:56:00.329Z","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/d16a6df8-e645-4636-9403-911320702116.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[0].applies_to · required or invalid","preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"1d5f60a2-5f21-4a51-9b7a-c981e003cc28","key":"scene-profiler-shadow-cache-auto","ts":"2026-11-19T14:59:24.315553+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/1d5f60a2-5f21-4a51-9b7a-c981e003cc28.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"9e5b7ccc-fd23-4d4d-8b5f-c5ece7de4a52","key":"gaze-agent-contracts","ts":"2026-11-19T15:14:49.421Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/9e5b7ccc-fd23-4d4d-8b5f-c5ece7de4a52.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"3b9dae53-0f74-4df4-b77d-35487a34190c","key":"gaze-agent-contracts","ts":"2026-11-19T15:30:24.863Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/3b9dae53-0f74-4df4-b77d-35487a34190c.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"97c4e46c-4086-43c2-af52-3c148444718a","key":"scene-profiler-shadow-cache-auto","ts":"2026-11-19T15:32:03.952464+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/97c4e46c-4086-43c2-af52-3c148444718a.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"b04405e5-1acb-4f01-a0eb-35b06cb38cc8","key":"scene-profiler-shadow-cache-auto","ts":"2026-11-19T15:37:34.212303+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/b04405e5-1acb-4f01-a0eb-35b06cb38cc8.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"838ff27a-508d-4af2-a167-1527367c2c11","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T15:45:02.441814+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/838ff27a-508d-4af2-a167-1527367c2c11.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"e1320aac-9446-468f-914c-fa3f7d3d3464","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T15:46:30.394386+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/e1320aac-9446-468f-914c-fa3f7d3d3464.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"c36cd4e8-30c6-4691-a36f-3c304705e209","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T15:50:18.474812+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/c36cd4e8-30c6-4691-a36f-3c304705e209.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-QG","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"ef5c9ae6-b18f-4b96-8522-418974d3c670","key":"scene-profiler-shadow-cache-auto","ts":"2026-11-19T15:53:23.410484+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/ef5c9ae6-b18f-4b96-8522-418974d3c670.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.\u003ckey> · referenced file is outside the configured read roots"],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"c274013a-a520-4ea2-9fc3-b162bf246ef3","key":"scene-profiler-shadow-cache-auto","ts":"2026-11-19T16:18:42.559058+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/c274013a-a520-4ea2-9fc3-b162bf246ef3.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"ca4fd71d-6816-4ac8-a324-1aa0473a85da","key":"scene-profiler-shadow-cache-auto","ts":"2026-11-19T16:40:11.816781+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/ca4fd71d-6816-4ac8-a324-1aa0473a85da.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"cce58e19-2523-4c91-bc41-5fb569d33336","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T16:45:14.794917+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/cce58e19-2523-4c91-bc41-5fb569d33336.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"11d16929-b221-446c-91e7-64d068d6658c","key":"gaze-context-capture","ts":"2026-11-19T16:52:07.139Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/11d16929-b221-446c-91e7-64d068d6658c.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"d5198dc4-ab06-492e-8b64-6e9dac1d88d0","key":"gaze-context-capture","ts":"2026-11-19T16:52:31.653Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/d5198dc4-ab06-492e-8b64-6e9dac1d88d0.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"61774faf-e060-4b03-a081-ddf0bfa1e859","key":"work-memory","ts":"2026-11-19T16:53:26.488721+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/61774faf-e060-4b03-a081-ddf0bfa1e859.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"05051848-4fb8-4944-802b-559e67afbf7f","key":"m0-plugin-integration","ts":"2026-11-19T17:11:58.039117+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/05051848-4fb8-4944-802b-559e67afbf7f.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"34f98af6-f1e3-4592-859b-606ffe6c98fa","key":"gaze-context-capture","ts":"2026-11-19T17:16:36.451Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/34f98af6-f1e3-4592-859b-606ffe6c98fa.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"168e9cdb-c893-44a2-9a33-0accefb4b563","key":"gaze-context-capture","ts":"2026-11-19T17:16:36.459Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/168e9cdb-c893-44a2-9a33-0accefb4b563.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"ae63a718-a229-4bfc-8b1d-2ed2265ca727","key":"scene-profiler-global-shadow-rules","ts":"2026-11-19T17:19:17.505346+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/ae63a718-a229-4bfc-8b1d-2ed2265ca727.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-QG","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"3fe36da2-2c82-4bda-9fa6-3a06937c1830","key":"scene-profiler-shadow-cache-auto","ts":"2026-11-19T17:20:38.154649+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/3fe36da2-2c82-4bda-9fa6-3a06937c1830.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.\u003ckey> · referenced file is unreadable or is not UTF-8 text"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"59ae541d-85e1-4b35-a113-ba0edb4ea420","key":"gaze-context-capture","ts":"2026-11-19T17:34:32.879Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/59ae541d-85e1-4b35-a113-ba0edb4ea420.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"0606eee7-a55b-4bb0-82d4-bca0cb7b9059","key":"gaze-context-capture","ts":"2026-11-19T17:47:44.652458+00:00","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/0606eee7-a55b-4bb0-82d4-bca0cb7b9059.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.pm_decision_background · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"387ab194-b7cf-415a-848f-4f0c927776e6","key":"gaze-context-capture","ts":"2026-11-19T17:49:57.787Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/387ab194-b7cf-415a-848f-4f0c927776e6.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"c81775d4-fae6-4c95-ad75-35993c6b327f","key":"gaze-context-capture","ts":"2026-11-19T18:05:06.940Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/c81775d4-fae6-4c95-ad75-35993c6b327f.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"bb570e8e-8e92-4ec6-b714-d367c5a6405d","key":"gaze-context-capture","ts":"2026-11-19T18:15:20.266Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/bb570e8e-8e92-4ec6-b714-d367c5a6405d.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"0503e0ea-bd10-4fb6-a8d5-ca59e57a72f4","key":"gaze-context-capture","ts":"2026-11-19T18:36:17.210Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/0503e0ea-bd10-4fb6-a8d5-ca59e57a72f4.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"6392414e-c02b-4399-b1cb-3197db232b49","key":"gaze-context-capture","ts":"2026-11-19T18:44:20.471Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/6392414e-c02b-4399-b1cb-3197db232b49.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"public-execute","id":"67f2cbeb-d8b6-4a80-8d44-25d1f83d1917","key":"gaze-context-capture","ts":"2026-11-19T19:21:18.912Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/67f2cbeb-d8b6-4a80-8d44-25d1f83d1917.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"5bfe3403-a9dd-4fe5-8b37-e98c7d4dbbab","key":"gaze-context-capture","ts":"2026-11-19T19:27:56.296Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/5bfe3403-a9dd-4fe5-8b37-e98c7d4dbbab.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"ae9b9d7c-b262-4ca7-a2f8-af69e1b94246","key":"gaze-context-capture","ts":"2026-11-19T19:47:08.637Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/ae9b9d7c-b262-4ca7-a2f8-af69e1b94246.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"4b679f30-865a-455f-a523-fb71224e0b61","key":"gaze-context-capture","ts":"2026-11-19T19:58:03.887Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/4b679f30-865a-455f-a523-fb71224e0b61.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Multi-Workers","dp":"dp-QG","reason":"依据与选项绑定","code":"input-incomplete","stage":"public-execute","id":"ad2186e1-e921-4254-9825-ba56608974b5","key":"mw-dual-build-artifacts","ts":"2026-11-20T03:46:50.107Z","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/ad2186e1-e921-4254-9825-ba56608974b5.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[0].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Multi-Workers","dp":"dp-QG","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"279f9287-9dc4-472b-8772-fd21aed51fd6","key":"mw-dual-build-artifacts","ts":"2026-11-20T03:47:56.573760+00:00","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/279f9287-9dc4-472b-8772-fd21aed51fd6.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.review_findings · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-QG","reason":"单字段超限","code":"input-incomplete","stage":"public-execute","id":"ee38824e-c38e-4803-840e-8445e5173e26","key":"work-memory","ts":"2026-11-20T04:34:57.869Z","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/ee38824e-c38e-4803-840e-8445e5173e26.json","detail":null,"kind":"recorded-block","fields":["review_evidence[11] · max-bytes"],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-w-type","reason":"凭据扫描拒绝","code":"input-incomplete","stage":"request","id":"cb6af5cf-cd53-4a1b-b200-d8c8880d0b42","key":"work-memory","ts":"2026-11-20T04:45:01.270747+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/cb6af5cf-cd53-4a1b-b200-d8c8880d0b42.json","detail":"prepared material cannot be proven secret-free; no request sent","kind":"recorded-block","fields":["material · contains credential-looking evidence; redact before sending"],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-pm-steer","reason":"凭据扫描拒绝","code":"input-incomplete","stage":"request","id":"d63ab979-c847-468f-a6aa-92eb221a03ca","key":"work-memory","ts":"2026-11-20T06:39:04.939483+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/d63ab979-c847-468f-a6aa-92eb221a03ca.json","detail":"prepared material cannot be proven secret-free; no request sent","kind":"recorded-block","fields":["material · contains credential-looking evidence; redact before sending"],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-pm-steer","reason":"凭据扫描拒绝","code":"input-incomplete","stage":"request","id":"cc246530-0378-46a2-b7be-14382aeab98a","key":"work-memory","ts":"2026-11-20T06:40:22.189551+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/cc246530-0378-46a2-b7be-14382aeab98a.json","detail":"prepared material cannot be proven secret-free; no request sent","kind":"recorded-block","fields":["material · contains credential-looking evidence; redact before sending"],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"接回凭据绑定失败","code":"input-incomplete","stage":"receipt-validation","id":"0d83d716-8c5b-4888-a099-f7e51506aa2c","key":"ueperf-t43","ts":"2026-11-20T06:50:38.834769+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/0d83d716-8c5b-4888-a099-f7e51506aa2c.json","detail":"Original ask had no task_key; decision_receipt supplied task_after and was refused locally.","kind":"user-requested retrospective audit; not host lifecycle receipt","fields":["task_after · supplied on a decision whose original meta.task_key is null"],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"接回凭据绑定失败","code":"input-incomplete","stage":"receipt-validation","id":"70b797a0-b83f-42b3-aaa8-3c04bf9915b2","key":"ueperf-t43","ts":"2026-11-20T06:50:38.835775+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/70b797a0-b83f-42b3-aaa8-3c04bf9915b2.json","detail":"Original ask had no task_key; decision_receipt supplied task_after and was refused locally.","kind":"user-requested retrospective audit; not host lifecycle receipt","fields":["task_after · supplied on a decision whose original meta.task_key is null"],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"public-execute","id":"a6300be1-2aa3-41d1-9b09-82825b9de861","key":"ueperf-t43","ts":"2026-11-20T07:46:30.165Z","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/a6300be1-2aa3-41d1-9b09-82825b9de861.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"62b8da12-6cc2-47ee-93b8-8c7532ab4fd7","key":"m0-plugin-integration","ts":"2026-11-20T08:59:34.309Z","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/62b8da12-6cc2-47ee-93b8-8c7532ab4fd7.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"authorization","id":"cf736c32-75a5-44ad-9538-d93fad3c3214","key":"gaze-context-capture","ts":"2026-11-20T09:19:08.476813+00:00","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/cf736c32-75a5-44ad-9538-d93fad3c3214.json","detail":"the current decision-point configuration disables this entry or could not be read","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"977e7852-e0a5-42cd-b8e9-1d317a48bebe","key":"gaze-context-capture","ts":"2026-11-20T10:10:47.721Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/977e7852-e0a5-42cd-b8e9-1d317a48bebe.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"d86e31af-e868-45fd-bd0d-0a1cb975feeb","key":"work-memory","ts":"2026-11-20T10:59:36.697066+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/d86e31af-e868-45fd-bd0d-0a1cb975feeb.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"上游 DNS 失败","code":"upstream-error","stage":"request","id":"099b9b06-3bd3-413e-bfed-042a2e9dea10","key":"scene-profiler-global-shadow-rules","ts":"2026-11-20T11:40:31.235156+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/099b9b06-3bd3-413e-bfed-042a2e9dea10.json","detail":"connection error: [Errno 11001] getaddrinfo failed","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"SceneProfiler","dp":"dp-w-type","reason":"上游 DNS 失败","code":"upstream-error","stage":"request","id":"97b212a2-33e4-468d-be16-b8f79d9720cb","key":"scene-profiler-global-shadow-rules","ts":"2026-11-20T11:59:11.837666+00:00","file":"E:/MWWS/SceneProfiler/.agenticdoc/_autopilot/dp-blocked/97b212a2-33e4-468d-be16-b8f79d9720cb.json","detail":"connection error: [Errno 11001] getaddrinfo failed","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Multi-Workers","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"cb2be922-ffc8-4bbc-8a2c-8abc413740e8","key":"mw-pm-dp-continuity","ts":"2026-11-20T12:50:42.324Z","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/cb2be922-ffc8-4bbc-8a2c-8abc413740e8.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Multi-Workers","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"02bca60c-3246-4b38-b5e2-ba03827c3adc","key":"mw-pm-dp-continuity","ts":"2026-11-20T12:51:44.017676+00:00","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/02bca60c-3246-4b38-b5e2-ba03827c3adc.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.pm_decision_background · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"12b1088e-eddf-4643-b44c-c64e9bb1fb05","key":"m0-frame-capture","ts":"2026-11-20T13:27:16.282909+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/12b1088e-eddf-4643-b44c-c64e9bb1fb05.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"6ef3471c-426f-47e8-b388-416638188a43","key":"gaze-context-capture","ts":"2026-11-20T13:29:44.879336+00:00","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/6ef3471c-426f-47e8-b388-416638188a43.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.pm_decision_background · referenced line range is outside the file or reversed"],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"52306f04-0ce0-46d1-a992-979a2a05c06e","key":"work-memory","ts":"2026-11-20T13:32:19.415Z","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/52306f04-0ce0-46d1-a992-979a2a05c06e.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"d5bf647f-64c7-435b-9cad-489eae90c4d8","key":"work-memory","ts":"2026-11-20T13:33:05.102634+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/d5bf647f-64c7-435b-9cad-489eae90c4d8.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-gate-approve","reason":"依据与材料字段绑定","code":"input-incomplete","stage":"preflight","id":"b6e4cd89-c074-43f4-989f-685ccb9c2541","key":"m0-frame-capture","ts":"2026-11-20T13:33:48.289Z","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/b6e4cd89-c074-43f4-989f-685ccb9c2541.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[0].material_refs · required or invalid"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-gate-approve","reason":"DP 禁用","code":"disabled","stage":"authorization","id":"32c288d9-cf29-4f91-afba-48b9b4b14851","key":"m0-frame-capture","ts":"2026-11-20T13:34:27.052207+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/32c288d9-cf29-4f91-afba-48b9b4b14851.json","detail":"the current decision-point configuration disables this entry or could not be read","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"b0e11816-e172-4a48-b16c-f6432b05fefe","key":"ueperf-t43","ts":"2026-11-20T13:46:47.208Z","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/b0e11816-e172-4a48-b16c-f6432b05fefe.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"ba02c930-3939-423f-b599-76ef9d56942d","key":"gaze-context-capture","ts":"2026-11-20T14:47:23.562599+00:00","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/ba02c930-3939-423f-b599-76ef9d56942d.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.pm_decision_background · referenced line range is outside the file or reversed"],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"17c2c45f-84c9-4a6e-9ca1-3ea5087afd95","key":"work-memory","ts":"2026-11-20T14:48:19.208196+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/17c2c45f-84c9-4a6e-9ca1-3ea5087afd95.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"f3e73b24-3580-4123-8fd0-97eb203962b7","key":"ueperf-t43","ts":"2026-11-20T14:56:41.762Z","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/f3e73b24-3580-4123-8fd0-97eb203962b7.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"80a3403f-6c80-42f5-a254-3f4da2cb34a3","key":"ueperf-t43","ts":"2026-11-20T14:57:51.866965+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/80a3403f-6c80-42f5-a254-3f4da2cb34a3.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.pm_decision_background · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"7ac36aba-b5f9-4aa4-a1fd-e61a9144ea16","key":"ueperf-t43","ts":"2026-11-20T15:35:00.204600+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/7ac36aba-b5f9-4aa4-a1fd-e61a9144ea16.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.worker_execution · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"69c80a24-0ff0-489b-82c9-b6c910e99d20","key":"m0-frame-capture","ts":"2026-11-20T15:38:03.168132+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/69c80a24-0ff0-489b-82c9-b6c910e99d20.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"authorization","id":"4e803f63-9b7a-4586-94d9-8e48996dd7bd","key":"gaze-context-capture","ts":"2026-11-20T15:39:21.493167+00:00","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/4e803f63-9b7a-4586-94d9-8e48996dd7bd.json","detail":"the current decision-point configuration disables this entry or could not be read","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"authorization","id":"1454448b-7ee1-4397-ae85-9fe6dda7057f","key":"gaze-context-capture","ts":"2026-11-20T15:39:21.869801+00:00","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/1454448b-7ee1-4397-ae85-9fe6dda7057f.json","detail":"the current decision-point configuration disables this entry or could not be read","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"a6180471-1a45-497c-8ed9-a14f7ec7c389","key":"m0-frame-capture","ts":"2026-11-20T15:45:07.196Z","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/a6180471-1a45-497c-8ed9-a14f7ec7c389.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"authorization","id":"bce4d6df-52bb-4540-8008-6f48bfc853d1","key":"gaze-context-capture","ts":"2026-11-20T15:48:53.230405+00:00","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/bce4d6df-52bb-4540-8008-6f48bfc853d1.json","detail":"the current decision-point configuration disables this entry or could not be read","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"authorization","id":"845dba56-9f6b-473b-94b6-b006d64fa030","key":"gaze-context-capture","ts":"2026-11-20T15:48:53.610840+00:00","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/845dba56-9f6b-473b-94b6-b006d64fa030.json","detail":"the current decision-point configuration disables this entry or could not be read","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"88516268-0c67-4f1a-af26-16b412f188bd","key":"ueperf-t43","ts":"2026-11-20T15:50:25.773322+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/88516268-0c67-4f1a-af26-16b412f188bd.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.worker_execution · referenced file contains binary/control data"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"27157038-29ee-4cfe-8d51-a71ed69a912f","key":"m0-frame-capture","ts":"2026-11-20T15:56:57.613616+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/27157038-29ee-4cfe-8d51-a71ed69a912f.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"c3b34c4b-883d-4b0b-a05b-cdd81893dc64","key":"m0-frame-capture","ts":"2026-11-20T16:10:10.292364+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/c3b34c4b-883d-4b0b-a05b-cdd81893dc64.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-QG","reason":"仅知前置检查失败","code":"input-incomplete","stage":"preflight","id":"e1a0d444-6cf4-4704-9c61-e5c171899ea0","key":"m0-frame-capture","ts":"2026-11-20T16:16:31.033Z","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/e1a0d444-6cf4-4704-9c61-e5c171899ea0.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-QG","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"23126bd3-fbf9-425f-aeb8-58b62926ca14","key":"m0-frame-capture","ts":"2026-11-20T16:16:55.585Z","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/23126bd3-fbf9-425f-aeb8-58b62926ca14.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[0].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-QG","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"0ff0dd54-eb9d-4c65-b043-0a9ebd233a95","key":"m0-frame-capture","ts":"2026-11-20T17:14:05.194Z","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/0ff0dd54-eb9d-4c65-b043-0a9ebd233a95.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[0].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-QG","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"a4e13397-8118-4619-9e1a-2c6c9426b2b5","key":"m0-frame-capture","ts":"2026-11-20T17:14:54.270946+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/a4e13397-8118-4619-9e1a-2c6c9426b2b5.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference"],"transport":"not-sent"},{"project":"Multi-Workers","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"6a760f08-e1d4-4373-990f-5133f1401b0d","key":"mw-pm-dp-continuity","ts":"2026-11-20T17:22:17.382455+00:00","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/6a760f08-e1d4-4373-990f-5133f1401b0d.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"6f7f4e61-81f2-4e36-a571-f828410b6445","key":"ueperf-t43","ts":"2026-11-20T17:23:11.777Z","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/6f7f4e61-81f2-4e36-a571-f828410b6445.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[0].applies_to · required or invalid","preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Multi-Workers","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"1ec91853-4127-4589-9362-680ceee0062c","key":"mw-pm-dp-continuity","ts":"2026-11-20T17:24:47.193744+00:00","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/1ec91853-4127-4589-9362-680ceee0062c.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"c44720bd-2257-4853-8e08-189cf3ef2d00","key":"work-memory","ts":"2026-11-20T17:32:10.202758+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/c44720bd-2257-4853-8e08-189cf3ef2d00.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"aa28c0ad-1b8c-43ff-80e5-28f52a370646","key":"ueperf-t43","ts":"2026-11-20T17:34:35.466Z","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/aa28c0ad-1b8c-43ff-80e5-28f52a370646.json","detail":null,"kind":"recorded-block","fields":["context.replan_version · required or invalid","context.replan_basis_id · required or invalid","context.t068_status · required or invalid","context.t068_probe · required or invalid","context.t068_artifacts · required or invalid","context.t069_status · required or invalid","preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"d0018f86-53c3-4612-92ef-2856a222fc1a","key":"gaze-context-capture","ts":"2026-11-20T17:40:40.975Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/d0018f86-53c3-4612-92ef-2856a222fc1a.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[0].applies_to · required or invalid","preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-QG","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"26d10fe3-1104-4711-b1e5-35d8dab80a61","key":"m0-frame-capture","ts":"2026-11-20T17:46:20.703106+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/26d10fe3-1104-4711-b1e5-35d8dab80a61.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference"],"transport":"not-sent"},{"project":"RenderPerformance","dp":"dp-QG","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"ac35796b-64e3-46eb-9231-fa0efd4d929d","key":"m0-frame-capture","ts":"2026-11-20T17:46:46.107110+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/ac35796b-64e3-46eb-9231-fa0efd4d929d.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.\u003ckey> · referenced file is missing or cannot be resolved","material.\u003ckey> · referenced file is missing or cannot be resolved","material.\u003ckey> · referenced file is missing or cannot be resolved","material.\u003ckey> · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"Multi-Workers","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"aff8bb30-a3b7-4744-9bf8-d14011dfdca8","key":"mw-pm-dp-continuity","ts":"2026-11-20T17:47:46.566863+00:00","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/aff8bb30-a3b7-4744-9bf8-d14011dfdca8.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.pm_decision_background · referenced line range is outside the file or reversed","material.pm_decision_background · referenced line range is outside the file or reversed"],"diagnostics":["evidence-range-out-of-bounds","evidence-range-out-of-bounds"],"transport":"not-sent"},{"project":"RenderPerformance","dp":"dp-QG","reason":"仅知前置检查失败","code":"input-incomplete","stage":"preflight","id":"99ecd5a2-2b93-4cf6-a645-4b97fa50cb27","key":"m0-frame-capture","ts":"2026-11-20T17:49:09.005Z","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/99ecd5a2-2b93-4cf6-a645-4b97fa50cb27.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Multi-Workers","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"bb7b4e1f-bc45-4bea-8e6a-8e70e7737390","key":"mw-pm-dp-continuity","ts":"2026-11-20T17:50:15.579854+00:00","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/bb7b4e1f-bc45-4bea-8e6a-8e70e7737390.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced line range is outside the file or reversed","material.task_requirements · referenced line range is outside the file or reversed","material.task_deliverables · referenced line range is outside the file or reversed"],"diagnostics":["evidence-range-out-of-bounds","evidence-range-out-of-bounds","evidence-range-out-of-bounds"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"c7b7e13d-1be5-4874-8c0a-bbc7df84efcf","key":"work-memory","ts":"2026-11-20T18:03:13.894Z","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/c7b7e13d-1be5-4874-8c0a-bbc7df84efcf.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[0].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Multi-Workers","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"d4ea2dd7-50a6-44ba-8c3b-7ace4b939d5f","key":"mw-pm-dp-continuity","ts":"2026-11-21T03:07:57.664825+00:00","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/d4ea2dd7-50a6-44ba-8c3b-7ace4b939d5f.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey> · expected field, path and optional lines"],"diagnostics":["invalid-evidence-reference"],"transport":"not-sent"},{"project":"Multi-Workers","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"281ce532-9827-4f64-88e6-d196751d15ac","key":"mw-pm-dp-continuity","ts":"2026-11-21T03:11:12.855347+00:00","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/281ce532-9827-4f64-88e6-d196751d15ac.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference"],"transport":"not-sent"},{"project":"Multi-Workers","dp":"dp-pm-steer","reason":"上游 DNS 失败","code":"upstream-error","stage":"request","id":"a9dc5fba-b2e9-442c-bb73-fa4f47e52500","key":"mw-pm-dp-continuity","ts":"2026-11-21T03:12:16.054189+00:00","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/a9dc5fba-b2e9-442c-bb73-fa4f47e52500.json","detail":"connection error: [Errno 11001] getaddrinfo failed","kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"6c17a1c6-9884-446d-bd75-08ba5d537693","key":"m0-frame-capture","ts":"2026-11-21T03:21:38.836057+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/6c17a1c6-9884-446d-bd75-08ba5d537693.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference"],"transport":"not-sent"},{"project":"RenderPerformance","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"82b5da7b-d499-4412-a061-4f14c69c66a5","key":"m0-frame-capture","ts":"2026-11-21T03:21:59.572552+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/82b5da7b-d499-4412-a061-4f14c69c66a5.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.pm_decision_background · referenced line range is outside the file or reversed"],"diagnostics":["evidence-range-out-of-bounds"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"01981591-b97c-479e-9365-ce7a4dfb1137","key":"work-memory","ts":"2026-11-21T03:55:30.056387+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/01981591-b97c-479e-9365-ce7a4dfb1137.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference","invalid-evidence-reference"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"709bf8d9-3a22-42db-bbc9-2805eed9df91","key":"ueperf-t43","ts":"2026-11-21T04:14:52.526391+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/709bf8d9-3a22-42db-bbc9-2805eed9df91.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"材料超预算","code":"budget-exhausted","stage":"request","id":"c4e9f783-9afa-43bd-b930-9442d16351f7","key":"ueperf-t43","ts":"2026-11-21T04:15:31.728191+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/c4e9f783-9afa-43bd-b930-9442d16351f7.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["evidence_sources · compression-required: protected evidence and core material exceed the request budget; prepare narrower explicit line citations or an independently sourced summary artifact"],"diagnostics":["evidence-budget-exceeded"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-QG","reason":"仅知前置检查失败","code":"input-incomplete","stage":"preflight","id":"0a94c963-0a0a-4d5d-81e1-e006e3fc9750","key":"work-memory","ts":"2026-11-21T04:49:34.328Z","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/0a94c963-0a0a-4d5d-81e1-e006e3fc9750.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-QG","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"9a28678f-3970-4e43-aeec-129b15a31e4e","key":"work-memory","ts":"2026-11-21T04:50:05.975926+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/9a28678f-3970-4e43-aeec-129b15a31e4e.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-check-task","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"cb282789-37ab-4347-82e5-3e9b861a8692","key":"ueperf-t43","ts":"2026-11-21T06:10:58.081Z","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/cb282789-37ab-4347-82e5-3e9b861a8692.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[0].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"ee014189-b95b-4c6c-b90c-a4c6916a0e38","key":"work-memory","ts":"2026-11-21T06:34:17.898378+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/ee014189-b95b-4c6c-b90c-a4c6916a0e38.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.pm_decision_background · referenced file is outside the configured read roots"],"diagnostics":["evidence-read-denied"],"transport":"not-sent"},{"project":"RenderPerformance","dp":"dp-QG","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"5f5c7298-eeac-4107-9457-4e6b1fd2cf2f","key":"m0-frame-capture","ts":"2026-11-21T13:08:24.546370+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/5f5c7298-eeac-4107-9457-4e6b1fd2cf2f.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference","invalid-evidence-reference"],"transport":"not-sent"},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"91c8d956-789d-4dad-9092-c2094c45c5e6","key":"m0-frame-capture","ts":"2026-11-21T14:55:44.486546+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/91c8d956-789d-4dad-9092-c2094c45c5e6.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"Gaze","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"ed219637-c11c-4b56-bbba-e965c8596bb0","key":"gaze-context-capture","ts":"2026-11-21T15:15:45.886Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/ed219637-c11c-4b56-bbba-e965c8596bb0.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"6c02121b-8fdd-41be-a8ad-a4069b07e676","key":"m0-frame-capture","ts":"2026-11-21T17:33:26.153086+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/6c02121b-8fdd-41be-a8ad-a4069b07e676.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file contains binary/control data"],"diagnostics":["evidence-file-unreadable"],"transport":"not-sent"},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"a36d8488-5ee6-4a5b-b6fc-afb36290e8e0","key":"m0-frame-capture","ts":"2026-11-21T17:37:26.209615+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/a36d8488-5ee6-4a5b-b6fc-afb36290e8e0.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"7fb17c02-362b-4a83-8bb6-6f85539d6f8a","key":"m0-frame-capture","ts":"2026-11-21T17:47:04.530230+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/7fb17c02-362b-4a83-8bb6-6f85539d6f8a.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"52397f9d-5dc5-4df1-ba66-b230d1390b23","key":"m0-frame-capture","ts":"2026-11-21T18:16:37.254756+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/52397f9d-5dc5-4df1-ba66-b230d1390b23.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is outside the configured read roots"],"diagnostics":["evidence-read-denied"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"6a835ec2-a878-4d85-a101-5c74c7316e22","key":"ueperf-t43","ts":"2026-11-21T18:41:50.080861+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/6a835ec2-a878-4d85-a101-5c74c7316e22.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"b0a6c4c7-019a-4882-81a5-3b8d00ccb2ee","key":"ueperf-t43","ts":"2026-11-21T18:41:50.808881+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/b0a6c4c7-019a-4882-81a5-3b8d00ccb2ee.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"2030bb03-0001-4d13-b3e1-265f95fc2d0e","key":"work-memory","ts":"2026-11-21T18:42:01.956393+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/2030bb03-0001-4d13-b3e1-265f95fc2d0e.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved"],"transport":"not-sent"},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"d4334bf0-302c-4780-bc49-1cfcffd9152b","key":"m0-frame-capture","ts":"2026-11-21T18:42:19.207103+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/d4334bf0-302c-4780-bc49-1cfcffd9152b.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved"],"transport":"not-sent"},{"project":"RenderPerformance","dp":"dp-QG","reason":"仅知前置检查失败","code":"input-incomplete","stage":"preflight","id":"9e00137e-44ff-4742-96f1-214fc9911baf","key":"m0-frame-capture","ts":"2026-11-21T18:46:31.779Z","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/9e00137e-44ff-4742-96f1-214fc9911baf.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"依据与选项绑定","code":"input-incomplete","stage":"preflight","id":"e34e6e3d-d20a-4d8c-8cbc-b26b4b648686","key":"ueperf-t43","ts":"2026-11-21T18:54:56.591Z","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/e34e6e3d-d20a-4d8c-8cbc-b26b4b648686.json","detail":null,"kind":"recorded-block","fields":["preparation.basis_catalog[1].applies_to · required or invalid"],"diagnostics":[],"transport":null},{"project":"Multi-Workers","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"7805f852-5817-4fd7-8fce-a4f4706547b1","key":"mw-pm-dp-continuity","ts":"2026-11-21T18:58:42.933843+00:00","file":"E:/gitlite/Multi-Workers/.agenticdoc/_autopilot/dp-blocked/7805f852-5817-4fd7-8fce-a4f4706547b1.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference","invalid-evidence-reference"],"transport":"not-sent"},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"58fc14d7-dd8a-494c-aa40-fb3a4ce97d16","key":"m0-frame-capture","ts":"2026-11-21T19:24:14.465278+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/58fc14d7-dd8a-494c-aa40-fb3a4ce97d16.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"9223a776-42d3-4217-98c6-050676a2ca74","key":"ueperf-t43","ts":"2026-11-21T19:52:54.943100+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/9223a776-42d3-4217-98c6-050676a2ca74.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"d11cd95b-f438-4f26-bf47-d3d4ef9997ba","key":"ueperf-t43","ts":"2026-11-21T19:52:55.305505+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/d11cd95b-f438-4f26-bf47-d3d4ef9997ba.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"9d18c54e-8bc4-40a2-9f3d-df74cf680e89","key":"ueperf-t43","ts":"2026-11-21T20:01:42.624250+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/9d18c54e-8bc4-40a2-9f3d-df74cf680e89.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"1c69a7eb-d948-453d-9d2c-1e49d3fd6e05","key":"ueperf-t43","ts":"2026-11-21T20:01:42.991673+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/1c69a7eb-d948-453d-9d2c-1e49d3fd6e05.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"74e24500-2e24-4cd2-b74b-76c84ed5ce17","key":"ueperf-t43","ts":"2026-11-21T20:01:43.473295+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/74e24500-2e24-4cd2-b74b-76c84ed5ce17.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"03d9bca7-2ec4-4c2b-8fad-d4fcacd0df4c","key":"ueperf-t43","ts":"2026-11-21T20:13:44.430452+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/03d9bca7-2ec4-4c2b-8fad-d4fcacd0df4c.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"11eece1a-96fb-4938-ab11-a206e248beec","key":"ueperf-t43","ts":"2026-11-21T20:17:34.848433+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/11eece1a-96fb-4938-ab11-a206e248beec.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"aca614eb-f100-4256-9833-f38ffc95a7a3","key":"ueperf-t43","ts":"2026-11-21T20:20:24.099635+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/aca614eb-f100-4256-9833-f38ffc95a7a3.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"2f72df85-72e4-4639-8acc-38196e425fb5","key":"ueperf-t43","ts":"2026-11-21T20:31:24.602083+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/2f72df85-72e4-4639-8acc-38196e425fb5.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"2b96de7a-1706-4c56-9461-17416d4e6e76","key":"ueperf-t43","ts":"2026-11-21T20:35:03.326464+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/2b96de7a-1706-4c56-9461-17416d4e6e76.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"材料超预算","code":"budget-exhausted","stage":"request","id":"f0170bb5-37d8-4e42-b897-76fc19244185","key":"ueperf-t43","ts":"2026-11-21T20:39:55.372608+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/f0170bb5-37d8-4e42-b897-76fc19244185.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["evidence_sources · compression-required: protected evidence and core material exceed the request budget; prepare narrower explicit line citations or an independently sourced summary artifact"],"diagnostics":["evidence-budget-exceeded"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"fc81a7c7-9a84-4e5c-9458-4a9920f23e79","key":"ueperf-t43","ts":"2026-11-21T20:43:39.428468+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/fc81a7c7-9a84-4e5c-9458-4a9920f23e79.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"405b2254-80b5-40b7-b653-c68109e3da0b","key":"ueperf-t43","ts":"2026-11-21T20:43:39.782930+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/405b2254-80b5-40b7-b653-c68109e3da0b.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"07990d78-5ef9-461f-833f-c61898c7c956","key":"ueperf-t43","ts":"2026-11-21T20:43:40.148078+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/07990d78-5ef9-461f-833f-c61898c7c956.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"58d312df-2043-4821-90c8-3a55a1e50784","key":"ueperf-t43","ts":"2026-11-21T20:48:48.191865+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/58d312df-2043-4821-90c8-3a55a1e50784.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"99259fa8-28c3-49d6-9550-c4f56662edc6","key":"ueperf-t43","ts":"2026-11-21T20:55:59.647684+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/99259fa8-28c3-49d6-9550-c4f56662edc6.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"4d89ead7-2a5b-42fa-86ee-2f9feb001aa5","key":"ueperf-t43","ts":"2026-11-21T21:02:23.873705+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/4d89ead7-2a5b-42fa-86ee-2f9feb001aa5.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"9caf0bbd-fd5d-4c2d-9b5c-599294cb3478","key":"ueperf-t43","ts":"2026-11-21T21:16:15.447846+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/9caf0bbd-fd5d-4c2d-9b5c-599294cb3478.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"ab98c422-a614-44cd-9cc5-f33ff0173fba","key":"ueperf-t43","ts":"2026-11-21T21:20:49.439144+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/ab98c422-a614-44cd-9cc5-f33ff0173fba.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"345dcb06-e678-4343-a0f1-03d34a574f1c","key":"ueperf-t43","ts":"2026-11-21T21:21:07.475417+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/345dcb06-e678-4343-a0f1-03d34a574f1c.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"8417d8be-9754-43dc-b4d5-49bb22e557fd","key":"ueperf-t43","ts":"2026-11-21T21:21:25.723097+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/8417d8be-9754-43dc-b4d5-49bb22e557fd.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"646421ff-5f06-411f-b61b-ac8e022eb97c","key":"ueperf-t43","ts":"2026-11-21T21:40:22.060587+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/646421ff-5f06-411f-b61b-ac8e022eb97c.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"4954c186-5394-44bf-971f-4bd78f2246ce","key":"ueperf-t43","ts":"2026-11-21T21:52:09.276514+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/4954c186-5394-44bf-971f-4bd78f2246ce.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"ad8e76a5-2436-4402-a105-dea8b628b64e","key":"ueperf-t43","ts":"2026-11-21T22:06:44.309006+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/ad8e76a5-2436-4402-a105-dea8b628b64e.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.pm_decision_background · referenced file is outside the configured read roots"],"diagnostics":["evidence-read-denied"],"transport":"not-sent"},{"project":"UEPerformanceFlow","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"c95485d7-59b8-45fc-a807-850e5d4d9096","key":"ueperf-t43","ts":"2026-11-21T22:08:54.085483+00:00","file":"E:/MWWS/UEPerformanceFlow/.agenticdoc/_autopilot/dp-blocked/c95485d7-59b8-45fc-a807-850e5d4d9096.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is outside the configured read roots"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-read-denied"],"transport":"not-sent"},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"92ade68e-dd6c-4edc-b2bb-0a5af724c390","key":"gaze-context-capture","ts":"2026-11-22T02:40:46.069Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/92ade68e-dd6c-4edc-b2bb-0a5af724c390.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"82c91067-d16b-428b-932a-793b17df6b23","key":"gaze-context-capture","ts":"2026-11-22T02:41:23.745Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/82c91067-d16b-428b-932a-793b17df6b23.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"395b03aa-1782-4073-9b68-16d2d03ea3f8","key":"work-memory","ts":"2026-11-22T02:46:10.365271+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/395b03aa-1782-4073-9b68-16d2d03ea3f8.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"5d4afb8e-da5c-4f19-805c-3ee2287530af","key":"work-memory","ts":"2026-11-22T02:46:24.726488+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/5d4afb8e-da5c-4f19-805c-3ee2287530af.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"ca56a499-3b64-4922-8751-542193639068","key":"work-memory","ts":"2026-11-22T02:59:41.267825+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/ca56a499-3b64-4922-8751-542193639068.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"eaf4e340-0237-4155-9c45-50d51fcfa822","key":"work-memory","ts":"2026-11-22T03:23:10.778149+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/eaf4e340-0237-4155-9c45-50d51fcfa822.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"0e3fb241-3bdc-4405-b008-97864a405ec2","key":"work-memory","ts":"2026-11-22T03:51:36.675640+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/0e3fb241-3bdc-4405-b008-97864a405ec2.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"38745f28-7835-4bd8-891e-eb839cb96a74","key":"work-memory","ts":"2026-11-22T03:51:37.094014+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/38745f28-7835-4bd8-891e-eb839cb96a74.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"35a5c76c-f53d-4f1c-a824-2f725feb2e75","key":"work-memory","ts":"2026-11-22T03:51:37.465015+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/35a5c76c-f53d-4f1c-a824-2f725feb2e75.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"68fe2c02-be74-4ed7-9d01-a3bbd120f030","key":"work-memory","ts":"2026-11-22T03:52:26.643881+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/68fe2c02-be74-4ed7-9d01-a3bbd120f030.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"42c73f61-22ec-4144-bf5f-ebfc88c26e8b","key":"work-memory","ts":"2026-11-22T03:52:27.004957+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/42c73f61-22ec-4144-bf5f-ebfc88c26e8b.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"4bf876ce-2e58-4c17-b1ae-951bbce5f7b1","key":"work-memory","ts":"2026-11-22T04:07:22.431508+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/4bf876ce-2e58-4c17-b1ae-951bbce5f7b1.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved"],"transport":"not-sent"},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"2418184a-99d7-4267-b73a-c2311d2b011d","key":"m0-frame-capture","ts":"2026-11-22T04:10:47.593575+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/2418184a-99d7-4267-b73a-c2311d2b011d.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_goal · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"165a876d-be0a-43e8-a078-13beee574e9a","key":"gaze-context-capture","ts":"2026-11-22T04:11:41.427Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/165a876d-be0a-43e8-a078-13beee574e9a.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"7d781391-be23-42de-8724-ad4eb1216456","key":"gaze-context-capture","ts":"2026-11-22T04:31:44.662Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/7d781391-be23-42de-8724-ad4eb1216456.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"RenderPerformance","dp":"dp-w-type","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"67e1df56-a053-4d85-9252-78714a67b1e5","key":"m0-frame-capture","ts":"2026-11-22T04:38:07.455767+00:00","file":"E:/MWWS/RenderPerformance/.agenticdoc/_autopilot/dp-blocked/67e1df56-a053-4d85-9252-78714a67b1e5.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["material.task_goal · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved","material.task_requirements · referenced file is missing or cannot be resolved"],"diagnostics":["evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved","evidence-file-unresolved"],"transport":"not-sent"},{"project":"Bearing","dp":"dp-pm-steer","reason":"文件证据准备失败","code":"input-incomplete","stage":"request","id":"8a1b3e41-5472-445f-b688-f9dabe6adf64","key":"work-memory","ts":"2026-11-22T04:56:28.351783+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/8a1b3e41-5472-445f-b688-f9dabe6adf64.json","detail":"file evidence preparation failed; no request sent","kind":"recorded-block","fields":["\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field","\u003ckey>.field · expected an existing material or prepared basis text field"],"diagnostics":["invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference","invalid-evidence-reference"],"transport":"not-sent"},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"f41e1b4c-63f7-411c-8e39-bed2ead8b26a","key":"gaze-insights-evidence","ts":"2026-11-22T06:23:49.717Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/f41e1b4c-63f7-411c-8e39-bed2ead8b26a.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"5935b5c8-6a10-44f2-86e7-3ea42dbcb565","key":"gaze-insights-evidence","ts":"2026-11-22T06:23:49.723Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/5935b5c8-6a10-44f2-86e7-3ea42dbcb565.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"e302fc15-7cdb-4a3c-a1be-2b520d5f34be","key":"gaze-insights-evidence","ts":"2026-11-22T06:23:49.730Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/e302fc15-7cdb-4a3c-a1be-2b520d5f34be.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Bearing","dp":"dp-pm-steer","reason":"凭据扫描拒绝","code":"input-incomplete","stage":"request","id":"b2ab3612-2d7c-4263-8e91-acf94fe4af37","key":"work-memory","ts":"2026-11-22T06:33:59.410881+00:00","file":"E:/gitlite/Bearing/.agenticdoc/_autopilot/dp-blocked/b2ab3612-2d7c-4263-8e91-acf94fe4af37.json","detail":"prepared material cannot be proven secret-free; no request sent","kind":"recorded-block","fields":["material · contains credential-looking evidence; redact before sending"],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"7be7c856-9f15-45f7-81f3-ccb52fd6cfd3","key":"gaze-insights-evidence","ts":"2026-11-22T06:39:32.558Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/7be7c856-9f15-45f7-81f3-ccb52fd6cfd3.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null},{"project":"Gaze","dp":"dp-w-type","reason":"DP 禁用","code":"disabled","stage":"pre-transport","id":"1360d8d6-d6af-444b-86ee-7ba597a84343","key":"gaze-insights-evidence","ts":"2026-11-22T06:39:32.564Z","file":"E:/MWWS/Gaze/.agenticdoc/_autopilot/dp-blocked/1360d8d6-d6af-444b-86ee-7ba597a84343.json","detail":null,"kind":"recorded-block","fields":[],"diagnostics":[],"transport":null}],"projects":["Gaze","UEPerformanceFlow","RenderPerformance","Bearing","SceneProfiler","Multi-Workers"],"dps":["dp-w-type","dp-pm-steer","dp-QG","dp-gate-approve","dp-sign-key","dp-w-check-task","dp-auto","dp-route"],"reasons":["文件证据准备失败","DP 禁用","依据与选项绑定","DP 未配置","单字段超限","凭据扫描拒绝","仅知前置检查失败","上游 DNS 失败","接回凭据绑定失败","材料超预算","原 key 未认领","签收材料准备失败","依据与材料字段绑定"]}</script>
+<script>
+(() => {
+  const host = document.getElementById("receipt-explorer");
+  const data = JSON.parse(document.getElementById("receipt-data").textContent);
+  const create = (tag, text, className) => {
+    const node = document.createElement(tag);
+    if (text) node.textContent = text;
+    if (className) node.className = className;
+    return node;
+  };
+  const style = create("style");
+  style.textContent = `
+    #receipt-explorer { margin: 1.2rem 0 1.8rem; }
+    .receipt-filters, .receipt-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 195px), 1fr)); gap: .8rem; }
+    .receipt-filters label { display: flex; flex-direction: column; gap: .25rem; font-size: .86rem; font-weight: 600; }
+    .receipt-filters input, .receipt-filters select { padding: .5rem .65rem; border: 1px solid #9badb8; border-radius: .45rem; min-width: 0; font: inherit; background: #fff; color: #112c41; }
+    .receipt-charts > section { min-width: 0; padding: .85rem; border: 1px solid #c5d1d9; border-radius: .65rem; background: #f5f9fb; }
+    .receipt-charts h3 { margin: 0 0 .6rem; font-size: 1rem; }
+    .receipt-bar { display: grid; grid-template-columns: minmax(0, 1fr) 3ch; gap: .2rem .55rem; width: 100%; border: 0; padding: .3rem .25rem; background: transparent; text-align: left; color: #112c41; cursor: pointer; }
+    .receipt-bar:hover, .receipt-bar[aria-pressed="true"] { background: #dcecf3; border-radius: .25rem; }
+    .receipt-bar span { overflow-wrap: anywhere; font-size: .79rem; }
+    .receipt-bar b { font-size: .82rem; text-align: right; font-variant-numeric: tabular-nums; }
+    .receipt-bar i { grid-column: span 2; height: 4px; border-radius: 10px; background: #dee8ed; }
+    .receipt-bar i::before { display: block; content: ""; width: var(--width); height: 100%; background: #137c8e; border-radius: 10px; }
+    .receipt-results { margin-top: 1.2rem; }
+    .receipt-results details { border-bottom: 1px solid #d2dee6; padding: .7rem .2rem; overflow-wrap: anywhere; scroll-margin-top: 5rem; }
+    .receipt-results summary { cursor: pointer; font-size: .9rem; font-weight: 600; }
+    .receipt-results p { margin: .25rem 0; font-size: .84rem; line-height: 1.55; }
+    .receipt-results pre { white-space: pre-wrap; }
+    .receipt-results details[hidden] { display: none; }
+    .receipt-count { margin: .85rem 0; font-weight: 650; }
+    .receipt-reset { width: fit-content; padding: .4rem .7rem; }
+    @media print { .receipt-results { display: none; } }
+  `;
+  document.head.append(style);
+  const filters = create("div", "", "receipt-filters");
+  const chart = create("div", "", "receipt-charts");
+  const count = create("p", "", "receipt-count");
+  count.setAttribute("aria-live", "polite");
+  const list = create("div", "", "receipt-results");
+  const controls = {};
+  const facets = [
+    ["project", "按项目", data.projects],
+    ["dp", "按 DP", data.dps],
+    ["reason", "按合并原因", data.reasons],
+  ];
+  for (const [field, caption, options] of facets) {
+    const label = create("label", caption);
+    const select = create("select");
+    for (const value of ["", ...options]) {
+      const option = create("option", value || "全部");
+      option.value = value;
+      select.append(option);
+    }
+    select.addEventListener("change", update);
+    controls[field] = select;
+    label.append(select);
+    filters.append(label);
+  }
+  const search = create("input");
+  search.type = "search";
+  search.placeholder = "事件 ID、key、诊断";
+  search.addEventListener("input", update);
+  const label = create("label", "搜索");
+  label.append(search);
+  filters.append(label);
+  const diagnosticLabel = create("label", "文件诊断");
+  const diagnostic = create("select");
+  for (const value of ["", ...new Set(data.rows.flatMap((row) => row.diagnostics))]) {
+    const option = create("option", value || "全部");
+    option.value = value;
+    diagnostic.append(option);
+  }
+  diagnostic.addEventListener("change", update);
+  diagnosticLabel.append(diagnostic);
+  filters.append(diagnosticLabel);
+  const reset = create("button", "清除筛选", "receipt-reset");
+  reset.type = "button";
+  reset.addEventListener("click", () => clearFilters());
+  host.append(filters, count, chart, reset, list);
+
+  const entries = data.rows.slice().reverse().map((row) => {
+    const panel = create("details");
+    panel.id = "event-" + row.id;
+    const timestamp = new Date(row.ts).toLocaleString("zh-CN", {
+      timeZone: "Asia/Shanghai", hour12: false,
+    });
+    panel.append(
+      create("summary", [row.project, row.dp, row.reason, timestamp].join(" · ")),
+      create("p", row.id),
+      create("p", [row.key, row.stage, row.code, row.transport].filter(Boolean).join(" · ")),
+    );
+    for (const line of [row.detail, ...row.fields, ...new Set(row.diagnostics)]) {
+      if (line) panel.append(create("p", line));
+    }
+    if (row.kind !== "recorded-block") panel.append(create("p", row.kind));
+    const source = create("a", "查看原回执");
+    source.href = "file:///" + row.file.split("/").map((piece, i) => i ? encodeURIComponent(piece) : piece).join("/");
+    panel.append(source);
+    list.append(panel);
+    const searchText = Object.values(row).flat().join(" ").toLowerCase();
+    return { row, panel, searchText };
+  });
+  function clearFilters() {
+    for (const control of Object.values(controls)) control.value = "";
+    search.value = "";
+    diagnostic.value = "";
+    update();
+  }
+  function update() {
+    const term = search.value.trim().toLowerCase();
+    const selected = entries.filter(({row, searchText, panel}) => {
+      const visible = (!term || searchText.includes(term)) &&
+        (!diagnostic.value || row.diagnostics.includes(diagnostic.value)) &&
+        facets.every(([field]) => !controls[field].value || row[field] === controls[field].value);
+      panel.hidden = !visible;
+      return visible;
+    });
+    count.textContent = `${selected.length} / ${entries.length} 条回执`;
+    chart.replaceChildren();
+    for (const [field, caption, options] of facets) {
+      const section = create("section");
+      section.append(create("h3", caption));
+      const volumes = new Map(options.map((option) => [option, 0]));
+      for (const {row} of selected) volumes.set(row[field], volumes.get(row[field]) + 1);
+      const max = Math.max(1, ...volumes.values());
+      for (const [value, volume] of volumes) {
+        const bar = create("button", "", "receipt-bar");
+        bar.type = "button";
+        bar.setAttribute("aria-pressed", String(controls[field].value === value));
+        bar.style.setProperty("--width", Math.round(volume / max * 100) + "%");
+        bar.append(create("span", value), create("b", String(volume)), create("i"));
+        bar.addEventListener("click", () => {
+          controls[field].value = controls[field].value === value ? "" : value;
+          update();
+          controls[field].focus();
+        });
+        section.append(bar);
+      }
+      chart.append(section);
+    }
+  }
+  function reveal(hash) {
+    if (!hash.startsWith("#event-")) return;
+    const entry = entries.find(({panel}) => "#" + panel.id === hash);
+    if (!entry) return;
+    clearFilters();
+    entry.panel.open = true;
+  }
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest('a[href^="#event-"]');
+    if (link) reveal(link.hash);
+  }, true);
+  window.addEventListener("hashchange", () => reveal(location.hash), true);
+  update();
+  if (location.hash.startsWith("#event-")) {
+    reveal(location.hash);
+    window.dispatchEvent(new Event("hashchange"));
+  }
+})();
+
+</script>
+</body></html>

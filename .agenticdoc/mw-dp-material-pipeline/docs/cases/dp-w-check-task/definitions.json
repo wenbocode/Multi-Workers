@@ -1,0 +1,39 @@
+{
+  "references": {
+    "W1": {
+      "kind": "remaining_work",
+      "scope": "本次任务",
+      "content": "按真实编码约定验证非ASCII字段"
+    }
+  },
+  "terminology": {
+    "ASCII": {
+      "full_name": "American Standard Code for Information Interchange",
+      "meaning": "美国信息交换标准代码字符集；本例ASCII样本通过不能证明非ASCII字段可按真实编码正确解析。"
+    },
+    "ID": {
+      "full_name": "Identifier",
+      "meaning": "标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。"
+    },
+    "Worker": {
+      "full_name": "Worker agent",
+      "meaning": "执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。"
+    },
+    "desc": {
+      "full_name": "description",
+      "meaning": "本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+    },
+    "host": {
+      "full_name": "host runtime",
+      "meaning": "执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。"
+    },
+    "run": {
+      "full_name": "task execution run",
+      "meaning": "一次具体任务执行；结束本run不等于取消整个目标或项目事项。"
+    },
+    "补证": {
+      "full_name": "补充证据",
+      "meaning": "通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+    }
+  }
+}

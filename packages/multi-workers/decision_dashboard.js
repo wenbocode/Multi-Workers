@@ -3596,8 +3596,11 @@
       const options = Array.isArray(material.handling_options) ? material.handling_options : [];
       if (options.length < 2) {
         issues.push("dp-auto 候选不足：至少需要 2 个可区分候选（当前 " + String(options.length) + "）。");
+      } else if (options.length > 5) {
+        issues.push("dp-auto 候选超限：最多 5 个（当前 " + String(options.length) + "）。");
       }
       const ids = [];
+      const paths = new Map();
       options.forEach(function (option, index) {
         if (!option || typeof option !== "object" || Array.isArray(option)) {
           issues.push("候选 #" + String(index + 1) + " 不是对象。");
@@ -3609,6 +3612,12 @@
           }
         });
         if (typeof option.id === "string") ids.push(option.id);
+        const content = [option.description, option.consequence, option.risk, option.conditions];
+        if (content.every(function (value) { return typeof value === "string" && value.trim(); })) {
+          const path = JSON.stringify(content.map(function (value) { return value.trim().replace(/[ \t\r\n]+/g, " ").toLowerCase(); }));
+          if (paths.has(path)) issues.push("候选 #" + String(index + 1) + " 与 #" + String(paths.get(path) + 1) + " 的行动、后果、风险及条件相同。");
+          else paths.set(path, index);
+        }
       });
       if (ids.length !== new Set(ids).size) issues.push("dp-auto 候选 id 重复，不能区分选择。");
     }

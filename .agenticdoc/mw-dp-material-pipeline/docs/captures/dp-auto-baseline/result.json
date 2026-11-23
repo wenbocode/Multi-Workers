@@ -1,0 +1,59 @@
+{
+  "dp": "dp-auto",
+  "version": "v0.5-draft",
+  "started_utc": "2026-11-18T07:40:47.032614+00:00",
+  "finished_utc": "2026-11-18T07:40:47.877720+00:00",
+  "method": "POST",
+  "endpoint": "http://api.timiai.woa.com/ai_api_manage/llmproxy/v1/decisions",
+  "model": "jev-latest",
+  "attempts": 1,
+  "http_status": 200,
+  "latency_ms": 843,
+  "failure": null,
+  "capture": "complete",
+  "request_sha256": "de5dd966dd1a80eccfdd535034344747eb5977924850134297ed55bcc8d52f6d",
+  "request_bytes": 2429,
+  "response_sha256": "cb4146e578990d84dffb2ba0eb701385dd1e49d9d8c4f52d4185612344c70791",
+  "response_bytes": 321,
+  "response_content_type": "application/json",
+  "usage": {
+    "input_tokens": 1150,
+    "output_tokens": 39,
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "business_effects": false,
+  "official_decode": {
+    "valid": true,
+    "error": "",
+    "answers": {
+      "decision_selection": {
+        "value": "retryA",
+        "confidence": 0.16,
+        "probabilities": {
+          "diagnoseA": 0.42,
+          "retryA": 0.58
+        }
+      }
+    }
+  },
+  "local_decode": {
+    "valid": true,
+    "wire_id": "retryA",
+    "choice": "retry",
+    "basis_id": "retryA-basis",
+    "finding_ids": [],
+    "remaining_ids": [],
+    "confidence": 0.16,
+    "probabilities": {
+      "diagnoseA": 0.42,
+      "retryA": 0.58
+    },
+    "expected_match": true,
+    "confidence_policy": "not-evaluated-for-business",
+    "executed": false
+  },
+  "host_checks": "not-executed: synthetic reference, no real business owner/authorization",
+  "additional_transport_attempts": 0,
+  "reused_identical_initial_capture": true
+}

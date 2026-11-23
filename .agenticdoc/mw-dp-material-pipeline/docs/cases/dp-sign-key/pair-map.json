@@ -1,0 +1,44 @@
+[
+  {
+    "wire_id": "finalizeA",
+    "choice": "finalize",
+    "basis_id": "finalizeA-basis",
+    "criterion": "finalize：全部必需标准及独审证据齐备时才收尾；未知不能当pass。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "continueA",
+    "choice": "continue",
+    "basis_id": "continueA-basis",
+    "criterion": "continue：补AC-002中断证据并复核，保留未完成事实。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "confirmA",
+    "choice": "user-confirm",
+    "basis_id": "confirmA-basis",
+    "criterion": "user-confirm：仅对真实需用户决定且不能在原权限内取得的条件提具体问题。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  }
+]

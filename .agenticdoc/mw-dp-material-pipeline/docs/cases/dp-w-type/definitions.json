@@ -1,0 +1,29 @@
+{
+  "references": {},
+  "terminology": {
+    "CSV": {
+      "full_name": "Comma-Separated Values",
+      "meaning": "逗号分隔值文本格式；本例需正确转义逗号和双引号并保持往返解析一致。"
+    },
+    "ID": {
+      "full_name": "Identifier",
+      "meaning": "标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。"
+    },
+    "Worker": {
+      "full_name": "Worker agent",
+      "meaning": "执行已派发任务的Agent；自身可达性由实际当前Worker判断，准备助手不能冒充它。"
+    },
+    "desc": {
+      "full_name": "description",
+      "meaning": "本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+    },
+    "host": {
+      "full_name": "host runtime",
+      "meaning": "执行工具、核身份/读写范围/停止/预算的宿主框架；材料文本不能替它授予权限。"
+    },
+    "review": {
+      "full_name": "independent review",
+      "meaning": "独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+    }
+  }
+}

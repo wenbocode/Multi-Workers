@@ -1,0 +1,69 @@
+{
+  "dp": "dp-route",
+  "version": "v0.5-draft",
+  "started_utc": "2026-11-18T07:44:17.987096+00:00",
+  "finished_utc": "2026-11-18T07:44:19.941395+00:00",
+  "method": "POST",
+  "endpoint": "http://api.timiai.woa.com/ai_api_manage/llmproxy/v1/decisions",
+  "model": "jev-latest",
+  "attempts": 1,
+  "http_status": 200,
+  "latency_ms": 1953,
+  "failure": null,
+  "capture": "complete",
+  "request_sha256": "3b40984c3beb76a30204c0bf05af1a544429aa9f13dc897fcbb973421a30c3a8",
+  "request_bytes": 4332,
+  "response_sha256": "d4eeb7a5788d0185610d6d1abb7287c1e718ad1dc45f1e7248ac821efd188c62",
+  "response_bytes": 393,
+  "response_content_type": "application/json",
+  "usage": {
+    "input_tokens": 1889,
+    "output_tokens": 75,
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "business_effects": false,
+  "additional_transport_attempts": 1,
+  "reused_identical_initial_capture": false,
+  "official_decode": {
+    "valid": true,
+    "error": "",
+    "answers": {
+      "decision_selection": {
+        "value": "route4",
+        "confidence": 0.99,
+        "probabilities": {
+          "route1": 0.01,
+          "route2": 0.0,
+          "route3": 0.0,
+          "route4": 0.99,
+          "route5": 0.0,
+          "route6": 0.0,
+          "route7": 0.0
+        }
+      }
+    }
+  },
+  "local_decode": {
+    "valid": true,
+    "wire_id": "route4",
+    "choice": "dp-QG",
+    "basis_id": "route4-basis",
+    "finding_ids": [],
+    "remaining_ids": [],
+    "confidence": 0.99,
+    "probabilities": {
+      "route1": 0.01,
+      "route2": 0.0,
+      "route3": 0.0,
+      "route4": 0.99,
+      "route5": 0.0,
+      "route6": 0.0,
+      "route7": 0.0
+    },
+    "expected_match": true,
+    "confidence_policy": "not-evaluated-for-business",
+    "executed": false
+  },
+  "host_checks": "not-executed: synthetic reference, no real business owner/authorization"
+}

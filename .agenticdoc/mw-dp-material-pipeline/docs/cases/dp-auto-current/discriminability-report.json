@@ -1,0 +1,40 @@
+{
+  "status": "ready",
+  "scope": "synthetic-reference-only",
+  "semantic_review": "Codex作者核对，不是独立审核或通用语义证明",
+  "candidate_coverage": [
+    "retryA",
+    "diagnoseA"
+  ],
+  "decision_unit": "选择下一条有界路径及其条件后继；不是批准所有恢复动作",
+  "priority_source": "current_goal",
+  "pairwise": [
+    {
+      "left": "retryA",
+      "right": "diagnoseA",
+      "sources": [
+        "current_goal",
+        "timeout_record",
+        "health_contract"
+      ],
+      "left_better_when": "当前响应优先且未确认离线时，先重试直接接触目标输出，成功后避免额外健康读取。",
+      "right_better_when": "若已确认目标改为原因诊断优先，或新增适用当前离线信号，先快照可避免无效重试。",
+      "current_support": "本例响应优先，单次响应体超时未证明离线；快照为服务级汇总。",
+      "reversal_conditions": [
+        "来自原主体已确认的目标优先级变化",
+        "同范围新证据明确当前服务离线或约束改变"
+      ],
+      "not_proven": "未知成功概率与实际耗时；不声称先重试在所有分支更好。"
+    }
+  ],
+  "gaps": [],
+  "path_bounds": {
+    "retryA": 180,
+    "diagnoseA": 180
+  },
+  "original_budget_continues": true,
+  "source_support": {
+    "current_goal": "0abb9e91866d403545f8e504db88d71a3e2b8e98c6739c0ccba2d5d46b313c0c"
+  },
+  "input_sha256": "ffa98bc1193a7bd1e08aa2c424e1ab85d11ba7d58bd5b690e64d759b165c4225"
+}

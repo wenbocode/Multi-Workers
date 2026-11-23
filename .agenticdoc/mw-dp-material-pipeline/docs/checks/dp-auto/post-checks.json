@@ -1,0 +1,18 @@
+{
+  "input_contract": "pass",
+  "official_response_decode": true,
+  "pair_decode": true,
+  "selected_wire": "retryA",
+  "business_choice": "retry",
+  "selected_path_action_bound_seconds": 180,
+  "author_semantic_check": "先重试符合本例响应优先/尚未确认离线的目标与证据；不是唯一合法路径的证明。",
+  "confidence": 1.0,
+  "probabilities": {
+    "diagnoseA": 0.0,
+    "retryA": 1.0
+  },
+  "confidence_threshold_applied": false,
+  "production_identity_scope_authority_cancel_clock": "not-executed",
+  "business_commands_receipts_QG_sign": "not-executed",
+  "review_kind": "author self-check, no independent reviewer"
+}

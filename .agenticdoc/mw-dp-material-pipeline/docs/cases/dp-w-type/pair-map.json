@@ -1,0 +1,58 @@
+[
+  {
+    "wire_id": "codingA",
+    "choice": "coding",
+    "basis_id": "codingA-basis",
+    "criterion": "coding：有明确算法改动和测试交付时选coding。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "researchA",
+    "choice": "research",
+    "basis_id": "researchA-basis",
+    "criterion": "research：若当前工作仅为取证、无需修改代码时选research。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "reviewA",
+    "choice": "review",
+    "basis_id": "reviewA-basis",
+    "criterion": "review：若当前工作是审查别人已完成的产物时选review。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "visionA",
+    "choice": "vision",
+    "basis_id": "visionA-basis",
+    "criterion": "vision：若必须解释图像像素且host能力允许时选vision。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  }
+]

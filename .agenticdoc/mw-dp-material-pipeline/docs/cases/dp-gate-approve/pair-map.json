@@ -1,0 +1,58 @@
+[
+  {
+    "wire_id": "approveA",
+    "choice": "approve",
+    "basis_id": "approveA-basis",
+    "criterion": "approve：当前计划满足C1/C2且仍在原权限/预算内时批准该限定动作。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "steerA",
+    "choice": "steer",
+    "basis_id": "steerA-basis",
+    "criterion": "steer：若问题在组织/执行安排，交PM重排，不扩大当前动作范围。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "needFixA",
+    "choice": "need_fix",
+    "basis_id": "needFixA-basis",
+    "criterion": "need_fix：若安排明确但存在技术/材料缺口，交PM形成具体修复。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "rejectA",
+    "choice": "reject",
+    "basis_id": "rejectA-basis",
+    "criterion": "reject：若计划不应推进则拒绝；仅允许原授权的证据整理。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  }
+]

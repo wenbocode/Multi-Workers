@@ -1,0 +1,61 @@
+{
+  "dp": "dp-sign-key",
+  "version": "v0.5-draft",
+  "started_utc": "2026-11-18T07:44:16.933236+00:00",
+  "finished_utc": "2026-11-18T07:44:17.976096+00:00",
+  "method": "POST",
+  "endpoint": "http://api.timiai.woa.com/ai_api_manage/llmproxy/v1/decisions",
+  "model": "jev-latest",
+  "attempts": 1,
+  "http_status": 200,
+  "latency_ms": 1047,
+  "failure": null,
+  "capture": "complete",
+  "request_sha256": "609ae3e2283faa901f66d9fc5e5285a44c9faee220dff601720998900975e29c",
+  "request_bytes": 4436,
+  "response_sha256": "ddeeb5a2b562f5e486815877860dc36355e494f14bb9ec3cce173e97f380c066",
+  "response_bytes": 341,
+  "response_content_type": "application/json",
+  "usage": {
+    "input_tokens": 2003,
+    "output_tokens": 48,
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "business_effects": false,
+  "additional_transport_attempts": 1,
+  "reused_identical_initial_capture": false,
+  "official_decode": {
+    "valid": true,
+    "error": "",
+    "answers": {
+      "decision_selection": {
+        "value": "continueA",
+        "confidence": 1.0,
+        "probabilities": {
+          "confirmA": 0.0,
+          "continueA": 1.0,
+          "finalizeA": 0.0
+        }
+      }
+    }
+  },
+  "local_decode": {
+    "valid": true,
+    "wire_id": "continueA",
+    "choice": "continue",
+    "basis_id": "continueA-basis",
+    "finding_ids": [],
+    "remaining_ids": [],
+    "confidence": 1.0,
+    "probabilities": {
+      "confirmA": 0.0,
+      "continueA": 1.0,
+      "finalizeA": 0.0
+    },
+    "expected_match": true,
+    "confidence_policy": "not-evaluated-for-business",
+    "executed": false
+  },
+  "host_checks": "not-executed: synthetic reference, no real business owner/authorization"
+}

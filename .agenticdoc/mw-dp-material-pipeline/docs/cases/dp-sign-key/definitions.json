@@ -1,0 +1,44 @@
+{
+  "references": {
+    "AC-001": {
+      "kind": "acceptance_criterion",
+      "scope": "稳定导出",
+      "content": "特殊字符往返保持一致。"
+    },
+    "AC-002": {
+      "kind": "acceptance_criterion",
+      "scope": "稳定导出",
+      "content": "中断时不留下半成品。"
+    }
+  },
+  "terminology": {
+    "AC": {
+      "full_name": "Acceptance Criterion / Acceptance Criteria",
+      "meaning": "验收标准：已确认的应达到的业务结果；具体编号的完整正文在references中。"
+    },
+    "ID": {
+      "full_name": "Identifier",
+      "meaning": "标识符；候选ID由本次criteria给出含义，业务引用编号由references给出完整定义，不能自行猜测。"
+    },
+    "QG": {
+      "full_name": "Quality Gate",
+      "meaning": "质量门禁/正式质量审核：按已确认验收标准、验证结果和独立审查形成pass/fix/reopen业务结论；不等于模型置信度。"
+    },
+    "desc": {
+      "full_name": "description",
+      "meaning": "本次情境简述：目标、偏差、发生的事件、证据与未知；由原主体准备，最多10句/1000 tokens。"
+    },
+    "review": {
+      "full_name": "independent review",
+      "meaning": "独立审查：对当前对象/版本的标准、断言、实际证据和未覆盖面进行核对，不是作者自评。"
+    },
+    "独审": {
+      "full_name": "独立审查",
+      "meaning": "由与实现/准备角色独立的审查来源核对当前标准、实际证据和未覆盖面，不能以作者自评替代。"
+    },
+    "补证": {
+      "full_name": "补充证据",
+      "meaning": "通过原授权工具读取、调查或验证补足已明确的证据缺口，不能编造验证结果或刷新原预算。"
+    }
+  }
+}

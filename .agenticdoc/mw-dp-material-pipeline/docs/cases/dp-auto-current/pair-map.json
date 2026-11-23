@@ -1,0 +1,28 @@
+[
+  {
+    "wire_id": "retryA",
+    "choice": "retry",
+    "basis_id": "retryA-basis",
+    "criterion": "先重试路径：先用唯一一次60秒上限读取当前状态。信息价值：直接得到当前有效响应，或增加一次失败证据，不能证明根因。若成功立即结束；若失败且当时余量足够120秒加30秒报告，再读一次健康快照，随后报告有证据的阻塞或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：可能再次超时；快照仍可能无法解释本请求。适合优先当前响应且没有已确认离线证据的目标；根因诊断更重要或已有适用离线证据时价值下降。始终遵守公共停止条件，不再第二次重试。",
+    "material_refs": [
+      "state.material.objective",
+      "state.material.evidence",
+      "state.material.constraints"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "diagnoseA",
+    "choice": "diagnose",
+    "basis_id": "diagnoseA-basis",
+    "criterion": "先诊断路径：先读一次120秒上限的同服务健康快照。信息价值：得到服务级状态、实际采样时间与适用性；健康不能证明本状态接口可用。若适用且明确当前服务离线，报告阻塞并结束；若健康、不明或读失败且当时余量足够60秒加30秒报告，再用唯一一次60秒重试，随后报告响应或失败/未知并结束。动作合计上限180秒，非耗时预测。风险：取得当前状态前增加一次读取；可能节省对离线服务的无效重试。适合原因诊断优先或快照可先确认阻塞的情形。始终遵守公共停止条件，不再第二次读取。",
+    "material_refs": [
+      "state.material.objective",
+      "state.material.evidence",
+      "state.material.constraints"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  }
+]

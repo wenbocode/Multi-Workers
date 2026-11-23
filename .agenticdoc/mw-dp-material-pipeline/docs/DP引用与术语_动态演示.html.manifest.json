@@ -1,0 +1,254 @@
+{
+  "output": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\v05\\DP引用与术语_动态演示.html",
+  "title": "DP v0.5：完整设计、真实API返回与开发验证",
+  "sources": [
+    {
+      "id": "intro",
+      "path": "README.md",
+      "sha256": "7c93f1ae23ad46840190fedec1d3983f265a148cedfc7595db3ab4c93a470ed2"
+    },
+    {
+      "id": "rules",
+      "path": "window-rules.md",
+      "sha256": "ea849ab862f038d5db68e34b6f66a2a372587e5bf3f6c2850988d757b40c0d68"
+    },
+    {
+      "id": "live",
+      "path": "live-results.md",
+      "sha256": "5f2acb4631a46760766c7bac26c81b6a08925e1c2c55090dfa184f2bc6f54c04"
+    },
+    {
+      "id": "dp-w-type",
+      "path": "dp-w-type.md",
+      "sha256": "25edfa6e427c56b5487a1e9c6800136898887a397f9910f48706abcc0945dc3e"
+    },
+    {
+      "id": "dp-pm-steer",
+      "path": "dp-pm-steer.md",
+      "sha256": "ed51487bf0e2e45989f90b27d28dcde2dfe8de0c4d718543fcf087f78a86c674"
+    },
+    {
+      "id": "dp-w-check-task",
+      "path": "dp-w-check-task.md",
+      "sha256": "a1f4555f78072606b448eb4debd4c27296edadd41ad3c206b6c8c8161a095374"
+    },
+    {
+      "id": "dp-QG",
+      "path": "dp-QG.md",
+      "sha256": "e6bd3d8955cd9f317b5e731e83e16b1101996d7e9463886f32d242edec3c71f7"
+    },
+    {
+      "id": "dp-gate-approve",
+      "path": "dp-gate-approve.md",
+      "sha256": "73a329dd30c5a1978c203b120e03b91436e182ead62a53ba2da1eaa321c96a40"
+    },
+    {
+      "id": "dp-sign-key",
+      "path": "dp-sign-key.md",
+      "sha256": "0ccbb14b90138afc70519e3e07e5a28c4b8ef1ea0e7d72cb7c21fc739ad8c00b"
+    },
+    {
+      "id": "dp-auto",
+      "path": "dp-auto.md",
+      "sha256": "a6b855bb6f71a1a2fc99fbccecce9889044746e884d58d53fc084f1d587eaca8"
+    },
+    {
+      "id": "dp-route",
+      "path": "dp-route.md",
+      "sha256": "a5af099192e607699dc5f266b4585caa0d334546f8fc53519f903c060cdd4220"
+    },
+    {
+      "id": "actual-dp-w-type",
+      "path": "live-cases/dp-w-type.md",
+      "sha256": "a3d1791c0c7205467312fb997a80c7685f15e6da979b80660bdaa219907d9139"
+    },
+    {
+      "id": "actual-dp-pm-steer",
+      "path": "live-cases/dp-pm-steer.md",
+      "sha256": "a5fd63c29d9853494bf65298202e27e3b32f1953c6f7a4038765fca8451c2160"
+    },
+    {
+      "id": "actual-dp-w-check-task",
+      "path": "live-cases/dp-w-check-task.md",
+      "sha256": "4b11647f4c75121ab216a48b5be323bee2f3a1b8f26016394abaf710b192a7ba"
+    },
+    {
+      "id": "actual-dp-QG",
+      "path": "live-cases/dp-QG.md",
+      "sha256": "3e3c380f4eecc1a61759e23b172cf1507120c5c5530112dcabeb7b5bb4be0758"
+    },
+    {
+      "id": "actual-dp-gate-approve",
+      "path": "live-cases/dp-gate-approve.md",
+      "sha256": "337f4684950af86cacc856e1e23328f9941b7cb7e270adca49b296099b8d18a6"
+    },
+    {
+      "id": "actual-dp-sign-key",
+      "path": "live-cases/dp-sign-key.md",
+      "sha256": "413829c970190c1eb578e598709a50af31875aab4aebd9bfdc8b6eca4b3139c8"
+    },
+    {
+      "id": "actual-dp-auto",
+      "path": "live-cases/dp-auto.md",
+      "sha256": "0b664e0be90dcdc05a1d3580fa7ec05892037aa33dd464c5ed20d806e5c44812"
+    },
+    {
+      "id": "actual-dp-route",
+      "path": "live-cases/dp-route.md",
+      "sha256": "892768044449fdd64c4df79f3ecd64cbe4a81bb3dab751006b92732e3332da59"
+    },
+    {
+      "id": "api-return",
+      "path": "api-return.md",
+      "sha256": "12639ed7d54ac90de2b47a194f22984fd8926f8a65826286cdbfd7a5d1aebe11"
+    },
+    {
+      "id": "auto-design",
+      "path": "auto-design.md",
+      "sha256": "687dfd46ee786623df8cb3a2bfb0b69c8a46b624a72188995f3663215309cef2"
+    },
+    {
+      "id": "prepare-worker",
+      "path": "prepare-worker.md",
+      "sha256": "462b05b8bf9ef5ec325230d4e3c7fa158b1f3f9f4fe8a5ba3de106bac9efd71a"
+    },
+    {
+      "id": "development",
+      "path": "development-guide.md",
+      "sha256": "810629814679b71619ece9cd3e347dd75333ab7d86a6700cc397de24a88121de"
+    },
+    {
+      "id": "old-auto",
+      "path": "archive/dp-auto-before-integration.md",
+      "sha256": "7b0c96defd267065859270500db5c7ba69161cf172f3280319191f0dae121823"
+    },
+    {
+      "id": "current-auto-live",
+      "path": "live-cases/dp-auto-current.md",
+      "sha256": "46c649921e48ba375bf4aa1128b9e74d146f028e7b6a411c103a3d1e3c3ba802"
+    }
+  ],
+  "pages": [
+    {
+      "id": "intro",
+      "title": "完整设计验证总览",
+      "chapter": "规范",
+      "layout": "vertical",
+      "page": 1
+    },
+    {
+      "id": "api-return",
+      "title": "最新API原始返回：dp-auto",
+      "chapter": "API原始返回",
+      "layout": "vertical",
+      "page": 2
+    },
+    {
+      "id": "overview",
+      "title": "完整设计验证导航",
+      "chapter": "总览",
+      "layout": "overview",
+      "page": 3
+    },
+    {
+      "id": "local",
+      "title": "八DP本地决策本与字段表",
+      "chapter": "一：本地",
+      "layout": "vertical",
+      "page": 4
+    },
+    {
+      "id": "payload",
+      "title": "八DP完整payload及定义",
+      "chapter": "二：模型输入",
+      "layout": "vertical",
+      "page": 5
+    },
+    {
+      "id": "post",
+      "title": "返回后的反解与业务检查",
+      "chapter": "三：返回后",
+      "layout": "vertical",
+      "page": 6
+    },
+    {
+      "id": "rules",
+      "title": "准备方的覆盖与引用检查",
+      "chapter": "准备检查",
+      "layout": "vertical",
+      "page": 7
+    },
+    {
+      "id": "live",
+      "title": "真实jev结果与用量",
+      "chapter": "真实验证",
+      "layout": "vertical",
+      "page": 8
+    },
+    {
+      "id": "actual",
+      "title": "八DP实际body与原始返回",
+      "chapter": "真实回放",
+      "layout": "vertical",
+      "page": 9
+    },
+    {
+      "id": "auto-design",
+      "title": "dp-auto路径与可区分性",
+      "chapter": "开发设计",
+      "layout": "vertical",
+      "page": 10
+    },
+    {
+      "id": "prepare-worker",
+      "title": "prepare Worker完整流程",
+      "chapter": "开发设计",
+      "layout": "vertical",
+      "page": 11
+    },
+    {
+      "id": "development",
+      "title": "开发接入与验收清单",
+      "chapter": "开发设计",
+      "layout": "vertical",
+      "page": 12
+    },
+    {
+      "id": "history",
+      "title": "dp-auto旧例及原始返回",
+      "chapter": "历史对照",
+      "layout": "vertical",
+      "page": 13
+    }
+  ],
+  "coverage": {
+    "omissions": [],
+    "duplicates": []
+  },
+  "resources": [
+    {
+      "href": "captures/dp-auto-current/request.json",
+      "media": false
+    },
+    {
+      "href": "captures/dp-auto-current/response.json",
+      "media": false
+    },
+    {
+      "href": "captures/dp-auto-current/result.json",
+      "media": false
+    },
+    {
+      "href": "cases/dp-auto-current/field-trace.json",
+      "media": false
+    },
+    {
+      "href": "checks/dp-auto/local-checks.json",
+      "media": false
+    },
+    {
+      "href": "prepare-worker-contract.json",
+      "media": false
+    }
+  ]
+}

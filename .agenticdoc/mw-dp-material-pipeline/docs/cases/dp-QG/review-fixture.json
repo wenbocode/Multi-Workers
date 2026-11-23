@@ -1,0 +1,51 @@
+{
+  "sample_kind": "synthetic-review-fixture-not-actual-review",
+  "artifact": "导入事务适配器",
+  "version": "demo-import-v04",
+  "reviewer_role": "independent-reviewer-fixture",
+  "review_status": "completed",
+  "covered_ac_ids": [
+    "AC-001",
+    "AC-002"
+  ],
+  "ac_completion": [
+    {
+      "ac_id": "AC-001",
+      "requirement": "拒绝重复键且失败时不写入",
+      "status": "not-met",
+      "vc_results": [
+        {
+          "vc_id": "VC-001",
+          "verification": "重复键拒绝后检查写入数",
+          "status": "fail",
+          "observation": "仍有一条写入",
+          "evidence": "同版本review记录的复现实测"
+        }
+      ],
+      "deviation": "无副作用要求未满足",
+      "finding_ids": [
+        "F1"
+      ]
+    },
+    {
+      "ac_id": "AC-002",
+      "requirement": "并发导入保持规定顺序",
+      "status": "unverified",
+      "vc_results": [
+        {
+          "vc_id": "VC-002",
+          "verification": "并发顺序检查",
+          "status": "not-run",
+          "observation": "尚未执行，review已明确核对这一缺口",
+          "evidence": "同版本review的覆盖说明"
+        }
+      ],
+      "deviation": "尚无并发顺序证据",
+      "finding_ids": [
+        "F2"
+      ]
+    }
+  ],
+  "criteria_dispute": "已核无实质标准争议",
+  "note": "AC/VC为示例逻辑映射，不是新完成的生产review或测试"
+}

@@ -1,0 +1,51 @@
+[
+  {
+    "wire_id": "passA",
+    "choice": "pass",
+    "basis_id": "passA-basis",
+    "criterion": "pass：全部适用AC满足且VC和独审证据充分、无未覆盖面时通过；不能忽略当前失败和未验证项。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "fixA",
+    "choice": "fix",
+    "basis_id": "fixA-basis",
+    "criterion": "fix：先处理F1并复评F2，保留AC-002未验证状态；不表示全范围质量已关闭。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [
+      "F1"
+    ],
+    "remaining_ids": [
+      "F2"
+    ]
+  },
+  {
+    "wire_id": "fixB",
+    "choice": "fix",
+    "basis_id": "fixB-basis",
+    "criterion": "fix：处理F1和F2，即修复重复键写入并补并发检查，再对照AC/VC独立复核。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [
+      "F1",
+      "F2"
+    ],
+    "remaining_ids": []
+  }
+]

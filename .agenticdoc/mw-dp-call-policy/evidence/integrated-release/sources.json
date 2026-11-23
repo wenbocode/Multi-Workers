@@ -1,0 +1,21 @@
+{
+  "base_commit": "2797db9bf53965611f76e5fc86ccbc2148508300",
+  "keys": [
+    "mw-dp-material-pipeline",
+    "mw-dp-call-policy"
+  ],
+  "candidate": "E:\\gitlite\\Multi-Workers\\.mw\\releases\\dpk-1123",
+  "selected_sources": {
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/gate-route.ts": "c15ab9632641dcda7629fc6e0d4daf4da5dd5f172fe8c7adbdd15c6172d5310a",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts": "91a5669b3b4028f0990c969e69937c5046d06f5e540ad15d228bfa470d688674",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts": "1f498ccfd3f8368f6991a98d7481ebf3b7e3f836d4dcc04c69aac21c8baa85e3",
+    "packages/coding-agent/test/suite/pm-gate-routing.test.ts": "cd3c41a9723d57c90871bd90b57b8c330059a8fbc4698c4dfa6dffccbee8fb76",
+    "packages/coding-agent/test/suite/pm-type-fallback.test.ts": "93dd3662283fa908c0c0dce5c570dba44fc8329d60f3b8161552e34f67616ef1",
+    "packages/coding-agent/test/suite/decision-context-agent-materials.test.ts": "8fe5170568995ac1a821e946fc13c78517a506e6664ae4917ced5fee4629ef02",
+    "packages/multi-workers/decision_blocked.py": "b22adceb87b2b996d87c55c284f0a0c9c4bdbbb0595e8dcef19d79936b968f42",
+    "packages/multi-workers/decision_dashboard.js": "e662cf2d5467e6f66dc992eea19e8cf217c0600609b12818de8f4331a65bae2b",
+    "packages/multi-workers/launcher.py": "edcd73d00fb8cddeb85be2ec7da18b0428686615698ba2edb559abe8b8767c1a",
+    "packages/multi-workers/test_dp_continuity_local_sign_current.py": "7cfd2eed447ef836095c541cb390e93cfd46de35dddbbe368ca41df758235d00",
+    "packages/multi-workers/test_prepared_observation_sources.py": "08d2a660e3efd7e273acb7cbe3442c75ed0ee9537850b78f1b9c347a70072546"
+  }
+}

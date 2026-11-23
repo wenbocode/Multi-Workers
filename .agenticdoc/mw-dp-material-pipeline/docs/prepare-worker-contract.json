@@ -1,0 +1,259 @@
+{
+  "status": "proposal-not-implemented",
+  "purpose": "prepare sourced DP materials; never replace owner, independent review or decision",
+  "entry": {
+    "tool": "prepare_dp",
+    "caller": "original legal PM or actual Worker",
+    "inputs": [
+      "dp_id",
+      "matter_ref",
+      "task_or_run_ref",
+      "scope_ref",
+      "source_handles",
+      "budget_ref",
+      "prepare_model"
+    ],
+    "prepare_model": "existing registered provider/model selected by task model header; requested and effective values recorded locally",
+    "decision_model": "jev-latest"
+  },
+  "workflow": [
+    {
+      "state": "bound",
+      "tool": "prepare.begin",
+      "requires": [],
+      "next": [
+        "collecting",
+        "stopped"
+      ]
+    },
+    {
+      "state": "collecting",
+      "tool": "prepare.read",
+      "requires": [
+        "bound"
+      ],
+      "next": [
+        "collecting",
+        "prerequisites",
+        "needs-evidence",
+        "needs-review",
+        "stopped"
+      ]
+    },
+    {
+      "state": "prerequisites",
+      "tool": "prepare.check_inputs",
+      "requires": [
+        "collecting",
+        "current sources",
+        "QG review/AC/VC prerequisites if applicable",
+        "current same-scope QG or explicit missing status if sign"
+      ],
+      "next": [
+        "drafted",
+        "needs-evidence",
+        "needs-review",
+        "stopped"
+      ]
+    },
+    {
+      "state": "drafted",
+      "tool": "prepare.compose",
+      "requires": [
+        "prerequisites"
+      ],
+      "next": [
+        "discriminability",
+        "collecting",
+        "stopped"
+      ]
+    },
+    {
+      "state": "discriminability",
+      "tool": "prepare.check_discriminability",
+      "requires": [
+        "drafted",
+        "current objective/source/candidate/budget snapshot"
+      ],
+      "next": [
+        "validated",
+        "needs-evidence",
+        "equivalent",
+        "rejected",
+        "collecting",
+        "stopped"
+      ]
+    },
+    {
+      "state": "validated",
+      "tool": "prepare.validate",
+      "requires": [
+        "drafted",
+        "desc <= 10 sentences and <= 1000 tokens",
+        "source and option bindings",
+        "original remaining budget",
+        "ready discriminability report bound to this exact draft/source/candidate/budget snapshot"
+      ],
+      "next": [
+        "published",
+        "collecting",
+        "stopped"
+      ]
+    },
+    {
+      "state": "published",
+      "tool": "prepare.publish",
+      "requires": [
+        "validated",
+        "unchanged report and validated draft"
+      ],
+      "next": [
+        "absorbed",
+        "stale",
+        "stopped"
+      ]
+    },
+    {
+      "state": "absorbed",
+      "tool": "absorb_dp_preparation",
+      "requires": [
+        "published",
+        "same original owner/matter/run",
+        "current scope/sources/candidates",
+        "owner semantic check"
+      ],
+      "next": [
+        "original-host-request",
+        "needs-evidence",
+        "needs-review",
+        "stale",
+        "stopped"
+      ]
+    }
+  ],
+  "allowed_reads": "trusted source_handles within original task read scope, deny globs and cumulative budget",
+  "allowed_writes": "only this prepare run artifact directory via scoped host writer",
+  "forbidden": [
+    "product write/edit",
+    "arbitrary shell or network",
+    "claim mutations",
+    "change AC/VC or permissions",
+    "self-certify independent review",
+    "impersonate actual Worker",
+    "direct jev credential access",
+    "business receipt/gate/QG/sign writes"
+  ],
+  "outputs": [
+    "preparation.json",
+    "desc.txt",
+    "material.json",
+    "pair-map.json",
+    "source-manifest.json",
+    "quality-report.json",
+    "output.md",
+    "discriminability-report.json"
+  ],
+  "desc": {
+    "model_path": "state.desc",
+    "max_sentences": 10,
+    "max_tokens": 1000,
+    "required_meanings": [
+      "goal",
+      "deviation",
+      "what_happened",
+      "evidence_and_unknowns"
+    ],
+    "token_meter": "exact target-model meter required for hard enforcement; estimate is precheck only",
+    "overflow": "same producer revises under same remaining budget; no silent truncation"
+  },
+  "QG": {
+    "requires_review_completed": true,
+    "requires_all_AC_passed": false,
+    "requires_complete_AC_VC_accounting": true,
+    "AC_statuses": [
+      "met",
+      "not-met",
+      "unverified",
+      "not-applicable"
+    ],
+    "VC_statuses": [
+      "pass",
+      "fail",
+      "not-run",
+      "unknown"
+    ],
+    "review_identity": "real independent reviewer source; not preparation author's self-report"
+  },
+  "sign": {
+    "required_meanings": [
+      "goal",
+      "deviation",
+      "current_QG_business_verdict",
+      "open_items"
+    ],
+    "QG_binding": [
+      "same key",
+      "same delivery object and applicable scope",
+      "current artifact/requirements version",
+      "valid original review/source"
+    ],
+    "missing_QG": "report needs-evidence/needs-review under original continuity; never fabricate"
+  },
+  "absorb": {
+    "statuses": [
+      "accepted",
+      "needs-evidence",
+      "needs-review",
+      "stale",
+      "rejected",
+      "equivalent"
+    ],
+    "result_fields": [
+      "preparation_status",
+      "material_ref",
+      "semantic_check",
+      "mechanical_checks",
+      "real_dp_result_or_null"
+    ],
+    "new_user_approval_required": false,
+    "material_acceptance_is_decision": false,
+    "decision_is_execution": false
+  },
+  "budget": "all reads/steps/wall time/model usage/rework inherit original budget_ref; never reset via new turn/card",
+  "fallback": "owner may prepare inline within existing authority when helper unavailable; no new global gate",
+  "actual_worker_spawned": false,
+  "new_API_calls_this_revision": 1,
+  "API_evidence": "captures/dp-auto-current/result.json",
+  "version": "v0.6-draft",
+  "discriminability": {
+    "all_DPs": "pairwise semantic differences and evidence gaps; preserve fixed registry candidates and legal reason pairings",
+    "auto": [
+      "2..5 real bounded paths",
+      "priority source or explicit unknown",
+      "all unordered candidate pairs",
+      "discriminating evidence and unknowns",
+      "information gain",
+      "conditional successors",
+      "termination and original cumulative limits",
+      "reversal conditions"
+    ],
+    "statuses": [
+      "ready",
+      "needs-evidence",
+      "equivalent",
+      "invalid"
+    ],
+    "confidence_threshold": null,
+    "invalidates_on": [
+      "draft",
+      "objective",
+      "source",
+      "candidate",
+      "budget or scope change"
+    ],
+    "missing": "specific gap; owner may gather evidence or continue lawful local handling; not a global stop gate",
+    "equivalent": "owner confirms equivalence and handles under existing rules; no silent candidate removal",
+    "report_sent_to_model": false
+  },
+  "integration": "v05-design-validation; workflow semantics from v06, no production deployment"
+}

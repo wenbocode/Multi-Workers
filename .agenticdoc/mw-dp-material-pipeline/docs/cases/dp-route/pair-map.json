@@ -1,0 +1,100 @@
+[
+  {
+    "wire_id": "route1",
+    "choice": "dp-w-type",
+    "basis_id": "route1-basis",
+    "criterion": "dp-w-type：问题是选择派发类型时选择此入口；不代该入口裁决。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "route2",
+    "choice": "dp-pm-steer",
+    "basis_id": "route2-basis",
+    "criterion": "dp-pm-steer：问题是PM组织安排时选择此入口；不代该入口裁决。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "route3",
+    "choice": "dp-w-check-task",
+    "basis_id": "route3-basis",
+    "criterion": "dp-w-check-task：问题归当前Worker自身可达性时，仅交该Worker准备选择此入口；不代该入口裁决。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "route4",
+    "choice": "dp-QG",
+    "basis_id": "route4-basis",
+    "criterion": "dp-QG：问题是对当前产物按标准做正式质量审查时选择此入口；不代该入口裁决。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "route5",
+    "choice": "dp-gate-approve",
+    "basis_id": "route5-basis",
+    "criterion": "dp-gate-approve：问题是既有gate对具体动作准入时选择此入口；不代该入口裁决。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "route6",
+    "choice": "dp-sign-key",
+    "basis_id": "route6-basis",
+    "criterion": "dp-sign-key：问题是整个key交付收尾时选择此入口；不代该入口裁决。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  },
+  {
+    "wire_id": "route7",
+    "choice": "dp-auto",
+    "basis_id": "route7-basis",
+    "criterion": "dp-auto：问题是其它明确现场方案比较时选择此入口；不代该入口裁决。",
+    "material_refs": [
+      "state.desc",
+      "state.material",
+      "state.references",
+      "state.terminology"
+    ],
+    "finding_ids": [],
+    "remaining_ids": []
+  }
+]

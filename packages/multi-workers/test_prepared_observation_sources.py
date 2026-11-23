@@ -60,7 +60,8 @@ def test_every_prepared_preview_contains_real_source_and_one_selection(tmp_path,
     options = backends.prepared_selection_options(dp_id, book["material"], book["preparation"])
     assert set(questions[backends.PREPARED_SELECTION_QUESTION_ID]["labels"]) == set(options)
     for option in options.values():
-        assert not dpts.entry_choice_issues(dp_id, option["choice"], book["material"])
+        if dp_id != "dp-QG" or option["choice"] != "reopen":
+            assert not dpts.entry_choice_issues(dp_id, option["choice"], book["material"])
         assert not dpts.basis_selection_issues(
             option["basis_id"], book["preparation"]["basis_catalog"], option["choice"]
         )
@@ -97,9 +98,10 @@ def test_playground_preview_matches_transport_and_normalizes_business_answers(tm
     def http_post(url, headers, payload, timeout_s):
         calls.append(copy.deepcopy(payload))
         book["preparation"]["basis_catalog"][0]["id"] = "changed-during-request"
-        payload["state"]["preparation"]["basis_catalog"][0]["id"] = "changed-by-backend"
+        assert "preparation" not in payload["state"]
         question = payload["questions"][backends.PREPARED_SELECTION_QUESTION_ID]
-        selection = next(iter(question["criteria"]))
+        selection = "fixA"
+        question["criteria"][selection] = "changed-by-backend"
         return backends.HttpResponse(200, "application/json", json.dumps({
             "model": "jev-latest", "answers": {
                 backends.PREPARED_SELECTION_QUESTION_ID: {

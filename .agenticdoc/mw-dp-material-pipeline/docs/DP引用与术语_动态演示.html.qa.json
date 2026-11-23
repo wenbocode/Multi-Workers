@@ -1,0 +1,398 @@
+{
+  "pages": 13,
+  "images": 0,
+  "duplicateIDs": [],
+  "brokenAnchors": [],
+  "layout": [
+    {
+      "page": 1,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 2294.96875,
+      "footerTop": 835
+    },
+    {
+      "page": 2,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 1062.65625,
+      "footerTop": 835
+    },
+    {
+      "page": 3,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 1009.375,
+      "footerTop": 835
+    },
+    {
+      "page": 4,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 4988.3125,
+      "footerTop": 835
+    },
+    {
+      "page": 4,
+      "tab": 1,
+      "horizontalOverflow": false,
+      "contentBottom": 5570.09375,
+      "footerTop": 835
+    },
+    {
+      "page": 4,
+      "tab": 2,
+      "horizontalOverflow": false,
+      "contentBottom": 5318.09375,
+      "footerTop": 835
+    },
+    {
+      "page": 4,
+      "tab": 3,
+      "horizontalOverflow": false,
+      "contentBottom": 6920.3125,
+      "footerTop": 835
+    },
+    {
+      "page": 4,
+      "tab": 4,
+      "horizontalOverflow": false,
+      "contentBottom": 5066.09375,
+      "footerTop": 835
+    },
+    {
+      "page": 4,
+      "tab": 5,
+      "horizontalOverflow": false,
+      "contentBottom": 6427.265625,
+      "footerTop": 835
+    },
+    {
+      "page": 4,
+      "tab": 6,
+      "horizontalOverflow": false,
+      "contentBottom": 7037.96875,
+      "footerTop": 835
+    },
+    {
+      "page": 4,
+      "tab": 7,
+      "horizontalOverflow": false,
+      "contentBottom": 4608.75,
+      "footerTop": 835
+    },
+    {
+      "page": 5,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 2644.171875,
+      "footerTop": 835
+    },
+    {
+      "page": 5,
+      "tab": 1,
+      "horizontalOverflow": false,
+      "contentBottom": 3428.171875,
+      "footerTop": 835
+    },
+    {
+      "page": 5,
+      "tab": 2,
+      "horizontalOverflow": false,
+      "contentBottom": 3540.171875,
+      "footerTop": 835
+    },
+    {
+      "page": 5,
+      "tab": 3,
+      "horizontalOverflow": false,
+      "contentBottom": 5416.171875,
+      "footerTop": 835
+    },
+    {
+      "page": 5,
+      "tab": 4,
+      "horizontalOverflow": false,
+      "contentBottom": 3316.171875,
+      "footerTop": 835
+    },
+    {
+      "page": 5,
+      "tab": 5,
+      "horizontalOverflow": false,
+      "contentBottom": 4184.171875,
+      "footerTop": 835
+    },
+    {
+      "page": 5,
+      "tab": 6,
+      "horizontalOverflow": false,
+      "contentBottom": 4744.171875,
+      "footerTop": 835
+    },
+    {
+      "page": 5,
+      "tab": 7,
+      "horizontalOverflow": false,
+      "contentBottom": 3344.171875,
+      "footerTop": 835
+    },
+    {
+      "page": 6,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 2368.5625,
+      "footerTop": 835
+    },
+    {
+      "page": 6,
+      "tab": 1,
+      "horizontalOverflow": false,
+      "contentBottom": 2424.5625,
+      "footerTop": 835
+    },
+    {
+      "page": 6,
+      "tab": 2,
+      "horizontalOverflow": false,
+      "contentBottom": 1976.5625,
+      "footerTop": 835
+    },
+    {
+      "page": 6,
+      "tab": 3,
+      "horizontalOverflow": false,
+      "contentBottom": 2172.5625,
+      "footerTop": 835
+    },
+    {
+      "page": 6,
+      "tab": 4,
+      "horizontalOverflow": false,
+      "contentBottom": 2368.5625,
+      "footerTop": 835
+    },
+    {
+      "page": 6,
+      "tab": 5,
+      "horizontalOverflow": false,
+      "contentBottom": 1976.5625,
+      "footerTop": 835
+    },
+    {
+      "page": 6,
+      "tab": 6,
+      "horizontalOverflow": false,
+      "contentBottom": 2613.953125,
+      "footerTop": 835
+    },
+    {
+      "page": 6,
+      "tab": 7,
+      "horizontalOverflow": false,
+      "contentBottom": 3544.5625,
+      "footerTop": 835
+    },
+    {
+      "page": 7,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 825.015625,
+      "footerTop": 835
+    },
+    {
+      "page": 8,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 1393.546875,
+      "footerTop": 835
+    },
+    {
+      "page": 9,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 4980.484375,
+      "footerTop": 835
+    },
+    {
+      "page": 9,
+      "tab": 1,
+      "horizontalOverflow": false,
+      "contentBottom": 5764.484375,
+      "footerTop": 835
+    },
+    {
+      "page": 9,
+      "tab": 2,
+      "horizontalOverflow": false,
+      "contentBottom": 5792.484375,
+      "footerTop": 835
+    },
+    {
+      "page": 9,
+      "tab": 3,
+      "horizontalOverflow": false,
+      "contentBottom": 7752.484375,
+      "footerTop": 835
+    },
+    {
+      "page": 9,
+      "tab": 4,
+      "horizontalOverflow": false,
+      "contentBottom": 5652.484375,
+      "footerTop": 835
+    },
+    {
+      "page": 9,
+      "tab": 5,
+      "horizontalOverflow": false,
+      "contentBottom": 6436.484375,
+      "footerTop": 835
+    },
+    {
+      "page": 9,
+      "tab": 6,
+      "horizontalOverflow": false,
+      "contentBottom": 6995.140625,
+      "footerTop": 835
+    },
+    {
+      "page": 9,
+      "tab": 7,
+      "horizontalOverflow": false,
+      "contentBottom": 5932.484375,
+      "footerTop": 835
+    },
+    {
+      "page": 10,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 2854.65625,
+      "footerTop": 835
+    },
+    {
+      "page": 11,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 2141.59375,
+      "footerTop": 835
+    },
+    {
+      "page": 12,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 2946.796875,
+      "footerTop": 835
+    },
+    {
+      "page": 13,
+      "tab": 0,
+      "horizontalOverflow": false,
+      "contentBottom": 8703.671875,
+      "footerTop": 835
+    },
+    {
+      "page": 13,
+      "tab": 1,
+      "horizontalOverflow": false,
+      "contentBottom": 4392.484375,
+      "footerTop": 835
+    }
+  ],
+  "tabAnchors": [
+    "local-panel-0",
+    "local-panel-1",
+    "local-panel-2",
+    "local-panel-3",
+    "local-panel-4",
+    "local-panel-5",
+    "local-panel-6",
+    "local-panel-7",
+    "payload-panel-0",
+    "payload-panel-1",
+    "payload-panel-2",
+    "payload-panel-3",
+    "payload-panel-4",
+    "payload-panel-5",
+    "payload-panel-6",
+    "payload-panel-7",
+    "post-panel-0",
+    "post-panel-1",
+    "post-panel-2",
+    "post-panel-3",
+    "post-panel-4",
+    "post-panel-5",
+    "post-panel-6",
+    "post-panel-7",
+    "actual-panel-0",
+    "actual-panel-1",
+    "actual-panel-2",
+    "actual-panel-3",
+    "actual-panel-4",
+    "actual-panel-5",
+    "actual-panel-6",
+    "actual-panel-7",
+    "history-panel-0",
+    "history-panel-1"
+  ],
+  "readModePages": 13,
+  "readModePanels": 34,
+  "totalPanels": 34,
+  "mobile": [
+    {
+      "page": 1,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 2,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 3,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 4,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 5,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 6,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 7,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 8,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 9,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 10,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 11,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 12,
+      "horizontalOverflow": false
+    },
+    {
+      "page": 13,
+      "horizontalOverflow": false
+    }
+  ],
+  "failedImages": [],
+  "errors": [],
+  "screenshots": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-dp-runtime-reference\\v05\\DP引用与术语_动态演示.html.qa"
+}
