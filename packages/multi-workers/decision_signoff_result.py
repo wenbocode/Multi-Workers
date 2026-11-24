@@ -1659,7 +1659,7 @@ def publish_reviewed_signoff(
             raise SignoffResultError("reviewed evidence sign-off requires an unambiguous VERIFY or DONE key")
         target = signoff_path(key_dir)
         if rows[0]["phase"].upper() == "VERIFY" and not target.exists():
-            sync_reviewed_freeze_metadata(key_dir, key)
+            _sync_reviewed_freeze_metadata(key_dir, key)
         record = capture_reviewed_signoff(key_dir, key, review_task, review_source)
         if target.exists():
             if not local_signoff_matches_disk(key_dir, record):
@@ -1679,30 +1679,22 @@ def publish_reviewed_signoff(
         return "written", record
 
 
-def sync_reviewed_freeze_metadata(key_dir: pathlib.Path, key: str) -> str | None:
+def _sync_reviewed_freeze_metadata(key_dir: pathlib.Path, key: str) -> None:
     """With the publication lock held, bring an unchanged legacy freeze up to date."""
     frozen = contract_guard.read_freeze(key_dir)
-    spec_path = key_dir / contract_guard.SPEC_FILE_NAME
-    design_path = key_dir / contract_guard.DESIGN_FILE_NAME
-    if frozen is None or frozen.get("key") != key or not spec_path.is_file():
-        return None
-    spec = _safe_read_text(key_dir, spec_path)
-    if not contract_guard.requires_decision_signoff(spec):
-        return None
-    if frozen.get("decision_signoff") == "required":
-        return "unchanged"
-    if not design_path.is_file():
-        return "blocked"
-    current = contract_guard.build_freeze(key, spec, _safe_read_text(key_dir, design_path))
-    if not all(
+    if frozen is None or frozen.get("key") != key or "decision_signoff" in frozen:
+        return
+    spec = _safe_read_text(key_dir, key_dir / contract_guard.SPEC_FILE_NAME)
+    design = _safe_read_text(key_dir, key_dir / contract_guard.DESIGN_FILE_NAME)
+    current = contract_guard.build_freeze(key, spec, design)
+    if current.get("decision_signoff") != "required" or not all(
         current.get(family) and current[family] == frozen.get(family)
         for family in ("spec", "design", "function_flows")
     ):
-        return "blocked"
+        return
     path = _assert_safe_target(key_dir, contract_guard.freeze_path(key_dir))
     _assert_safe_target(key_dir, path.with_name(path.name + ".tmp"))
     contract_guard.write_freeze(key_dir, {**frozen, "decision_signoff": "required"})
-    return "written"
 
 
 def prepare_reviewed_done(key_dir: pathlib.Path, key: str) -> dict:

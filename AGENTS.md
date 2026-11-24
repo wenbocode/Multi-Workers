@@ -2,8 +2,8 @@
 
 ## AgenticTask Workflow
 
-- Non-trivial implementation (new feature, multi-file change, or anything beyond a one-line fix) requires an active AgenticTask key first: create the key (spec → claim) or record a `mini-spec.md` for the trivial-fix fast path. This applies to mid-session requirements injected after a requirements discussion too — no un-keyed "wild" implementation (untraceable, no goal alignment, no evidence, no closure). Check the active key in `.agenticdoc/_index.parallel` / `_index.md` before the first write to code.
-- When Codex acts as the interactive PM for MW workers, use the [Codex PM development and verification workflow](packages/multi-workers/docs/codex-pm.md). Follow the key from dispatch through worker completion, independent acceptance, and the AgenticTask quality gate. On resume, recover the existing task by key before dispatching more work.
+- Non-trivial implementation (new feature, multi-file change, or anything beyond a one-line fix) requires an active key first. MW PM follows AgenticTask (spec → claim); Codex PM creates an explicit `codex-lite` key through `codex_pm.py init` and records the goal, scope and numbered acceptance criteria in `codex_doc.md`. The trivial-fix `mini-spec.md` fast path remains available. This applies to mid-session requirements too. Check the authoritative `.agenticdoc/_index.parallel` row before the first write to code; `_index.md` is only the complete active-key projection.
+- When Codex acts as PM, use the [Codex PM development and verification workflow](packages/multi-workers/docs/codex-pm.md). Lightweight keys use Codex lifecycle and acceptance interfaces; ordinary MW and existing complete-SDD keys retain AgenticTask gates. On resume, recover the explicitly named key and its in-flight work before dispatching more work.
 
 ## Conversational Style
 
@@ -39,6 +39,11 @@
 - Put issue-specific regressions under `packages/coding-agent/test/suite/regressions/` named `<issue-number>-<short-slug>.test.ts`.
 - For ad-hoc scripts, `write` them to a temp file (e.g. `/tmp`), run, edit if needed, remove when done. Don't embed multi-line scripts in `bash` commands.
 - Never commit unless the user asks.
+
+## Multi-Workers 运行版本
+
+- 项目运行默认使用用户级全局 `mw` 和 `pi`。只有用户明确授权时，才用工作树、旧包或其他版本覆盖项目的运行版本，或切换全局默认包。
+- 仓库快捷入口应转发至全局入口。在 pi 窗口用 `/mw version` 核对全局默认、当前窗口和已注册窗口的实际运行路径。
 
 ## Dependency and Install Security
 

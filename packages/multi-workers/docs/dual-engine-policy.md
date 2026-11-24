@@ -1,6 +1,6 @@
 # dual 模式的引擎权限与扩展规范
 
-Game 是开发工作区，保持可写，但 Worker 仍受任务卡 `write_face` / `write_scope` 的限制。配置 Engine 路径本身不授予引擎源码写权限；`engine_writable: false` 下允许 UBT 编译以及下述三类构建产物目录，不等于放开整个 Engine。
+Game 是功能开发工作区。`engine_writable: false` 时，UE 原有编译和运行可使用下列生成路径。Worker 的写权限仍由任务卡 `write_face` 和 `write_scope` 限定。
 
 在控制工作区的 `.agenticdoc/target.yml` 配置：
 
@@ -14,19 +14,23 @@ dual:
 
 已有 v1 平铺格式在 `engine` 同级写 `engine_writable: false`。缺省等同于 `false`；只有 YAML 布尔 `true` 授予写权限，字符串 `"true"`、数字和 null 均拒绝。开启权限时必须已经配置 dual Engine 路径。环境变量可覆盖根路径，但不单独授予 Engine 写权限。
 
-Engine 授权与任务写入面取交集。`true` 不会让 Worker 越过任务卡；`false` 的源码保护优先于 `allow_foreign_write`，也优先于覆盖 Engine 的宽泛 glob。通过 junction 指向 Engine 的路径使用真实路径判断。Game、控制工作区中嵌套的 Engine 也受同样限制；声明面包含三类构建目录以外的 Engine 路径时，派发返回 `write-face-read-only`，不入队。`write_face_deny` 不能用于从宽泛 Engine glob 中减去源码后获得授权。
+Engine 授权与任务写入面取交集。`false` 的源码保护优先于 `allow_foreign_write` 和宽泛 glob。路径按真实位置判断，包括通过 junction 指向的路径以及嵌套在 Game 或控制工作区中的 Engine。声明覆盖受保护路径时，派发返回 `write-face-read-only`。`write_face_deny` 不能缩减宽泛声明以取得授权。
 
 PM 在 `false` 下规划 Game 侧包装与适配，在 `true` 下可以规划授权范围内的直接 Engine 修改；两种配置均不覆盖项目/spec/任务卡的限制。项目明确“不改引擎”时，即使路径权限为 `true`，PM 也不能据此修改引擎或自行扩大配置。每轮重新读取权限，重派发会替换旧 profile；`false → true → false` 不继承上一种状态的提示与授权。
 
-## UBT 编译与产物例外
+## UE 编译与运行产物
 
-保持 `engine_writable: false`，可运行现有 UBT（包括编译项目的 Editor target）；编译 Editor target 不等于启动 Editor 进程。允许的 Engine 内生成物、缓存与日志仅限以下目录，路径相对配置的 Engine **仓库根**，如 `D:/Dark/UnrealEngine`：
+保持 `engine_writable: false` 时，以下目录接受构建或运行产物的写面声明。路径相对于配置的 Engine 仓库根，例如 `D:/Dark/UnrealEngine`。
 
 | 相对目录 | 典型内容 |
 | --- | --- |
-| `Engine/Intermediate/Build/**` | SourceFileCache.bin、XmlConfigCache.bin、规则程序集与构建中间产物 |
-| `Engine/Saved/UnrealBuildTool/**` | UBT 配置 schema 等生成文件 |
-| `Engine/Saved/Logs/**` | 构建日志 |
+| `Engine/Intermediate/**` | 编译和 UHT 中间产物、规则程序集、项目文件 |
+| `Engine/Saved/**` | 生成配置、日志、运行缓存 |
+| `Engine/DerivedDataCache/**` | 派生数据缓存 |
+| `Engine/Programs/UnrealBuildTool/**` | 源码版 UBT 的默认日志 |
+| `Engine/Binaries/Win64/**`、`Linux/**`、`LinuxArm64/**`、`Mac/**`、`DotNET/**` | 对应目标生成的二进制，包括 UBT 输出 |
+| `Engine/Plugins/<插件目录>/{Binaries,Intermediate,Saved}/**` | 现有 `.uplugin` 所在目录的构建和运行产物 |
+| `Engine/Source/Programs/<项目目录>/{bin,obj,uatbin,uatobj}/**` | 现有 `.csproj` 所在目录的编译产物 |
 
 任务卡必须声明实际所需的产物写面，例如：
 
@@ -38,15 +42,19 @@ PM 在 `false` 下规划 Game 侧包装与适配，在 `true` 下可以规划授
 - `D:/Dark/UnrealEngine/Engine/Saved/Logs/**`
 ```
 
-这三条例外仍与角色、`write_face` 和 `write_scope` 取交集，不自动扩大任何任务权限。两个任务共享同一产物写面仍会产生并发冲突，应串行编译或使用原有独立构建环境；不能隐瞒产物写面来规避冲突。只读角色不因此变为可写角色。
+角色、`write_face` 和 `write_scope` 同时适用。共享产物路径参与现有并发冲突检查。编译任务可以声明实际涉及的子目录，或使用各自的生成目录。
 
-禁止直接修改 Engine 源码、构建脚本、配置或 `InstalledBuild.txt`；`Engine/**`、包含 Engine 的宽泛 Game glob、任意 `Engine/Binaries/**` 和其它 Intermediate/Saved 路径不属于例外。例外目录或其子路径经 junction 指向源码/其它未授权路径时仍拒绝。不得为编译自行开启 `engine_writable`。
+Engine 源码、插件源码、构建脚本、输入配置、`Binaries/ThirdParty` 和 `InstalledBuild.txt` 保持受保护。`Engine/**`、`Engine/Binaries/**` 及覆盖 Engine 的 Game glob 会被拒绝。生成目录或其子路径经 junction 指向受保护路径时也会拒绝。
 
-本轮不授权重建 UBT 工具本身或引擎二进制。`Build.bat`/`RunUBT` 包装器若需要此类写入，必须报告具体路径，不能仅因命令名包含 UBT 就获得额外权限。可优先调用现有 `UnrealBuildTool.dll`；不能通过复制/修改 UBT 或伪造安装版标记绕过限制。
+Windows Dual 同时支持以下仓库外生成路径。声明包含字面版本和所需的字面目录名，例如 `%LOCALAPPDATA%/UnrealEngine/5.8/Saved_RenderPerformanceT019/**`。展开环境变量后将绝对路径写入任务卡。
+
+- 本机用户的 `AppData/Local/UnrealEngine/<major.minor>/Saved/**` 和 `Saved_<suffix>/**`，以及 `UnrealEngine/Common/DerivedDataCache/**`。
+- 本机用户的 `AppData/Local/UnrealBuildTool/**`，供安装版 UBT 保存日志。
+- `%ProgramData%/Epic/NotAllowedUnattendedBugReports` 单个已存在的零字节文件，由 Editor 原生维护。直接工具写入、周围目录和同名前缀文件均拒绝。
 
 使用 `mw_run_detached` 时建议把 `run_dir` 显式放在控制工作区。如果 `cwd` 在 Engine 且未指定 `run_dir`，默认 `.mw/runs` 会落入不允许的 Engine 路径而被拒绝。调用 UBT 的 argv 中出现 Engine 路径不等于写入该路径；显式附带源码重定向/复制仍会被检查。
 
-这些是路径权限和任务准入规则，不是对 UBT 进程全部副作用的 OS 级隔离。真实 UBT/UHT/插件加载是否通过、是否还需要其它生成路径，须在业务 key 中实际验证；遇到额外路径应报告，不在本规则中默许。
+这些规则用于任务准入、并发判断和工具可识别的路径检查。进程实际写入仍由 Windows 权限决定。具体引擎分支、插件或 SDK 可能产生额外路径，实际编译和 Editor 启动结果由业务 key 验证。
 
 ## 仓库外额外可写根
 
@@ -106,7 +114,7 @@ PM 和 Worker 每轮系统提示都会获得当前权限与上述规范；TS 手
 
 任务卡与审查记录必须列出每个包装文件、它引用的真实上游文件/API、增量行为及受影响目标的编译结果。PM 复核 diff，确认没有引擎实现副本和未经授权的 Engine 修改；单有任务结束、未改原引擎或提示词注入不能视为这项验收通过。
 
-运行时拦截 `write` / `edit`、现有 shell 分析器能识别的写入，以及 `mw_run_detached` 的相同显式目标；显式 `cp` / `Copy-Item` 等复制源码命令会被拒绝。复制判据保守覆盖整个 Engine 根，包括三类产物目录中的 `.cpp`/`.h` 等源码形态文件和目录源；产物可写不意味着此类复制获得豁免。普通读取和复制非源码二进制不因此被禁止。
+运行时检查 `write` / `edit`、shell 分析器识别的写入和 `mw_run_detached` 的显式目标。复制检查覆盖整个 Engine 根，包括生成目录中的 `.cpp`、`.h` 和目录源。普通读取和非源码二进制复制继续使用原任务范围。
 
 这不是操作系统沙箱。任意 Python/Node/外部程序、动态 shell 目标、脚本内部的间接复制和语义改写不能仅凭命令扫描得到绝对保证；这些仍需操作系统写隔离与代码审查。框架不声称能自动证明任意代码均符合包装规范。
 

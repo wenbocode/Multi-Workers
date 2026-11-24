@@ -198,6 +198,7 @@ class TestParseAndCompat:
         "timi": "timi",
         "anthropic": "claude",
         "openai-codex": "codex",
+        "openai": "openai",
         "deepseek": "deepseek",
         "toa": "toa",
         "zhient": "zhient",

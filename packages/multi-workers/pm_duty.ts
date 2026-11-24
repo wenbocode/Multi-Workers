@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { StopWatch } from "./pm_watch.ts";
+import { lockDutyTarget } from "./pm_duty_lease.ts";
 
 type Pin = { project: string; key: string; claim: string; binding: string; session: string };
 type Status = ReturnType<StopWatch["sample"]>["state"];
@@ -106,6 +107,8 @@ if (import.meta.main && process.argv[2] === "--supervise") {
 		const duty = new Duty(pin, join(root, pin.key));
 		return { pin, duty, watch: new StopWatch(pin.project, pin.key, pin.claim, duty.binding) };
 	});
+	const targetLocks = [];
+	for (const { watch, pin } of targets) targetLocks.push(await lockDutyTarget(watch.channel.dir, pin.key));
 	writeFileSync(join(root, "runner.json"), JSON.stringify({ pid: process.pid, thread: config.thread, started: new Date(), targets: config.targets }));
 	function pollTarget(target: (typeof targets)[number]) {
 			const { pin, duty } = target;
@@ -147,4 +150,5 @@ if (import.meta.main && process.argv[2] === "--supervise") {
 		await setTimeout(5000);
 	}
 	lock.close();
+	for (const server of targetLocks) server.close();
 }

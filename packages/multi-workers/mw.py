@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import copy
 from collections.abc import Mapping
+import csv
 import ctypes
 from ctypes import wintypes
 from datetime import datetime, timezone
@@ -12547,21 +12548,6 @@ def _contract_freeze_plan(
     return blocks, statuses, replaced
 
 
-def _write_contract_freeze(
-    key_dir: pathlib.Path,
-    key: str,
-    blocks: dict[str, dict[str, str]],
-) -> None:
-    """Persist one merged payload through the T-04 atomic writer."""
-    payload = contract_guard.build_freeze(
-        key, _read_optional_text(key_dir / contract_guard.SPEC_FILE_NAME),
-        _read_optional_text(key_dir / contract_guard.DESIGN_FILE_NAME),
-    )
-    payload["spec"] = dict(sorted(blocks.get("spec", {}).items()))
-    payload["design"] = dict(sorted(blocks.get("design", {}).items()))
-    contract_guard.write_freeze(key_dir, payload)
-
-
 def _ap_contract_freeze(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
     """`mw autopilot contract-freeze --project P --key K [--block ac|vc|all]
     [--force] [--json]`: the explicit G3 anchor writer.
@@ -12571,35 +12557,62 @@ def _ap_contract_freeze(args: argparse.Namespace, project_dir: pathlib.Path) -> 
     filled; an existing block whose frozen shas equal the current text is left
     untouched (``unchanged``); an existing block whose text changed is refused
     without ``--force`` (exit 1, the replaced ids are printed) and re-frozen
-    with ``--force`` (old/new family sha printed). The write goes through
-    ``contract_guard.write_freeze`` under the publication lock. A full freeze
-    also synchronizes an explicit required sign-off declaration when the
-    existing AC, VC and Function Flow identities match.
+    with ``--force`` (old/new family sha printed). A full freeze with current
+    AC and VC blocks can also establish missing Function Flow identities for
+    scoped QG. When the full contract is current, it also syncs an explicit
+    required sign-off declaration. Backfills retain the original freeze metadata.
     """
     key = args.key
     force = bool(getattr(args, "force", False))
     selected = _CONTRACT_FREEZE_BLOCKS[getattr(args, "block", "all") or "all"]
     key_dir = project_dir / ".agenticdoc" / key
     freeze_rel = contract_guard.freeze_path(key_dir).relative_to(project_dir).as_posix()
+    flow_status = None
     signoff_status = None
     try:
         with contract_guard.contract_publication_lock(key_dir):
             existing = contract_guard.read_freeze(key_dir)
-            identity = contract_guard.extract_contract(
-                _read_optional_text(key_dir / contract_guard.SPEC_FILE_NAME),
-                _read_optional_text(key_dir / contract_guard.DESIGN_FILE_NAME),
-            )
+            spec = _read_optional_text(key_dir / contract_guard.SPEC_FILE_NAME)
+            design = _read_optional_text(key_dir / contract_guard.DESIGN_FILE_NAME)
+            identity = contract_guard.extract_contract(spec, design)
             blocks, statuses, replaced = _contract_freeze_plan(existing, identity, selected, force)
-            if any(statuses[name]["status"] == "written" for name, _ in selected) or (
-                existing is not None
-                and existing.get("decision_signoff") == "required"
-                and not existing.get("function_flows")
-                and len(selected) == 2
-                and all(statuses[name]["status"] == "unchanged" for name, _ in selected)
-            ):
-                _write_contract_freeze(key_dir, key, blocks)
-            if len(selected) == 2:
-                signoff_status = decision_signoff_result.sync_reviewed_freeze_metadata(key_dir, key)
+            family_write = any(item["status"] == "written" for item in statuses.values())
+            flow_backfill = {}
+            if len(selected) == 2 and all(item["status"] in {"written", "unchanged"} for item in statuses.values()):
+                current_flows = contract_guard.function_flow_identities(design)
+                frozen_flows = (existing or {}).get("function_flows")
+                if current_flows and not frozen_flows:
+                    flow_backfill = current_flows
+                    flow_status = {"status": "written", "ids": sorted(current_flows)}
+                elif current_flows or frozen_flows:
+                    flow_status = {
+                        "status": "unchanged" if frozen_flows == current_flows else "drifted",
+                        "ids": sorted(current_flows),
+                    }
+            if len(selected) == 2 and contract_guard.requires_decision_signoff(spec):
+                if existing is None:
+                    if family_write:
+                        signoff_status = "written"
+                elif existing.get("decision_signoff") == "required":
+                    signoff_status = "unchanged"
+                elif flow_status is None or flow_status["status"] == "drifted":
+                    signoff_status = "blocked"
+                else:
+                    signoff_status = "written"
+            if family_write or flow_backfill or signoff_status == "written":
+                payload = (
+                    contract_guard.build_freeze(key, spec, design) if family_write or existing is None
+                    else dict(existing)
+                )
+                payload.update(blocks)
+                if flow_backfill:
+                    payload["function_flows"] = flow_backfill
+                if signoff_status == "written":
+                    payload["decision_signoff"] = "required"
+                elif existing is not None:
+                    # The writer retains any already frozen required declaration.
+                    payload.pop("decision_signoff", None)
+                contract_guard.write_freeze(key_dir, payload)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"[mw autopilot contract-freeze] Error: {exc}", file=sys.stderr)
         return 1
@@ -12611,6 +12624,7 @@ def _ap_contract_freeze(args: argparse.Namespace, project_dir: pathlib.Path) -> 
                 "key": key,
                 "freeze_rel": freeze_rel,
                 "blocks": {name: statuses[name] for name in ("ac", "vc")},
+                **({"function_flows": flow_status} if flow_status is not None else {}),
                 **({"decision_signoff": {"status": signoff_status, "value": "required"}} if signoff_status else {}),
             },
             ensure_ascii=False,
@@ -12620,6 +12634,9 @@ def _ap_contract_freeze(args: argparse.Namespace, project_dir: pathlib.Path) -> 
         return 1 if refused else 0
 
     print(f"contract-freeze: {key} freeze={freeze_rel}")
+    if flow_status is not None:
+        flow_ids = ",".join(flow_status["ids"]) or "-"
+        print(f"contract-freeze: function_flows {flow_status['status']} ids={flow_ids}")
     if signoff_status:
         detail = " (requires current AC, VC and Function Flow)" if signoff_status == "blocked" else ""
         print(f"contract-freeze: decision_signoff {signoff_status} value=required{detail}")
@@ -15177,35 +15194,152 @@ def cmd_install_cli(_args: argparse.Namespace) -> int:
     return 0
 
 
+_UE_FRAME_NEEDS_GENERATION = 3
+
+
+def _ue_frame_counts(target: pathlib.Path) -> dict[str, int]:
+    counts = {}
+    for name, filename in (("terms", "terms.csv"), ("testcases", "testcase.csv"), ("gates", "gates.csv")):
+        try:
+            with (target / "agent" / filename).open(encoding="utf-8-sig", newline="") as stream:
+                counts[name] = sum(1 for _ in csv.DictReader(stream))
+        except OSError:
+            counts[name] = 0
+    return counts
+
+
+def _ue_frame_gaps(target: pathlib.Path) -> list[str]:
+    """Why this install is not yet a spec package for the target plugin (empty = complete)."""
+    agent = target / "agent"
+    try:
+        config = json.loads((agent / "module.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return ["缺少可解析的 agent/module.json"]
+    roots = [str(root).strip("/\\") for root in config.get("source_roots") or []]
+
+    def inside(path: str) -> bool:
+        return any(path == root or path.startswith(root + "/") for root in roots)
+
+    try:
+        with (agent / "terms.csv").open(encoding="utf-8-sig", newline="") as stream:
+            terms = list(csv.DictReader(stream))
+    except OSError:
+        terms = []
+    gaps = []
+    if not [term for term in terms if inside(term.get("path") or "")]:
+        scope = ", ".join(roots) if roots else "(未配置 source_roots)"
+        gaps.append(f"terms.csv 没有落在 {scope} 内的术语")
+    counts = _ue_frame_counts(target)
+    if counts["testcases"] == 0:
+        gaps.append("testcase.csv 为空（已实现的 UE AutomationTest 尚未登记）")
+    if counts["gates"] == 0:
+        gaps.append("gates.csv 为空（没有可执行门禁）")
+    if config.get("design_status") != "ready":
+        gaps.append(f"agent/module.json 的 design_status 仍是 {config.get('design_status') or 'draft'}")
+    try:
+        first = (target / "DESIGN.md").read_text(encoding="utf-8-sig").splitlines()[0]
+    except (OSError, IndexError):
+        first = ""
+    if not first or "（草稿）" in first:
+        gaps.append("DESIGN.md 仍是模板草稿")
+    return gaps
+
+
+def _ue_frame_failed(stage: str, target: pathlib.Path, log_path: pathlib.Path) -> int:
+    try:
+        with log_path.open("rb") as log:
+            log.seek(max(0, log_path.stat().st_size - 4000))
+            tail = log.read().decode("utf-8", errors="replace").strip()
+    except OSError:
+        tail = ""
+    print(f"{stage}失败：{target}\n完整日志：{log_path}\n{tail}")
+    return 1
+
+
+def _ue_frame_report(target: pathlib.Path, log_path: pathlib.Path, *, run_gate: bool) -> int:
+    if run_gate:
+        gate = target / "agent/gates/package_gate.py"
+        with log_path.open("ab") as log:
+            log.write("\n=== 规范门禁 ===\n".encode("utf-8"))
+            log.flush()
+            try:
+                result = subprocess.run([sys.executable, "-X", "utf8", "-B", str(gate)], stdout=log, stderr=log)
+            except OSError as exc:
+                log.write(f"{exc}\n".encode("utf-8"))
+                result = None
+        if result is None or result.returncode:
+            return _ue_frame_failed("规范门禁", target, log_path)
+    gaps = _ue_frame_gaps(target)
+    counts = _ue_frame_counts(target)
+    if gaps:
+        print(f"框架已安装：{target}")
+        print("模块规范尚未针对该插件生成（不算安装成功）：")
+        for gap in gaps:
+            print(f"- {gap}")
+        print("下一步：在 Pi 中重新运行 /mw ue-continue-develop-frame install 由 PM 依据源码生成；"
+              "或在本模块按 agent/GUIDE.md 生成 agent/catalog.json 与 DESIGN.md，"
+              "运行 catalog.py --write/--check 与 gates/package_gate.py 后用 verify 复核。")
+        print(f"日志：{log_path}")
+        return _UE_FRAME_NEEDS_GENERATION
+    print(f"已安装并通过模块规范校验：{target}")
+    print(f"terms {counts['terms']} 条 / testcase {counts['testcases']} 项 / gates {counts['gates']} 个；"
+          f"人工审核入口 {target / 'agent/REVIEW.md'}")
+    print(f"日志：{log_path}")
+    return 0
+
+
+def _ue_frame_target(project: pathlib.Path, module_arg: str | None) -> pathlib.Path:
+    config = mw_common.load_target_config(project)
+    if config["mode"] != "dual":
+        raise ValueError(f"需要 dual 工作区；当前模式为 {config['mode']}")
+    game = pathlib.Path(mw_common.workspace_root(config)).resolve()
+    plugins = (game / "Plugins").resolve()
+    if not game.is_dir() or not plugins.is_relative_to(game) or plugins == game:
+        raise ValueError(f"无效的 Game/Plugins 目录：{plugins}")
+    if not module_arg:
+        raise ValueError("需要 --module 指定正在开发的插件目录（Game/Plugins 下的相对路径，如 Plugins/MyPlugin）")
+    module = pathlib.Path(module_arg)
+    target = (game / module).resolve()
+    if module.anchor or not target.is_relative_to(plugins) or target == plugins:
+        raise ValueError("--module 必须是 Game/Plugins 下的相对路径")
+    if not target.is_dir():
+        raise ValueError(f"插件目录不存在：{target}")
+    if not any(target.glob("*.uplugin")):
+        raise ValueError(f"目标不是 UE 插件（缺少 *.uplugin）：{target}")
+    return target
+
+
+def _ue_frame_log(project: pathlib.Path, prefix: str) -> pathlib.Path:
+    logs = project / ".mw" / "ue-continue-develop-frame"
+    logs.mkdir(parents=True, exist_ok=True)
+    return pathlib.Path(tempfile.mkdtemp(prefix=prefix, dir=logs)) / "run.log"
+
+
+def cmd_ue_continue_develop_frame(args: argparse.Namespace) -> int:
+    if args.frame_action == "verify":
+        return cmd_ue_continue_develop_frame_verify(args)
+    return cmd_ue_continue_develop_frame_install(args)
+
+
 def cmd_ue_continue_develop_frame_install(args: argparse.Namespace) -> int:
     try:
         project, _ = mw_common.resolve_control_root(args.project, require_control=False)
-        config = mw_common.load_target_config(project)
-        if config["mode"] != "dual":
-            raise ValueError(f"需要 dual 工作区；当前模式为 {config['mode']}")
-        game = pathlib.Path(mw_common.workspace_root(config)).resolve()
-        plugins = (game / "Plugins").resolve()
-        if not game.is_dir() or not plugins.is_relative_to(game) or plugins == game:
-            raise ValueError(f"无效的 Game/Plugins 目录：{plugins}")
-        module = pathlib.Path(args.module or "Plugins/ue-continue-develop-frame")
-        target = (game / module).resolve()
-        if module.anchor or not target.is_relative_to(plugins) or target == plugins:
-            raise ValueError("--module 必须是 Game/Plugins 下的相对路径")
-        if args.module is not None and not target.is_dir():
-            raise ValueError(f"插件目录不存在：{target}")
-        logs = project / ".mw" / "ue-continue-develop-frame"
-        logs.mkdir(parents=True, exist_ok=True)
-        log_path = pathlib.Path(tempfile.mkdtemp(prefix="install-", dir=logs)) / "run.log"
+        target = _ue_frame_target(project, args.module)
+        log_path = _ue_frame_log(project, "install-")
     except (OSError, ValueError, mw_common.ControlRootError, mw_common.TargetConfigError) as exc:
         print(f"[mw ue-continue-develop-frame] {exc}")
         return 2
+
+    if (target / "agent").is_dir():
+        print(f"已安装：{target}（不覆盖模块数据，仅校验）")
+        return _ue_frame_report(target, log_path, run_gate=True)
 
     installer = _SCRIPT_DIR / "templates/ue-continue-develop-frame/install.py"
     source = "src" if (target / "src").is_dir() and not (target / "Source").is_dir() else "Source"
     install = [str(installer), "--target", str(target), "--name", args.name or target.name]
     for source_root in args.source_root or [source]:
         install.extend(("--source-root", source_root))
-    stages = [("安装", install), ("规范包检查", [str(target / "agent/gates/package_gate.py")])]
+    stages = [("安装", install)]
     with log_path.open("wb") as log:
         for stage, argv in stages:
             log.write(f"\n=== {stage} ===\n".encode("utf-8"))
@@ -15214,20 +15348,24 @@ def cmd_ue_continue_develop_frame_install(args: argparse.Namespace) -> int:
                 result = subprocess.run([sys.executable, "-X", "utf8", "-B", *argv], stdout=log, stderr=log)
             except OSError as exc:
                 log.write(f"{exc}\n".encode("utf-8"))
-                failed = True
-            else:
-                failed = result.returncode != 0
-            if failed:
-                break
-        else:
-            print(f"已安装到 {target}。完整规范包检查通过（目录复现、Ask 完整性、Python 测试）。")
-            return 0
+                return _ue_frame_failed(stage, target, log_path)
+            if result.returncode:
+                return _ue_frame_failed(stage, target, log_path)
+    return _ue_frame_report(target, log_path, run_gate=False)
 
-    with log_path.open("rb") as log:
-        log.seek(max(0, log_path.stat().st_size - 4000))
-        tail = log.read().decode("utf-8", errors="replace").strip()
-    print(f"{stage}失败：{target}\n完整日志：{log_path}\n{tail}")
-    return 1
+
+def cmd_ue_continue_develop_frame_verify(args: argparse.Namespace) -> int:
+    try:
+        project, _ = mw_common.resolve_control_root(args.project, require_control=False)
+        target = _ue_frame_target(project, args.module)
+        log_path = _ue_frame_log(project, "verify-")
+    except (OSError, ValueError, mw_common.ControlRootError, mw_common.TargetConfigError) as exc:
+        print(f"[mw ue-continue-develop-frame] {exc}")
+        return 2
+    if not (target / "agent").is_dir():
+        print(f"[mw ue-continue-develop-frame] 尚未安装框架：{target}")
+        return 2
+    return _ue_frame_report(target, log_path, run_gate=True)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -15235,15 +15373,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
     sub.add_parser("install-cli", help="Register the Windows mw command in the checkout bin directory")
-    frame = sub.add_parser("ue-continue-develop-frame", help="Install the UE continuous development frame")
+    frame = sub.add_parser("ue-continue-develop-frame", help="Install the UE continuous development frame into an existing plugin")
     frame_sub = frame.add_subparsers(dest="frame_action", required=True)
-    install = frame_sub.add_parser("install", help="Install into a module or plugin root")
+    install = frame_sub.add_parser("install", help="Install the frame draft into an existing plugin and report spec gaps")
     install.add_argument("--project", default=".", metavar="DIR",
                          help="MW control workspace (defaults to the current directory)")
-    install.add_argument("--module", metavar="PATH", help="Existing plugin path relative to dual Game, e.g. Plugins/MyPlugin")
+    install.add_argument("--module", metavar="PATH",
+                         help="Existing plugin path relative to dual Game, e.g. Plugins/MyPlugin (required)")
     install.add_argument("--name", help="Module name (defaults to the target directory name)")
     install.add_argument("--source-root", action="append", metavar="PATH",
                          help="Module-relative source root (repeatable, defaults to Source or src)")
+    verify = frame_sub.add_parser("verify", help="Re-check that terms/testcase/gates/DESIGN belong to this plugin")
+    verify.add_argument("--project", default=".", metavar="DIR",
+                        help="MW control workspace (defaults to the current directory)")
+    verify.add_argument("--module", metavar="PATH",
+                        help="Existing plugin path relative to dual Game, e.g. Plugins/MyPlugin (required)")
 
     pm_state_p = sub.add_parser("pm-state", help="Manage complete-SDD PM handoff state")
     pm_state_sub = pm_state_p.add_subparsers(required=True)
@@ -16275,7 +16419,7 @@ if __name__ == "__main__":
         "thinking": cmd_thinking,
         "autopilot": cmd_autopilot,
         "init": cmd_init,
-        "ue-continue-develop-frame": cmd_ue_continue_develop_frame_install,
+        "ue-continue-develop-frame": cmd_ue_continue_develop_frame,
         "install-cli": cmd_install_cli,
         "pull-agentictask": cmd_pull_agentictask,
         "push-agentictask": cmd_push_agentictask,

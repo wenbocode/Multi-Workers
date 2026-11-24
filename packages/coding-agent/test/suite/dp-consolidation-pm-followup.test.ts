@@ -397,6 +397,18 @@ describe("prepared PM decision follow-up", () => {
 		expect(
 			await markDecisionFollowupExecuted({ ...input, lifecycle: { ...lifecycle, projectId: "unrelated" } }),
 		).toMatchObject({ state: "unknown" });
+		const ledger = path.join(root, "lifecycle.jsonl");
+		const rows = fs.readFileSync(ledger, "utf8").trimEnd().split(/\r?\n/);
+		const remaining = rows.filter((row) => JSON.parse(row).event_id !== input.action_evidence);
+		expect(remaining).toHaveLength(rows.length - 1);
+		fs.writeFileSync(ledger, `${remaining.join("\n")}\n`);
+		const intentBeforeReadback = fs.readFileSync(file);
+		expect(await markDecisionFollowupExecuted(input)).toMatchObject({
+			state: "unknown",
+			reason: "action-evidence-unverified",
+			parent_released: false,
+		});
+		expect(fs.readFileSync(file)).toEqual(intentBeforeReadback);
 		expect(JSON.parse(fs.readFileSync(file, "utf8"))).toMatchObject({
 			status: "executed",
 			action_evidence: "split-done",

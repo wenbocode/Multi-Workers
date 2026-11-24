@@ -21,18 +21,43 @@ pi
 
 目标就是 pi 的启动目录时可用 `/duty-on . example`。命令按项目和 key 查在线绑定。原 PM 已用 `/duty-report-on <班次文件>` 登记本班授权时，新窗口仅接指定目标，复用原卡预算、范围和截止时间。若尚未登记，立即进入只读观察，持续空闲、worker 丢失、离线等状态变化会在窗口提示，不调用模型或发送方向。要启用班次委托下的自动接续，原 PM 登记班次后，在值守窗执行 `/duty-off`，再执行同一条 `/duty-on`。原卡改动或原 PM 换绑后需要重新核对并登记。原 PM 也可用 `/duty-report-on . example` 重新接入已登记且绑定匹配的班次。
 
+## 显式受限跟进（无班次授权）
+
+只需要监督窗口核查停点、向原 PM 请求状态或证据时，可明确启用受限模式，无须编造班次卡：
+
+```text
+/duty-followup-on "E:\工作区\项目 A" example
+```
+
+目标原 PM 必须已在线、仍认领未完成的 key，且不是当前监督会话。这个命令不会执行首次接入安装，不接受班次文件，也不会因为目标登记了班次而自动选择完整班次模式。原 PM 的业务范围、门禁、预算和截止时间不变；跟进请求不是新工作授权、Stage grant、DP 决定或批准。
+
+同一实例已观察同一目标时可显式升级，保留自身的 monitor 锁，再取得 send 锁。控制器准备或固定身份检查失败时保留原观察计时器、模式和 monitor 锁，并释放本次新取得的 send 锁；不删除旧 ledger 来绕过失败。重复同目标 `/duty-on` 或 `/duty-followup-on` 只报告实际模式，不重复创建监听器。切换目标、退出完整班次或更换模式前使用 `/duty-off`；不能接管其它窗口持有的目标锁。
+
+受限模式观察到持续空闲至少 45 秒时，通过 Extension API 唤醒监督 Agent。监督窗口忙或已有待处理消息时保留通知；每次实际通知前重新核对当前停点，恢复工作或候选证据变化后不发送旧通知。同一未变化停点去重；暂时离线或状态不可读后，在同一固定身份恢复且重新稳定空闲时，未发送成功的通知可沿用原 ID 恢复。计时器本身不调用 provider。收到通知后，Agent 应先读目标任务卡、worker 产物与工程证据，再使用正式工具：
+
+- `mw_duty_status {}`：报告 `inactive` / `observation` / `followup` / `shift` / `waiting`、固定目标身份、观察状态、待处理通知、outbox 和回执。
+- `mw_duty_followup {id,note}`：仅在当前监督会话明确启用受限模式后可用。`id` 来自已发出的停点通知，不能任意生成；`note` 为单行、非空、最多 1000 字符且最多 1600 UTF-8 字节。正文带固定的受限范围说明，由原 PM 核实事实并只在既有授权内行动。
+
+固定 canonical 项目、key、claim、binding、session；每次发送或重试前重新检查身份、连接与未完成阶段。首次发送还核对当前实际状态和停点指纹，恢复工作或证据变化后拒绝旧停点的新请求。离线、完成、换主、换 session/binding 或不可读状态会暂停发送，不能静默改绑。相同 ID 与完全相同正文可对账；修改正文会拒绝。发送结果不确定或仍处于预留状态时，保留原 ID 和正文，跨重启阻止新停点与后继请求，直到按原 ID 得到可核实的传输结果；仅有 `queued` 不清除既有不确定性。状态中的 `deliveryBlockedBy` 指向待对账 ID；`sendAllowed` 表示当前可首次发送，不取消按原 ID 对账的能力。接收窗口将此来源标为 `MW/pi follow-up`，不携带班次或阶段授权。
+
+`queued` / `received` / `started` 和 PM `working` 只是传输或活动事实。状态始终报告 `businessProgress=unverified`；文件与 worker 变化也是待核实候选，不是工程验收。跟进后再次持续空闲且抽样证据未变，仅升级一次“无已验证进展”，不自动反复发送。
+
+候选观察是有界抽样，不是项目全量扫描：优先读取 key 根目录的 `pm-state.md`、`spec.md`、`design.md`、`plan.md`、`achieved.md`，再按目录枚举前缀取样；每次最多枚举 512 项、保留 128 个文件、递归深度 4。超过 256 KiB 的文件只读取前 64 KiB，并结合大小和修改时间。状态的 `evidenceObservation` 报告这些限制、实际枚举数和 `partial`。普通文件数量超限不会使整个模式暂停，但未选文件、深层文件或大文件尾部变化可能漏观测；不保证后续轮询最终覆盖。既有 index/worker queue 的权威解析仍按原接口执行，不受候选目录扫描上限替代。选中文件或权威状态不可读时继续 fail-closed；任何“未变化”摘要仅指本次候选，不代表没有工程进展。
+
+持久记录在本机用户 PM 通道的 `<key>/duty-followup/ledger.json`，不写目标项目的业务文档。固定身份已变化而旧 ledger 仍有记录时，当前没有公开的安全归档/迁移入口；重新启用会继续拒绝，不可删除未决 outbox 或放宽身份校验来恢复运行，须先保全并核对旧记录。`/duty-off`、监督会话变化、shutdown 或 reload 释放本地权限、计时器和锁，保留 outbox；reload 后必须显式重新启用。已有源码、离线测试通过或登记扩展路径，都不证明正在运行的窗口已加载新实现。实际加载及激活状态必须另行核实；未验证时不能声称已恢复自动监督。
+
 从其它目录启动 pi 时，可用 `pi -e "E:\gitlite\Multi-Workers\packages\multi-workers\window_duty_extension.ts"` 加载相同命令。`-e` 只加载扩展，接哪个目标由窗口里的命令决定。
 
 ## 离线回放
 
-窗口值守的联合定向命令（临时 project/home、harness + faux provider，无真实 PM 或 provider 通信）：
+受限跟进的联合定向命令（临时 project/home、harness + faux provider，无真实 PM 或 provider 通信）：
 
 ```powershell
 # 仓库根；测试进程不应带 PI_WORKER_TASK
-node --test packages/multi-workers/test_pm_watch.ts packages/multi-workers/test_window_duty.ts
+node --test packages/multi-workers/test_duty_followup.ts packages/multi-workers/test_pm_watch.ts packages/multi-workers/test_window_duty.ts
 
 # packages/coding-agent
-node ../../node_modules/vitest/dist/cli.js --run test/suite/mw-window-duty.test.ts test/suite/codex-pm-channel.test.ts
+node ../../node_modules/vitest/dist/cli.js --run test/suite/mw-duty-followup.test.ts test/suite/mw-window-duty.test.ts test/suite/codex-pm-channel.test.ts
 ```
 
 这些命令验证源码与模拟集成，不替代独立审查、当前窗口加载或业务验收。完整班次历史回放可单独在仓库根目录运行：

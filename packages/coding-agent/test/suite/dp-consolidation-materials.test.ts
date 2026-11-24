@@ -17,6 +17,7 @@ import {
 	triageDispatch,
 	triageDispatchEnvelope,
 } from "../../src/extensions/agent-team-loop/pm/triage-client.ts";
+import { validateDecisionMaterial } from "../../src/extensions/agent-team-loop/shared/decide-policy.ts";
 import {
 	DECIDE_REGISTRY,
 	DECIDE_REGISTRY_RETIRED,
@@ -24,13 +25,10 @@ import {
 import { createHarness } from "./harness.ts";
 
 it.each(["finalize", "continue", "user-confirm"])(
-	"maps the real Python sign producer through the faux tool for %s",
+	"maps the real Python sign producer and requires independent review for %s",
 	async (choice) => {
 		const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
-		const helper = path.join(
-			root,
-			".agenticdoc/mw-dp-consolidation/evidence/implementation/T24-Codex-sign-tests-r2/sign_transport.py",
-		);
+		const helper = path.join(root, "packages/multi-workers/test/fixtures/decision_signoff_transport.py");
 		const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "dpc-sign-seam-"));
 		const { input } = currentRequest("dp-sign-key", choice);
 		fs.mkdirSync(path.join(projectDir, ".agenticdoc"), { recursive: true });
@@ -53,6 +51,7 @@ it.each(["finalize", "continue", "user-confirm"])(
 			}
 			env.PYTHONDONTWRITEBYTECODE = "1";
 			env.PYTHONUTF8 = "1";
+			env.MW_TEST_SIGN_CHOICE = choice;
 			const child = spawnSync(
 				"python",
 				["-B", helper, "decide", "sign", request.key, `--project=${projectDir}`, "--stdin", "--json"],
@@ -104,7 +103,20 @@ it.each(["finalize", "continue", "user-confirm"])(
 			await h.session.prompt("Submit the prepared sign material");
 			expect(signRunner).toHaveBeenCalledTimes(1);
 			const result = h.session.messages.find((message) => message.role === "toolResult");
-			expect(result?.role === "toolResult" && result.details).toMatchObject({
+			const details = result?.role === "toolResult" && result.details;
+			if (choice === "finalize") {
+				expect(details, JSON.stringify(details)).toMatchObject({
+					available: false,
+					unavailable: "input-incomplete",
+					preparation_status: "needs-review",
+				});
+				expect(fs.existsSync(path.join(projectDir, ".agenticdoc/fixture/evidence/review/sign-final.md"))).toBe(
+					false,
+				);
+				expect(lifecycleRunner).not.toHaveBeenCalled();
+				return;
+			}
+			expect(details, JSON.stringify(details)).toMatchObject({
 				available: true,
 				selection: { id: choice },
 				basis: input.preparation.basis_catalog[0],
@@ -209,7 +221,7 @@ const materialFor: Record<string, Record<string, unknown>> = {
 			unknowns: "Cause",
 			constraints: "Read-only",
 		},
-		handling_options: Array.from({ length: 6 }, (_, i) => ({
+		handling_options: Array.from({ length: 5 }, (_, i) => ({
 			id: `inspect-${i}`,
 			label: `Inspect ${i}`,
 			description: `Read source ${i}`,
@@ -225,6 +237,31 @@ const materialFor: Record<string, Record<string, unknown>> = {
 	},
 };
 
+it("bounds dp-auto and rejects a renamed copy of an existing path", () => {
+	const material = materialFor["dp-auto"];
+	const options = material.handling_options;
+	if (!Array.isArray(options)) throw new Error("dp-auto fixture has no candidates");
+	for (const count of [2, 5]) {
+		expect(
+			validateDecisionMaterial("dp-auto", { ...material, handling_options: options.slice(0, count) }),
+		).toMatchObject({ ok: true });
+	}
+	const withOptions = (handling_options: unknown[]) =>
+		validateDecisionMaterial("dp-auto", { ...material, handling_options });
+	expect(withOptions(options.slice(0, 1))).toMatchObject({ ok: false });
+	const copy = { ...options[0], id: "renamed", label: "Renamed" };
+	expect(withOptions([...options, copy])).toMatchObject({
+		ok: false,
+		issues: expect.arrayContaining([
+			{ field: "handling_options", code: "max-items", actual: 6, limit: 5, rule: expect.any(String) },
+		]),
+	});
+	expect(withOptions([options[0], copy])).toMatchObject({
+		ok: false,
+		issues: [{ field: "handling_options[1]", rule: expect.stringContaining("handling_options[0]") }],
+	});
+});
+
 function currentRequest(dp: string, choice: string) {
 	const entry = DECIDE_REGISTRY[dp];
 	const material = { ...materialFor[dp] };
@@ -239,6 +276,14 @@ function currentRequest(dp: string, choice: string) {
 				material_refs: [reference],
 				applies_to: [choice],
 			},
+			...entry.fixedChoiceIds
+				.filter((candidate) => candidate !== choice)
+				.map((candidate) => ({
+					id: `criterion-${candidate}`,
+					text: `Use the referenced facts to test when ${candidate} applies`,
+					material_refs: [reference],
+					applies_to: [candidate],
+				})),
 		],
 	};
 	const runner = vi.fn(async (request: { input: string }) => {
@@ -253,6 +298,7 @@ function currentRequest(dp: string, choice: string) {
 				logical_id: meta.logical_id,
 				decision_id: `${dp}:${meta.logical_id}`,
 				available: true,
+				file_evidence: [],
 				mode: "suggest",
 				acted: false,
 				conclusion: choice,
@@ -288,7 +334,7 @@ function currentRequest(dp: string, choice: string) {
 describe.each(Object.entries(materialFor))("%s at the registered transport boundary", (dp) => {
 	const entry = DECIDE_REGISTRY[dp];
 	const choices =
-		entry.kind === "dynamic-candidates" ? Array.from({ length: 6 }, (_, i) => `inspect-${i}`) : entry.fixedChoiceIds;
+		entry.kind === "dynamic-candidates" ? Array.from({ length: 5 }, (_, i) => `inspect-${i}`) : entry.fixedChoiceIds;
 	it.each(choices)("accepts the submitted business choice %s and its same-call prepared basis", async (choice) => {
 		const { input, runner, lifecycleRunner } = currentRequest(dp, choice);
 		const result = await runAskDecision(input);

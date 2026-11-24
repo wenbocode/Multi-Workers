@@ -27,11 +27,18 @@ import {
 	workerModeActivate,
 } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
 
-/** design.md §4 frozen TS/Python contract (dual engine_writable=false only). */
-const UBT_ARTIFACT_SUFFIXES = ["Engine/Intermediate/Build", "Engine/Saved/UnrealBuildTool", "Engine/Saved/Logs"];
+/** Generated output paths with TS/Python parity. */
+const UBT_ARTIFACT_SUFFIXES = [
+	"Engine/Intermediate",
+	"Engine/Saved",
+	"Engine/DerivedDataCache",
+	"Engine/Programs/UnrealBuildTool",
+	...["Win64", "Linux", "LinuxArm64", "Mac", "DotNET"].map((platform) => `Engine/Binaries/${platform}`),
+];
 const UBT_POLICY_LINES = [
-	"UBT builds: allowed without enabling Engine source writes. Build-generated files, caches and logs are writable only under Engine/Intermediate/Build/**, Engine/Saved/UnrealBuildTool/** and Engine/Saved/Logs/** (relative to the configured Engine root; subject to task write_face/write_scope).",
-	"UBT build permission does not allow rebuilding UBT itself or writing other Engine/Binaries paths, changing Engine source/build/config files or InstalledBuild.txt. A command name is not a write exemption.",
+	"UBT builds: allowed without enabling Engine source writes. Declare generated output directories under Engine/Intermediate, Engine/Saved, Engine/DerivedDataCache or Engine/Binaries/{Win64,Linux,LinuxArm64,Mac,DotNET} (subject to task write_face/write_scope).",
+	"Engine build outputs also include Programs/UnrealBuildTool logs, installed plugin Binaries/Intermediate/Saved directories and .NET program bin/obj/uatbin/uatobj directories.",
+	"Engine feature development stays in Game. Preserve Engine source, build scripts, input configuration, bundled third-party binaries and InstalledBuild.txt.",
 	"Static command guards are not an OS sandbox. Keep detached run_dir outside Engine unless it is an explicitly permitted build-artifact path; report any other required Engine write.",
 ];
 
@@ -339,7 +346,7 @@ it("renders the frozen UBT build policy before the read-only extension policy", 
 	process.stdout.write("[VERIFY] VC-001: policy_parity=PASS dual=false/true lines+artifact_roots\n");
 });
 
-it("admits only the three frozen UBT build-artifact directories under the read-only Engine root", () => {
+it("admits generated output directories under a read-only Engine root", () => {
 	const fx = fixture();
 	const options = workspaceWriteFaceOptions(fx.control);
 	const admitted = UBT_ARTIFACT_SUFFIXES.flatMap((suffix) => [
@@ -350,12 +357,12 @@ it("admits only the three frozen UBT build-artifact directories under the read-o
 	const denied = [
 		`${fx.engine}/**`,
 		`${fx.engine}/Engine/**`,
-		`${fx.engine}/Engine/Intermediate/**`,
-		`${fx.engine}/Engine/Intermediate/BuildOther/file.bin`,
-		`${fx.engine}/Engine/Saved/Logs2/file.log`,
+		`${fx.engine}/Engine/Intermediat*/**`,
+		`${fx.engine}/Engine/IntermediateBackup/file.bin`,
+		`${fx.engine}/Engine/SavedBackup/file.log`,
 		`${fx.engine}/Engine/Build/Build.version`,
 		`${fx.engine}/Engine/Config/BaseEngine.ini`,
-		`${fx.engine}/Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.dll`,
+		`${fx.engine}/Engine/Binaries/ThirdParty/SDK.dll`,
 		`${fx.engine}/Engine/Source/Programs/Probe.cpp`,
 		`${fx.engine}/InstalledBuild.txt`,
 	];
@@ -368,7 +375,7 @@ it("admits only the three frozen UBT build-artifact directories under the read-o
 	if (process.platform === "win32") {
 		// The artifact prefix follows the configured case mode (Windows folds).
 		expect(code(`${fx.engine}/ENGINE/intermediate/Build/generated/file.bin`)).toBe("declared");
-		expect(code(`${fx.engine}/ENGINE/intermediate/BuildOther/file.bin`)).toBe("write-face-read-only");
+		expect(code(`${fx.engine}/ENGINE/IntermediateBackup/file.bin`)).toBe("write-face-read-only");
 	}
 	expect(parseWriteFaceEntries([`${fx.engine}/Engine/Intermediate/Build/../Source/Probe.cpp`], options)).toMatchObject(
 		{ kind: "rejected", code: "write-face-escape" },
@@ -376,7 +383,7 @@ it("admits only the three frozen UBT build-artifact directories under the read-o
 	const entries = [...admitted, ...denied];
 	expect(python(fx.control, entries).faces).toEqual(entries.map(code));
 	process.stdout.write(
-		"[VERIFY] VC-002: artifact_dispatch=PASS declared=3dirs/[dir]/**/file; " +
+		"[VERIFY] VC-002: artifact_dispatch=PASS declared=output_dirs; " +
 			"[VERIFY] VC-005: source_and_alias_denied=PASS build/config/binaries/source/marker/boundary\n",
 	);
 });
@@ -436,9 +443,9 @@ it("dispatches precise UBT artifact faces and keeps broad-glob and conflict refu
 	expect(fs.readFileSync(store.queuePath, "utf8")).toBe(queued);
 	for (const [name, face] of [
 		["broad-engine", `${fx.engine}/**`],
-		["broad-build", `${fx.engine}/Engine/Intermediate/**`],
+		["broad-build", `${fx.engine}/Engine/Intermediat*/**`],
 		["engine-source", `${fx.engine}/Engine/Source/Programs/Probe.cpp`],
-		["engine-binaries", `${fx.engine}/Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.dll`],
+		["engine-binaries", `${fx.engine}/Engine/Binaries/ThirdParty/SDK.dll`],
 		["installed-build", `${fx.engine}/InstalledBuild.txt`],
 	] as const) {
 		const taskPath = taskOf(name, face);
@@ -485,9 +492,7 @@ it("PM guard admits UBT artifact targets and still blocks source, copied source 
 	expect(call("bash", { command: `echo x > '${cache}'` })).toBeUndefined();
 	expect(call("bash", { command: `echo x > '${fx.engine}/${UBT_ARTIFACT_SUFFIXES[2]}/Build.log'` })).toBeUndefined();
 	expect(call("write", { path: `${fx.engine}/Engine/Source/Probe.cpp` })?.reason).toContain("engine-read-only");
-	expect(
-		call("write", { path: `${fx.engine}/Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.dll` })?.block,
-	).toBe(true);
+	expect(call("write", { path: `${fx.engine}/Engine/Binaries/ThirdParty/SDK.dll` })?.block).toBe(true);
 	expect(call("write", { path: `${fx.engine}/Engine/Build/Build.version` })?.block).toBe(true);
 	expect(call("bash", { command: `cp '${buildDir}/Generated.cpp' Plugin.cpp` })?.reason).toContain(
 		"engine-copy-forbidden",
@@ -508,9 +513,9 @@ it("PM guard admits UBT artifact targets and still blocks source, copied source 
 		})?.reason,
 	).toContain("engine-read-only");
 	expect(call("mw_run_detached", { cmd: ubt, cwd: fx.engine })?.block).toBe(true);
-	expect(call("mw_run_detached", { cmd: ubt, cwd: fx.engine, run_dir: `${fx.engine}/Engine/Saved/runs` })?.block).toBe(
-		true,
-	);
+	expect(
+		call("mw_run_detached", { cmd: ubt, cwd: fx.engine, run_dir: `${fx.engine}/Engine/Source/runs` })?.block,
+	).toBe(true);
 	process.stdout.write("[VERIFY] VC-007/VC-005: command_guards=PASS ubt_argv+run_dir+copy+source\n");
 });
 
@@ -545,6 +550,47 @@ async function worker(taskPath: string, target: string) {
 		},
 	};
 }
+
+it.skipIf(process.platform !== "win32")("shares Windows UE external faces across dispatch and runtime", async () => {
+	const fx = fixture();
+	const external = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "mw-ue-runtime-")));
+	temporary.push(external);
+	vi.stubEnv("USERPROFILE", external);
+	vi.stubEnv("LOCALAPPDATA", path.join(external, "Redirected"));
+	vi.stubEnv("ProgramData", path.join(external, "ProgramData"));
+	const ue = path.join(external, "AppData", "Local", "UnrealEngine");
+	const saved = path.join(ue, "5.8", "Saved_RenderPerformanceT019");
+	const ddc = path.join(ue, "Common", "DerivedDataCache");
+	const ubt = path.join(path.dirname(ue), "UnrealBuildTool", "Log.txt");
+	const epic = path.join(external, "ProgramData", "Epic");
+	const marker = path.join(epic, "NotAllowedUnattendedBugReports");
+	fs.mkdirSync(epic, { recursive: true });
+	fs.writeFileSync(marker, "");
+	const allowed = [`${saved}/**`, `${ddc}/**`, ubt, marker];
+	const refused = [`${ue}/5.8/**`, `${ue}/5.*/Saved/**`, `${epic}/**`, `${marker}/**`, `${marker}.bak`];
+	const options = workspaceWriteFaceOptions(fx.control);
+	const entries = [...allowed, ...refused];
+	const expected = [...allowed.map(() => "declared"), ...refused.map(() => "write-face-outside-base")];
+	expect(
+		entries.map((entry) => {
+			const parsed = parseWriteFaceEntries([entry], options);
+			return parsed.kind === "rejected" ? parsed.code : parsed.kind;
+		}),
+	).toEqual(expected);
+	expect(python(fx.control, entries).faces).toEqual(expected);
+	fs.writeFileSync(
+		fx.taskPath,
+		`type: coding\nwrite_face:\n${allowed.map((entry) => `  - ${entry}`).join("\n")}\n\nWork.\n`,
+	);
+	const guard = await worker(fx.taskPath, fx.game);
+	try {
+		expect(guard.call("write", { path: path.join(saved, "Logs", "Editor.log") })).toBeUndefined();
+		expect(guard.call("write", { path: path.join(ue, "5.8", "Saved_AnotherTask", "Editor.log") })?.block).toBe(true);
+		expect(guard.call("edit", { path: marker })?.reason).toContain("Editor-managed opt-out marker");
+	} finally {
+		guard.settle();
+	}
+});
 
 it("carries the artifact exception into the worker runtime without widening role or declared scope", async () => {
 	const fx = fixture();
@@ -593,9 +639,22 @@ it("carries the artifact exception into the worker runtime without widening role
 	process.stdout.write("[VERIFY] VC-004/VC-006: artifact_runtime=PASS role_and_declared_scope_narrow\n");
 });
 
-it("checks all three artifact roots and legacy scope through the production worker shell guard", async () => {
+it("checks generated output roots and legacy scope through the production worker shell guard", async () => {
 	const fx = fixture();
-	const artifacts = UBT_ARTIFACT_SUFFIXES.map((suffix) => `${fx.engine}/${suffix}/generated.bin`);
+	const plugin = path.join(fx.engine, "Engine", "Plugins", "Category", "Sample");
+	const tool = path.join(fx.engine, "Engine", "Source", "Programs", "BuildTool");
+	for (const [project, descriptor] of [
+		[plugin, "Sample.uplugin"],
+		[tool, "BuildTool.csproj"],
+	]) {
+		fs.mkdirSync(project, { recursive: true });
+		fs.writeFileSync(path.join(project, descriptor), "");
+	}
+	const artifacts = [
+		...UBT_ARTIFACT_SUFFIXES.map((suffix) => `${fx.engine}/${suffix}/generated.bin`),
+		path.join(plugin, "Binaries", "Win64", "Sample.dll"),
+		path.join(tool, "uatobj", "Generated.cs"),
+	];
 	const face = artifacts.map((target) => `  - ${target}`).join("\n");
 	fs.writeFileSync(fx.taskPath, `type: coding\nwrite_face:\n${face}\n\nWork.\n`);
 	const guard = await worker(fx.taskPath, fx.game);

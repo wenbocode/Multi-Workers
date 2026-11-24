@@ -36,10 +36,12 @@ sys.path.insert(0, str(PACKAGE_DIR))
 sys.path.insert(0, str(PACKAGE_DIR / "scripts"))
 
 import decision  # noqa: E402
+import decision_backends as backends  # noqa: E402
 import decision_book as books  # noqa: E402
 import decision_context  # noqa: E402
 import decision_points as dpts  # noqa: E402
 import decision_wire  # noqa: E402
+from test_prepared_fixture_support import auto_context  # noqa: E402
 
 ACTIVE = dpts.ACTIVE_DP_IDS
 RETIRED = tuple(record.id for record in dpts.RETIRED_DP_REGISTRY)
@@ -202,6 +204,7 @@ def material_for(dp_id: str) -> dict:
 def preparation_for(dp_id: str, material: dict | None = None) -> dict:
     material = material_for(dp_id) if material is None else material
     return {
+        **({"model_context": auto_context(material)} if dp_id == "dp-auto" else {}),
         "basis_catalog": [
             {
                 "id": "basis-real",
@@ -284,8 +287,8 @@ def has_issue(issues, path: str, detail_fragment: str = "") -> bool:
     return False
 
 
-def backend_with_answers(dp_id: str, material: dict, preparation: dict):
-    """A faux backend answering the business question and the prepared basis.
+def backend_with_answers(dp_id: str, material: dict, preparation: dict, project=None):
+    """A faux backend answering the real single paired selection.
 
     The choice is picked per entry: a branch that only needs material already in
     the book (``dp-QG`` pass / ``dp-w-check-task`` continue) so the test proves the
@@ -295,11 +298,13 @@ def backend_with_answers(dp_id: str, material: dict, preparation: dict):
     legal = dpts.resolve_entry_choices(dp_id, material)
     choice = conditional_free.get(dp_id) or (legal[0] if legal else "x")
     basis_id = preparation["basis_catalog"][0]["id"]
-    answers = {
-        question_id: {"value": choice, "confidence": 0.9}
-        for question_id in dpts.questions_map(dp_id)
-    }
-    answers[decision.BASIS_QUESTION_ID] = {"value": basis_id, "confidence": 0.9}
+    options = backends.prepared_selection_options(dp_id, material, preparation)
+    wire = next(
+        (identifier for identifier, pair in options.items()
+         if pair["choice"] == choice and pair["basis_id"] == basis_id),
+        "unprepared-selection",
+    )
+    answers = {backends.PREPARED_SELECTION_QUESTION_ID: {"value": wire, "confidence": 0.9}}
     backend = decision.FakeBackend(
         [
             {
@@ -312,7 +317,7 @@ def backend_with_answers(dp_id: str, material: dict, preparation: dict):
         ]
     )
     client = decision.DecisionClient(
-        cfg=decision.DecisionConfig(enabled=True),
+        cfg=decision.DecisionConfig(enabled=True, project_root=project),
         backend=backend,
         evidence_path=None,
     )
@@ -359,6 +364,7 @@ def test_the_book_is_layered_as_material_meta_and_preparation() -> None:
         "meta",
         "context",
         "notes",
+        "evidence_refs",
     }
     for dp_id in ACTIVE:
         scaffold = books.scaffold_book(dp_id)
@@ -408,7 +414,7 @@ def test_route_targets_and_auto_candidates_come_from_the_single_source() -> None
     assert len(dpts.ENTRY_CHOICES["dp-route"]) == 7
     assert dpts.ENTRY_CHOICES["dp-auto"] == ()
     bounds = dpts.ENTRY_CANDIDATE_BOUNDS["dp-auto"]
-    assert bounds["min"] == 2 and bounds["max"] is None
+    assert bounds["min"] == 2 and bounds["max"] == 5
     assert bounds["id_scheme"] == "free"
     assert dpts.ENTRY_CANDIDATE_SOURCE["dp-auto"] == "pm-supplied:handling_options"
 
@@ -500,19 +506,20 @@ def test_gate_note_and_the_model_basis_stay_separate_business_inputs(
     ), rendered(issues)
 
 
-def test_auto_accepts_free_candidate_ids_and_any_count_above_one(
+def test_auto_accepts_free_ids_and_up_to_five_distinct_candidates(
     project: pathlib.Path,
 ) -> None:
     many = legal_book("dp-auto")
     base = many["material"]["handling_options"][0]
-    letters = "abcdefghij"
+    sites = ["archive", "task card", "worker report", "verification output", "decision receipt"]
     many["material"]["handling_options"] = [
         {
             **base,
-            "id": f"do-{letters[index]}",  # deliberately not c1..cN
-            "label": f"候选方案 {letters[index]}",
+            "id": f"inspect-{index}",
+            "label": f"Inspect the {site}",
+            "description": f"Read the {site} to find the missing evidence",
         }
-        for index in range(5)
+        for index, site in enumerate(sites)
     ]
     many["preparation"] = preparation_for("dp-auto", many["material"])
     assert check(many, project) == []
@@ -520,7 +527,7 @@ def test_auto_accepts_free_candidate_ids_and_any_count_above_one(
     one = legal_book("dp-auto")
     one["material"]["handling_options"] = one["material"]["handling_options"][:1]
     issues = check(one, project)
-    assert has_issue(issues, "material.handling_options", "at least 2"), rendered(issues)
+    assert has_issue(issues, "material.handling_options", "2 to 5"), rendered(issues)
     assert "book-state" in codes(issues)
 
     duplicated = legal_book("dp-auto")
@@ -1107,7 +1114,7 @@ def test_prepared_request_consumes_exactly_the_book_layers(
     assert preparation == book["preparation"]
     assert prepared.meta == book["meta"]
 
-    backend, client = backend_with_answers(dp_id, material, preparation)
+    backend, client = backend_with_answers(dp_id, material, preparation, project)
     result = client.request_prepared(
         dp_id, material, preparation, actor_role=book["meta"]["actor_role"]
     )
@@ -1115,13 +1122,12 @@ def test_prepared_request_consumes_exactly_the_book_layers(
     assert result["business_decisions"] == 1
     assert len(backend.calls) == 1
     sent = backend.calls[0]["state"]
-    assert set(sent) == {"material", "preparation"}
+    assert "preparation" not in sent
     assert sent["material"] == dpts.model_state_for(dp_id, material)
-    assert sent["preparation"]["basis_catalog"] == preparation["basis_catalog"]
+    assert client.last_prepared_preparation == preparation
     # Local meta never rides along.
     for key in META_KEYS:
         assert key not in sent["material"]
-        assert key not in sent["preparation"]
     assert "basis_id" not in sent["material"]
     assert result["basis_id"] == preparation["basis_catalog"][0]["id"]
     for forbidden in ("actual_action", "executed", "settled", "actor", "executor"):

@@ -676,25 +676,25 @@ class TestUpdateIndexClaim:
         assert host == socket.gethostname()
         assert pid.isdigit()
 
-    def test_claim_demotes_other_active_rows_and_releases_lock(self, tmp_path: pathlib.Path) -> None:
+    def test_claim_demotes_only_own_rows_foreign_unchanged(self, tmp_path: pathlib.Path) -> None:
+        # Window-local demote (D-001): only the caller's OWN other active rows
+        # are demoted; a foreign window active row keeps every field unchanged.
+        # Replaces the old global-demote (single-active) assertion.
         mod = _load_update_index()
         agentic = tmp_path / ".agenticdoc"
         agentic.mkdir()
         index = agentic / "_index.parallel"
         mod._ensure_index(index)
+        own = mod.now_claim_id()
         mod._write_index_atomic(
             index,
-            lambda rows: rows
-            + [
-                {
-                    "key": "key-x",
-                    "status": "active",
-                    "phase": "SPEC",
-                    "claim_id": "someone-else:1",
-                    "deps": "—",
-                    "desc": "—",
-                    "updated": "2026-09-08 10:00",
-                }
+            lambda rows: rows + [
+                {"key": "key-x", "status": "active", "phase": "SPEC",
+                 "claim_id": own, "deps": "\u2014", "desc": "\u2014",
+                 "updated": "2026-09-08 10:00"},
+                {"key": "key-foreign", "status": "active", "phase": "EXECUTE",
+                 "claim_id": "someone-else:1", "deps": "\u2014",
+                 "desc": "keep-me", "updated": "2026-01-02 03:04"},
             ],
         )
 
@@ -702,10 +702,21 @@ class TestUpdateIndexClaim:
         assert rc == 0
         rows = {r["key"]: r for r in mod.read_index(index)}
         assert rows["key-a"]["status"] == "active"
-        assert rows["key-a"]["claim_id"] == mod.now_claim_id()  # same process → same id
-        assert rows["key-x"]["status"] == "idle"  # demoted (single-active)
+        assert rows["key-a"]["claim_id"] == mod.now_claim_id()
+        assert rows["key-x"]["status"] == "idle"  # own other active row demoted
+        # Foreign active row: every field unchanged (AC-001/AC-002).
+        assert rows["key-foreign"] == {
+            "key": "key-foreign", "status": "active", "phase": "EXECUTE",
+            "claim_id": "someone-else:1", "deps": "\u2014",
+            "desc": "keep-me", "updated": "2026-01-02 03:04",
+        }
+        # Projection equals the authoritative active set, in row order.
+        active = [r["key"] for r in mod.read_index(index) if r["status"] == "active"]
+        md = (agentic / "_index.md").read_bytes().decode("utf-8")
+        assert md == "# AgenticTask Index\n\nactive_keys: " + json.dumps(active) + "\n"
         # The shared lock is released after the write.
         assert not (tmp_path / ".mw" / "index.lock").exists()
+
 
     def test_stale_local_claim_taken_without_force_live_conflicts(self, tmp_path: pathlib.Path) -> None:
         mod = _load_update_index()

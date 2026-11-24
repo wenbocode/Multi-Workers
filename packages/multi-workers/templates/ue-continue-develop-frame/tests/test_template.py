@@ -82,8 +82,21 @@ with (root/'agent/records.csv').open('a',encoding='utf-8',newline='') as f: csv.
         self.call(path, self.root)
         self.catalog('--write')
 
+    def test_missing_source_root_is_refused(self):
+        other = Path(self.temp.name) / 'NoSource'
+        other.mkdir()
+        result = self.call(TEMPLATE / 'install.py', '--target', other, '--name', 'NoSource',
+                           '--source-root', 'Source', success=False)
+        self.assertIn('source-root directory missing', result.stdout)
+        self.assertFalse((other / 'agent').exists())
+
     def test_install_is_local_and_non_destructive(self):
-        self.assertIn('Existing module policy', (self.root / 'AGENTS.md').read_text(encoding='utf-8'))
+        agent_policy = (self.root / 'AGENTS.md').read_text(encoding='utf-8')
+        self.assertIn('Existing module policy', agent_policy)
+        self.assertIn('版本控制边界', agent_policy)
+        for path in ['AGENTS.md', 'GOAL.md', 'DESIGN.md', 'agent/']:
+            self.assertIn(path, agent_policy)
+        self.assertIn('不进 CL', agent_policy)
         self.assertFalse((self.root / 'gates').exists())
         self.assertFalse((self.root / 'agent/testcases.csv').exists())
         for file in ['terms.csv', 'testcase.csv', 'gates.csv']:
@@ -176,6 +189,9 @@ with (root/'agent/records.csv').open('a',encoding='utf-8',newline='') as f: csv.
         catalog['testcases'].append(dict(case_id='C-SMOKE', term_id='T-EXEC', name='Independent.Smoke',
             path='src/Test.cpp', preconditions='Synthetic source-registration fixture; not an engine run',
             steps='Run fixture', expected='True', command='Automation RunTests Independent.Smoke'))
+        self.write('catalog.json', catalog)
+        self.assertIn('Testcase missing impact gate', self.catalog('--write', success=False).stdout)
+        catalog['gates'].append(dict(catalog['gates'][-1], case_id='C-SMOKE'))
         self.write('catalog.json', catalog)
         self.catalog('--write')
         with (self.root / 'agent/testcase.csv').open(encoding='utf-8-sig') as stream:

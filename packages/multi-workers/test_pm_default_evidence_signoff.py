@@ -34,11 +34,11 @@ def test_reviewed_evidence_signoff_survives_handoff(tmp_path, monkeypatch, capsy
         "       Layer: L2\n       Output: [VERIFY] checked\n       Source: AC-001\n"
     )
     (key_dir / "design.md").write_text(design, encoding="utf-8")
+    freeze_args = argparse.Namespace(key=KEY, block="all", force=False, as_json=True)
     if case.startswith("legacy-"):
-        legacy_spec = spec.replace("> Decision signoff: required\n", "")
-        frozen = contract_guard.build_freeze(KEY, legacy_spec, design)
-        frozen["function_flows"] = contract_guard.function_flow_identities(design)
-        contract_guard.write_freeze(key_dir, frozen)
+        (key_dir / "spec.md").write_text(spec.replace("> Decision signoff: required\n", ""), encoding="utf-8")
+        assert mw._ap_contract_freeze(freeze_args, project) == 0
+        capsys.readouterr()
         cfg = project / ".mw"
         cfg.mkdir(exist_ok=True)
         (cfg / "decide-points.json").write_text(json.dumps({

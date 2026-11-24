@@ -333,8 +333,9 @@ def write_freeze(
     path.parent.mkdir(parents=True, exist_ok=True)
     previous = read_freeze(key_dir)
     retained = dict(freeze)
-    if previous is not None and previous.get("decision_signoff") == "required":
-        retained["decision_signoff"] = "required"
+    if previous is not None:
+        if previous.get("decision_signoff") == "required":
+            retained["decision_signoff"] = "required"
         if previous.get("function_flows"):
             retained["function_flows"] = previous["function_flows"]
     content = json.dumps(

@@ -528,7 +528,7 @@ def test_each_case_prepares_a_real_basis_for_every_supported_choice():
         material = book["material"]
         preparation = book["preparation"]
         meta = book["meta"]
-        assert set(preparation) == {"basis_catalog", "prepared_at"}
+        assert set(preparation) == {"basis_catalog", "prepared_at"} | ({"model_context"} if dp == "dp-auto" else set())
         assert preparation["prepared_at"].endswith("+00:00")
 
         legal = decision_points.resolve_entry_choices(dp, material)
@@ -541,10 +541,9 @@ def test_each_case_prepares_a_real_basis_for_every_supported_choice():
         covered = {
             choice for item in preparation["basis_catalog"] for choice in item["applies_to"]
         }
-        assert covered and covered <= set(supported), dp
         expected_subsets = {
-            "dp-QG": {"fix"},
-            "dp-sign-key": {"continue", "user-confirm"},
+            "dp-QG": {"pass", "fix", "reopen"},
+            "dp-sign-key": {"finalize", "continue", "user-confirm"},
         }
         assert covered == expected_subsets.get(dp, set(supported)), dp
         for item in preparation["basis_catalog"]:
@@ -559,14 +558,16 @@ def test_each_case_prepares_a_real_basis_for_every_supported_choice():
                     choice=choice,
                     basis_id=item["id"],
                 )
-                assert issues == (), (dp, choice, issues)
+                if dp == "dp-QG" and choice == "reopen":
+                    assert len(issues) == 1 and issues[0][0] == "basis_issue"
+                else:
+                    assert issues == (), (dp, choice, issues)
 
 
-def test_gap_cases_omit_unsupported_success_bases_and_keep_full_menus():
+def test_gap_cases_keep_full_criteria_without_claiming_completion():
     module = _generator_module()
     for dp, excluded, expected in (
-        ("dp-QG", "pass", {"fix"}),
-        ("dp-sign-key", "finalize", {"continue", "user-confirm"}),
+        ("dp-sign-key", "finalize", {"finalize", "continue", "user-confirm"}),
     ):
         for case in (module.build_case(dp), json.loads((CASES_DIR / CASE_FILES[dp]).read_text(encoding="utf-8"))):
             book = case["book"]
@@ -575,15 +576,10 @@ def test_gap_cases_omit_unsupported_success_bases_and_keep_full_menus():
             assert excluded in decision_points.resolve_entry_choices(dp, material)
             assert {choice for item in catalog for choice in item["applies_to"]} == expected
             assert excluded in case["questions"][next(iter(case["questions"]))]["choices"]
-            for item in catalog:
-                assert decision_points.basis_selection_issues(item["id"], catalog, excluded)
-            if dp == "dp-QG":
-                assert "缺失" in material["review_findings"]
-                assert "整改" in catalog[0]["text"]
-            else:
-                assert "未完成" in material["actual_completion"]
-                assert material["unfinished_impact"]
-                assert material["verification_evidence"]["unverified"]
+            assert any(not decision_points.basis_selection_issues(item["id"], catalog, excluded) for item in catalog)
+            assert "未完成" in material["actual_completion"]
+            assert material["unfinished_impact"]
+            assert material["verification_evidence"]["unverified"]
 
 
 def test_pm_direct_basis_cites_the_current_window_context():
@@ -597,7 +593,7 @@ def test_pm_direct_basis_cites_the_current_window_context():
             assert fact in basis["text"]
 
 
-def test_generator_accepts_nonempty_basis_subsets_but_refuses_empty_or_ineligible():
+def test_qg_generator_requires_all_three_prepared_criteria():
     module = _generator_module()
     material = module._business_material("dp-QG")
     preparation = module._preparation("dp-QG")
@@ -2249,7 +2245,8 @@ def test_dom_offline_case_loads_and_local_validate_makes_no_network_write(tmp_pa
     [
         ("single", "占位符", "候选不足"),
         ("duplicate", "占位符", "候选 id 重复"),
-        ("six-free-ids", "本地校验通过", "无结构问题"),
+        ("six-free-ids", "候选超限", "最多 5 个"),
+        ("renamed", "行动、后果、风险及条件相同", "候选 #2 与 #1"),
     ],
 )
 def test_dom_local_validate_refuses_placeholders_and_incomplete_material(
@@ -2257,9 +2254,7 @@ def test_dom_local_validate_refuses_placeholders_and_incomplete_material(
 ):
     """Active schema-3 local checks reject placeholders and invalid candidates.
 
-    One candidate and duplicate ids are negative controls; six non-cN ids are
-    a legal positive control. Every case stays offline and leaves legacy assets
-    unchanged.
+    Check the candidate bounds, duplicate IDs and renamed duplicate paths offline.
     """
     payloads = _workbench_dom_payload(tmp_path)
     broken = json.loads((CASES_DIR / "dp-auto.json").read_text(encoding="utf-8"))["book"]
@@ -2268,6 +2263,8 @@ def test_dom_local_validate_refuses_placeholders_and_incomplete_material(
         broken["material"]["handling_options"] = options[:1]
     elif candidate_case == "duplicate":
         options[1]["id"] = options[0]["id"]
+    elif candidate_case == "renamed":
+        options[1] = {**options[0], "id": options[1]["id"], "label": options[1]["label"]}
     else:
         ids = ["read-now", "compare", "inspect", "repair", "ask-user", "roll-back"]
         broken["material"]["handling_options"] = [
@@ -2276,7 +2273,7 @@ def test_dom_local_validate_refuses_placeholders_and_incomplete_material(
         ]
         for basis in broken["preparation"]["basis_catalog"]:
             basis["applies_to"] = ids
-    if candidate_case != "six-free-ids":
+    if candidate_case in {"single", "duplicate"}:
         broken["material"]["question"] = "<string: question>"
     editor_text = json.dumps(broken, ensure_ascii=False, indent=2)
     scenario = {

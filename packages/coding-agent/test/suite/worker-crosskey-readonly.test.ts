@@ -34,8 +34,11 @@ import { type WorkerEntry, WorkerStore } from "../../src/extensions/agent-team-l
 const tempDirs: string[] = [];
 
 function mkdtemp(): string {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mw-crosskey-"));
-	tempDirs.push(dir);
+	const project = fs.mkdtempSync(path.join(os.tmpdir(), "mw-crosskey-"));
+	const dir = path.join(project, ".agenticdoc");
+	fs.mkdirSync(dir);
+	fs.writeFileSync(path.join(dir, "target.yml"), "active: single\n");
+	tempDirs.push(project);
 	return dir;
 }
 
@@ -222,7 +225,7 @@ describe("cross-key writes are refused (AC-024)", () => {
 	it("advance_phase refuses a foreign live key before the gate script runs", async () => {
 		const root = mkdtemp();
 		writeForeignClaim(root, FOREIGN);
-		const scripts = path.join(root, ".claude", "scripts");
+		const scripts = path.join(path.dirname(root), ".claude", "scripts");
 		fs.mkdirSync(scripts, { recursive: true });
 		// The stub records that it ran: a refusal must leave no marker.
 		fs.writeFileSync(
@@ -231,7 +234,7 @@ describe("cross-key writes are refused (AC-024)", () => {
 			"utf8",
 		);
 		const { pi, tools } = fakeToolPi();
-		registerAdvancePhaseTool(pi, root, new IndexStore(root));
+		registerAdvancePhaseTool(pi, path.dirname(root), new IndexStore(root));
 		const tool = tools.get("advance_phase");
 		if (!tool) throw new Error("advance_phase not registered");
 
@@ -367,7 +370,7 @@ describe("key name identity (AC-006)", () => {
 	it("claim and advance_phase refuse the same names (direction consistency)", async () => {
 		const root = mkdtemp();
 		const store = new IndexStore(root);
-		const scripts = path.join(root, ".claude", "scripts");
+		const scripts = path.join(path.dirname(root), ".claude", "scripts");
 		fs.mkdirSync(scripts, { recursive: true });
 		fs.writeFileSync(
 			path.join(scripts, "advance_phase.py"),
@@ -375,7 +378,7 @@ describe("key name identity (AC-006)", () => {
 			"utf8",
 		);
 		const { pi, tools } = fakeToolPi();
-		registerAdvancePhaseTool(pi, root, store);
+		registerAdvancePhaseTool(pi, path.dirname(root), store);
 		const advance = tools.get("advance_phase");
 		if (!advance) throw new Error("advance_phase not registered");
 
@@ -412,10 +415,10 @@ describe("key name identity (AC-006)", () => {
 		);
 	});
 
-	it("_index.md fallback to a held-live key degrades to _scratch with zero writes", () => {
+	it("stale scalar and an idle foreign row do not grant owner; warning stays generic with zero writes", () => {
 		const root = mkdtemp();
-		// Foreign live row, but NO active row: activeEntry() === undefined, the
-		// exact A7 precondition. The `_index.md active:` pointer is the only hint.
+		// Foreign live claim, but NO authoritative active row. The old
+		// `_index.md active:` scalar is an untrusted hint, not an identity source.
 		const docKey = "doc-key-t09-a";
 		// Same foreign claim, but status idle: activeEntry() stays undefined while
 		// findByKey(docKey) reports a held-live claim.
@@ -431,13 +434,15 @@ describe("key name identity (AC-006)", () => {
 
 		const owner = resolveOwnerKeyWithSync(pi, store, { key: undefined }, undefined, root);
 		expect(owner).toBe("_scratch");
-		expect(messages.some((m) => m.includes(docKey))).toBe(true);
-		// No implicit writer reached the other window's namespace.
+		expect(messages.some((m) => m.includes("no authoritative active key"))).toBe(true);
+		expect(messages.every((m) => !m.includes(docKey))).toBe(true);
+		// No unrelated Markdown/key content leaks into the warning, and no
+		// implicit writer reached the other window's namespace.
 		expect(fs.existsSync(path.join(root, docKey, "workers"))).toBe(false);
 		console.log(`[VERIFY] VC-027: fallback_owner=_scratch warned=${messages.length > 0} writes=0`);
 	});
 
-	it("_index.md fallback naming a reserved name degrades to _scratch", () => {
+	it("old scalar naming a reserved name degrades to _scratch", () => {
 		const root = mkdtemp();
 		fs.writeFileSync(path.join(root, "_index.md"), "active: _incidents\n", "utf8");
 		const store = new IndexStore(root);
@@ -528,7 +533,7 @@ describe("AC-008 key-identity branches (BR-07/BR-08)", () => {
 	it("BR-08: an implicit dispatch_worker with no active row creates nothing under the _index.md key (ui-bridge.ts:82)", async () => {
 		const root = mkdtemp();
 		const docKey = "doc-key-t10";
-		// No active row (`activeEntry() === undefined`) but the `_index.md active:`
+		// No active row (`activeEntry() === undefined`) but a stale `_index.md`
 		// pointer names a held-live key — the exact A7 precondition.
 		fs.writeFileSync(
 			path.join(root, "_index.parallel"),

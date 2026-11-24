@@ -10,16 +10,18 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import mw_common
+import replan_tasks
 from autopilot import dispatch, write_face
 
 PROBE = pathlib.Path(__file__).resolve().parent / "engine_policy_probe.py"
 
-#: The three build-artifact directories frozen by design §4 (relative to the
-#: configured Engine repository root).
+#: Generated output directories relative to the configured Engine repository.
 ARTIFACT_SUFFIXES = (
-    "Engine/Intermediate/Build",
-    "Engine/Saved/UnrealBuildTool",
-    "Engine/Saved/Logs",
+    "Engine/Intermediate",
+    "Engine/Saved",
+    "Engine/DerivedDataCache",
+    "Engine/Programs/UnrealBuildTool",
+    *(f"Engine/Binaries/{name}" for name in ("Win64", "Linux", "LinuxArm64", "Mac", "DotNET")),
 )
 
 #: One realistic generated file per artifact directory (source UBT writes
@@ -36,14 +38,14 @@ ARTIFACT_FILES = (
 #: never "intersects the Engine root" and never a UBT command-name exemption.
 DENIED_ENTRIES = (
     "Engine/**",
-    "Engine/Intermediate/**",
-    "Engine/Saved/**",
-    "Engine/Intermediate/Build*",
-    "Engine/Intermediate/BuildX/Generated.bin",
+    "Engine/Intermediat*/**",
+    "Engine/SavedBackup/**",
+    "Engine/Binaries/**",
     "Engine/Source/Engine.cpp",
     "Engine/Build/Build.version",
     "Engine/Config/BaseEngine.ini",
-    "Engine/Binaries/Win64/UnrealEditor.exe",
+    "Engine/Binaries/ThirdParty/SDK.dll",
+    "Engine/Plugins/Example/Source/Feature.cpp",
     "Engine/InstalledBuild.txt",
     "Engine/Intermediate/Build/../Source/Engine.cpp",
     "Game/**",
@@ -92,6 +94,57 @@ def queue_rows(ws):
     return mw_common.parse_workers_file(mw_common.workers_path(ws["control"]))
 
 
+def test_engine_plugin_and_managed_project_generated_dirs(tmp_path, monkeypatch):
+    quiet_env(monkeypatch)
+    ws = dual_workspace(tmp_path, "projects")
+    engine = ws["engine"] / "Engine"
+    plugin = engine / "Plugins" / "Category" / "Sample"
+    tool = engine / "Source" / "Programs" / "BuildTool"
+    for project, descriptor in ((plugin, "Sample.uplugin"), (tool, "BuildTool.csproj")):
+        project.mkdir(parents=True)
+        (project / descriptor).touch()
+    allowed = [f"{plugin}/Binaries/**", f"{plugin}/Intermediate/**", f"{tool}/uatobj/**", f"{tool}/bin/**"]
+    result = send(ws, "project-builds", allowed)
+    assert result.ok, result.reason
+    for face in (f"{plugin}/Source/Feature.cpp", f"{tool}/BuildTool.csproj", f"{tool}/BuildTool.cs",
+                 f"{engine}/Plugins/*/*/Binaries/**", f"{engine}/Source/Programs/Unknown/obj/**"):
+        assert "write-face-read-only" in send(ws, "project-source", [face]).reason
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows UE runtime paths")
+def test_windows_runtime_faces_use_same_replan_and_dispatch_policy(tmp_path, monkeypatch):
+    quiet_env(monkeypatch)
+    ws = dual_workspace(tmp_path, "dual")
+    profile = tmp_path / "User"
+    local = profile / "AppData" / "Local" / "UnrealEngine"
+    program_data = tmp_path / "ProgramData"
+    marker = program_data / "Epic" / "NotAllowedUnattendedBugReports"
+    marker.parent.mkdir(parents=True)
+    marker.touch()
+    monkeypatch.setenv("USERPROFILE", str(profile))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Redirected"))
+    monkeypatch.setenv("ProgramData", str(program_data))
+    saved = f"{local}/5.8/Saved_RenderPerformanceT019/**"
+    ddc = f"{local}/Common/DerivedDataCache/**"
+    ubt = f"{local.parent}/UnrealBuildTool/Log.txt"
+    entries = [saved, ddc, ubt, str(marker)]
+    first = send(ws, "runtime", entries)
+    assert first.ok, first.reason
+    planned = replan_tasks.plan_face(ws["control"], (ws["cards"] / "runtime.md").read_text("utf-8"))
+    assert isinstance(planned, write_face.WriteFace)
+    assert "write-face-overlap" in send(ws, "same-marker", [str(marker)]).reason
+
+    outside = tmp_path / "Outside"
+    outside.mkdir()
+    (local / "5.8").mkdir(parents=True)
+    junction(local / "5.8" / "Saved_Escape", outside)
+    for entry in (f"{local}/5.8/**", f"{local}/5.*/Saved/**", f"{local}/5.8/Saved_Escape/**",
+                  f"{marker.parent}/**", f"{marker}/**", str(marker.with_suffix(".bak"))):
+        assert "write-face-outside-base" in send(ws, "blocked", [entry]).reason
+    marker.write_text("unexpected", encoding="utf-8")
+    assert "write-face-outside-base" in send(ws, "nonempty", [str(marker)]).reason
+
+
 @pytest.mark.parametrize("writable", [None, False, True])
 def test_dispatch_engine_policy(tmp_path, monkeypatch, writable):
     quiet_env(monkeypatch)
@@ -128,8 +181,7 @@ def test_dispatch_engine_policy(tmp_path, monkeypatch, writable):
 @pytest.mark.parametrize("suffix", ARTIFACT_SUFFIXES)
 @pytest.mark.parametrize("shape", ["glob", "exact"])
 def test_dispatch_accepts_declared_build_artifacts(tmp_path, monkeypatch, writable, suffix, shape):
-    """VC-002/VC-004: an exactly declared UBT artifact path and the three
-    directory globs pass the real Python dispatch admission."""
+    """Exact output paths and directory globs pass real dispatch admission."""
     quiet_env(monkeypatch)
     ws = dual_workspace(tmp_path, "case-" + suffix.replace("/", "-") + "-" + shape, writable=writable)
     target = ws["engine"] / pathlib.PurePosixPath(suffix)
@@ -140,7 +192,7 @@ def test_dispatch_accepts_declared_build_artifacts(tmp_path, monkeypatch, writab
     text = result.task_md.read_text(encoding="utf-8")
     assert "write_face: " + entry in text  # the declared face survives verbatim
     assert "UBT builds: allowed without enabling Engine source writes." in text
-    assert "UBT build permission does not allow rebuilding UBT itself" in text
+    assert "Engine feature development stays in Game." in text
     assert "Static command guards are not an OS sandbox." in text
     rows = queue_rows(ws)
     assert [row.get("task_key") for row in rows] == [dispatch.task_key_for("policy", "build-artifact")]
@@ -229,13 +281,9 @@ def test_same_build_artifact_stays_conflict(tmp_path, monkeypatch):
 
 
 def test_engine_build_artifact_roots_are_literal_suffixes():
-    """AC-001/AC-002 frozen helper: three literal anchors, joined only."""
+    """Generated output anchors are joined without following links."""
     roots = mw_common.engine_build_artifact_roots(os.path.join("D:" + os.sep, "UE"))
-    assert [root.replace("\\", "/") for root in roots] == [
-        "D:/UE/Engine/Intermediate/Build",
-        "D:/UE/Engine/Saved/UnrealBuildTool",
-        "D:/UE/Engine/Saved/Logs",
-    ]
+    assert [root.replace("\\", "/") for root in roots] == [f"D:/UE/{suffix}" for suffix in ARTIFACT_SUFFIXES]
     assert mw_common.engine_build_artifact_roots("") == []
 
 
@@ -259,9 +307,9 @@ def test_write_face_requires_complete_literal_prefix_not_intersection(tmp_path):
                             read_only_allowed_roots=allowed), write_face.WriteFace)
     for entry in (
         str(engine) + "/**",
-        str(engine / "Engine" / "Intermediate") + "/**",
-        str(engine / "Engine" / "Intermediate" / "Build*"),
-        str(engine / "Engine" / "Saved" / "UnrealBuildTool.bak") + "/**",
+        str(engine / "Engine" / "Intermediat*") + "/**",
+        str(engine / "Engine" / "IntermediateBackup" / "Build"),
+        str(engine / "Engine" / "SavedBackup") + "/**",
     ):
         refused = parse(entry, read_only_allowed_roots=allowed)
         assert isinstance(refused, write_face.Refused), entry

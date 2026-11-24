@@ -2,15 +2,17 @@
 
 将本目录整体复制到任意位置即可安装，不依赖SceneProfiler工作区、MCP、整仓注册表或MW运行时。适用于模块/插件局部上下文；内置UE AutomationTest适配器，普通脚本检查也可作为本模块gate。
 
-在当前 MW 项目的 Pi 输入框运行：
+在当前 MW 项目的 Pi 输入框运行（仅 dual 工作区）：
 
 ```text
-/mw ue-continue-develop-frame install
+/mw ue-continue-develop-frame install --module Plugins/MyPlugin
 ```
 
-终端对应命令为 `mw ue-continue-develop-frame install`。安装只接受 dual 模式，默认目录是 Game/Plugins/ue-continue-develop-frame。给已有插件安装时追加 `--module Plugins/MyPlugin`。终端可用 `--project` 指定控制目录。
+终端对应命令为 `mw ue-continue-develop-frame install --module Plugins/MyPlugin`，可用 `--project` 指定控制目录。`--module` 必须是 dual `Game/Plugins` 下已存在、含 `*.uplugin` 的插件目录；缺省或指向不存在/非插件目录时拒绝执行，且不创建任何文件。目标已安装（存在 `agent/`）时只做校验，不覆盖模块数据。
 
-安装后自动执行 `agent/gates/package_gate.py`，依次核对目录复现、Ask 完整性和 Python 协议测试。成功显示摘要，失败显示日志末尾与完整日志路径，日志保存在控制目录的 `.mw/ue-continue-develop-frame/`。安装结果是草稿，正式 UE 回归仍需逐项确认。首次校验失败时先修正列出的依赖或目录，再在安装目录运行 `python agent/gates/package_gate.py`；若目录尚未生成，先运行 `python agent/catalog.py --write`。
+安装分两步：先复制框架并运行 `agent/gates/package_gate.py` 自检（目录复现、Ask 完整性、Python 协议测试）；再校验 terms/testcase/gates/DESIGN 是否针对该插件源码生成。未生成时输出缺口清单并以退出码 3 结束（**不算安装成功**），不再打印“完整规范包检查通过”。此时在 Pi 中会由当前 PM Agent 接手生成：按 `agent/GUIDE.md` 依据插件真实源码写 `agent/catalog.json`（术语/用例/门禁）与 `DESIGN.md`，再执行 `catalog.py --write/--check`、`gates/package_gate.py`，最后用 `mw ue-continue-develop-frame verify --module Plugins/MyPlugin` 复核；只有全部通过才显示成功、terms/testcase/gates 数量与人工审核入口 `agent/REVIEW.md`。日志保存在控制目录的 `.mw/ue-continue-develop-frame/`。
+
+生成内容是草稿：条目保持 `proposed`，不得由安装或脚本冒充人工确认；正式 UE 回归仍需逐项确认。在模块内可随时重跑 `python agent/gates/package_gate.py`；若目录尚未生成，先运行 `python agent/catalog.py --write`。
 
 Windows 若尚未注册终端命令，在 MW checkout 运行 `python packages/multi-workers/mw.py install-cli`，然后将 `.mw/bin` 加入 PATH。独立复制此模板时可以直接运行 `install.py --target <模块根目录> --name <名称>`。
 

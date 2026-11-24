@@ -600,14 +600,14 @@ def test_scaffold_and_validate_expose_the_questions_and_the_request_preview(
         preview = report["request_preview"]
         assert set(preview) == {"model", "state", "questions"}
         assert "T10 edited: which worker type?" in preview["questions"][decision_backends.PREPARED_SELECTION_QUESTION_ID]["instructions"]
-        assert set(preview["state"]) == {"material", "preparation"}
-        assert preview["state"]["preparation"] == _book(DP_W_TYPE)["preparation"]
+        assert set(preview["state"]) == {"material", "desc", "terminology", "references", "enum_meanings"}
+        assert preview["state"]["desc"]
         assert set(preview["state"]["material"]) == {
             "task_goal",
             "task_requirements",
             "task_deliverables",
             "images_required",
-        }, "the preview carries the projected material and complete same-call preparation"
+        }, "the preview carries projected material; prepared basis text appears in the choices"
         assert preview["model"] == "jev-latest"
 
         # Without an override the provider keeps the registry questions; the
@@ -760,10 +760,10 @@ def test_real_submit_posts_to_the_fixture_and_joins_the_answer_by_ids(
         assert sent["model"] == "jev-latest"
         # The dispatch entry's model projection is the declared business fields
         # only (identity and local association facts never reach the transport).
-        assert sent["state"] == {
-            "material": dpts.model_state_for(DP_W_TYPE, book["material"]),
-            "preparation": book["preparation"],
-        }
+        assert sent["state"]["material"] == dpts.model_state_for(DP_W_TYPE, book["material"])
+        assert set(sent["state"]) == {"material", "desc", "terminology", "references", "enum_meanings"}
+        assert sent["state"]["desc"]
+        assert sent["state"]["enum_meanings"]
         assert set(sent["state"]["material"]) == {
             "task_goal",
             "task_requirements",
@@ -922,7 +922,7 @@ def test_prepared_preview_equals_the_actual_same_call_http_body(
         assert preview is not None, reviewed["request_preview_reason"]
         assert fixture.calls == 0, "validation never sends"
         validation_calls = fixture.calls
-        assert preview["state"]["preparation"] == book["preparation"]
+        assert "preparation" not in preview["state"]
         selection = preview["questions"][decision_backends.PREPARED_SELECTION_QUESTION_ID]
         assert questions[qid]["instructions"] in selection["instructions"]
         if "criteria" in questions[qid]:

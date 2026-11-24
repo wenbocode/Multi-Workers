@@ -18,18 +18,10 @@ def main() -> None:
     except mw_common.TargetConfigError as exc:
         print(json.dumps({"error": exc.kind}))
         return
-    roots = dispatch.write_face_roots(control, config)
-    readonly = ([config["engine_root"]] if config["mode"] == "dual"
-                and config["engine_root"] and not config.get("engine_writable") else [])
     allowed = dispatch.write_face_read_only_allowed_roots(config)
     faces = []
     for entry in data.get("entries", []):
-        result = write_face.parse_write_face(
-            "write_face: " + entry, base=config["control_root"], roots=roots,
-            case_insensitive=sys.platform == "win32", canonicalize=dispatch.canonical_write_face_path,
-            read_only_roots=readonly,
-            read_only_allowed_roots=allowed,
-        )
+        result = dispatch.parse_workspace_write_face(control, "write_face: " + entry, config)
         faces.append(result.code if isinstance(result, write_face.Refused) else "declared")
     print(json.dumps({
         "writable": config.get("engine_writable", False),

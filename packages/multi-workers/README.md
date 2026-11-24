@@ -52,13 +52,11 @@ python packages/multi-workers/mw.py bootstrap --project .
 
 PM 和 worker 共用项目根目录的 `AGENTS.md`。对使用其他指令文件的客户端，可在其项目指令中要求先阅读 `AGENTS.md`。
 
+首次派发前必须显式选择工作区模式，见下文「双工作区」。`init` 不会自动选择 single：dual/partition 漏配不能靠默认值放行。
+
 MW PM 继续完整的 `spec → design → plan → tasks → execute → verify → done` 流程。Codex PM 使用 `codex_pm.py init --project <目录> --key <key>` 显式建立 `codex-lite` 任务：`codex_doc.md` 保存目标、范围、验收标准、进度和接续信息，`achieved.md` 保存交付与遗留，派给 MW Worker 时才建立任务卡。活动 ClaimId 统一为 `codex`；`_index.parallel` 保留真实阶段和 active/idle，`_index.md` 投影全部 active key。已有完整 SDD key 不自动转换。操作和验收说明见 [Codex PM 工作流](docs/codex-pm.md)。
 
 已有项目重跑 init 会保留原文，追加一次 v3 协作章节。未改动的旧版 Codex 默认模板升级为轻量模板；项目定制模板和已有任务记录保持原样。AgenticTask 原脚本和 MW Worker 执行逻辑继续原行为。
-
-首次派发前必须显式选择工作区模式，见下文「双工作区」。`init` 不会自动选择 single。
-
-每个 key 在正常的 `spec → design → plan → tasks → execute → verify → done` 流程中，由 PM 在 `pm-state.md` 的 Snapshot 记录 `- PM mode: mw` 或 `- PM mode: codex`。初始化还会安装 `.agenticdoc/templates/codex_doc.md`，仅 Codex PM 将其复制到自己的 key，记录内置执行和同 key 转派。派工示例见 [Codex PM 工作流](docs/codex-pm.md)。已有项目重跑 init 会保留原文、追加新版协作章节一次，保留已有 Codex 模板定制。
 
 常用参数：
 
@@ -85,7 +83,7 @@ python mw.py <子命令>
 | `doctor [--json] [--fix]` | 全链路诊断：服务、代理端口、日志、队列、凭据、bundle、target、pi shellPath |
 | `bootstrap` | 新机器一键安装（见上） |
 | `install-cli` | 在 Windows 的 MW checkout 下注册 `.mw/bin/mw.cmd`。一次添加该目录到 PATH 后可直接运行 `mw`。 |
-| `ue-continue-develop-frame install [--project DIR] [--module PATH]` | 将[UE 持续开发框架](templates/ue-continue-develop-frame/README.md)安装到 dual 项目的 Game/Plugins，并自动执行规范包检查。也可在 Pi 执行 `/mw ue-continue-develop-frame install`。 |
+| `ue-continue-develop-frame install --module PATH [--project DIR]` | 将[UE 持续开发框架](templates/ue-continue-develop-frame/README.md)装进 dual 项目中**已存在**的插件（`Game/Plugins` 下、含 `*.uplugin`）。缺 `--module` 或目标非法时拒绝且零写入；规范未生成时退出码 3 并列出缺口，`verify` 复核通过才报成功。也可在 Pi 执行 `/mw ue-continue-develop-frame install --module Plugins/<插件>`。 |
 | `init [--no-framework]` | 在 `--project` 目录安装[协作模板](templates/AGENTS.md)。已有 `AGENTS.md` 时保留原文，追加一次 MW 章节。`--no-framework` 仅跳过 AgenticTask 框架安装 |
 | `build [--install]` | esbuild 重建扩展 bundle（无 bash 依赖、cwd 无关）；`--install` 同时装到全局扩展目录并重建 pi dist |
 | `setup` | 一次性机器初始化：克隆框架 + 全局装扩展 + 自动填充 pi `shellPath`（Windows；幂等，不覆盖已配置值） |

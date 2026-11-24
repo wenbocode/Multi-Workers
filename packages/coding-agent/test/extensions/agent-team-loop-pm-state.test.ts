@@ -55,7 +55,16 @@ it.each(["owned", "foreign", "busy"])(
 				getActiveTools: () => [],
 				on: vi.fn(),
 			};
-			registerMwCommands(pi as unknown as ExtensionAPI, control, {} as never, {} as never, {} as never, root, index);
+			registerMwCommands(
+				pi as unknown as ExtensionAPI,
+				control,
+				{} as never,
+				{} as never,
+				{} as never,
+				root,
+				undefined,
+				index,
+			);
 			const command = registerCommand.mock.calls[0][1];
 			const tool = registerTool.mock.calls[0][0];
 			const ctx = { isIdle: () => mode !== "busy", ui: { notify: vi.fn() } } as unknown as ExtensionCommandContext;
@@ -94,7 +103,12 @@ it.each(["owned", "foreign", "busy"])(
 					claim,
 					`--project=${control}`,
 				],
-				{ encoding: "utf8", timeout: 30_000, input: "reviewed body" },
+				expect.objectContaining({
+					encoding: "utf8",
+					timeout: 30_000,
+					input: "reviewed body",
+					env: expect.objectContaining({ PYTHONIOENCODING: "utf-8" }),
+				}),
 			);
 			await expect(submit("1")).rejects.toThrow("No matching");
 		} finally {

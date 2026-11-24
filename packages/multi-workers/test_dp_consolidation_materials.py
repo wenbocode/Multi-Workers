@@ -43,6 +43,7 @@ import decision_backends as backends  # noqa: E402
 import decision_book  # noqa: E402
 import decision_points as dpts  # noqa: E402
 import decision_wire  # noqa: E402
+from test_prepared_fixture_support import auto_context  # noqa: E402
 
 COPY_ROOT = PACKAGE_DIR.parents[1]  # .../implementation-worktree
 CASES_DIR = PACKAGE_DIR / "decide_cases"
@@ -163,6 +164,7 @@ def _preparation(dp_id: str, material: dict, *, applies_to: object = "all", ref:
     targets = legal if applies_to == "all" else list(applies_to)
     first_ref = ref if ref is not None else next(iter(material))
     return {
+        **({"model_context": auto_context(material)} if dp_id == "dp-auto" else {}),
         "basis_catalog": [
             {
                 "id": "b-primary",
@@ -217,12 +219,10 @@ class FakeHttp:
             business = next((entry for key, entry in answers.items() if key in BUSINESS_QIDS.values()), None)
             basis = answers.get("basis_id")
             if business is not None and basis is not None:
-                state = payload["state"]
-                dp_id = next(key for key, qid in BUSINESS_QIDS.items() if qid in answers)
-                pairs = backends.prepared_selection_options(dp_id, state["material"], state["preparation"])
-                selected = next((wire_id for wire_id, item in pairs.items()
-                    if item["choice"] == business.get("choice") and item["basis_id"] == basis.get("choice")),
-                    "unprepared-selection")
+                criteria = payload["questions"][backends.PREPARED_SELECTION_QUESTION_ID]["criteria"]
+                selected = next((wire_id for wire_id, label in criteria.items()
+                    if label.startswith(f"结论 {business.get('choice')}: ")
+                    and f"\n依据 {basis.get('choice')}: " in label), "unprepared-selection")
                 body["answers"] = {backends.PREPARED_SELECTION_QUESTION_ID: {
                     "type": "choice", "choice": selected,
                     "confidence": min(business.get("confidence", 0), basis.get("confidence", 0)),
@@ -348,10 +348,8 @@ def test_each_entry_sends_one_same_call_choice_and_basis(
     assert all(item["basis_text"] in selection_question["criteria"][wire_id] for wire_id, item in options.items())
 
     state = call["payload"]["state"]
-    assert {"material", "preparation"} <= set(state)
-    # Preparation stays a separate input and carries no material/meta/context.
-    assert set(state["preparation"]) == set(dpts.PREPARATION_KEYS)
-    assert state["preparation"]["prepared_at"] == PREPARED_AT
+    assert "preparation" not in state
+    assert client.last_prepared_preparation == preparation
     # The business material is the full allowlist projection, not a summary.
     assert state["material"] == dpts.model_state_for(dp_id, material)
     # Local identity/association never reaches the model.
@@ -509,7 +507,9 @@ def test_basis_not_applicable_to_the_answered_choice_is_refused(
                 "text": "PM-prepared reason for a different choice",
                 "material_refs": ["gate_background"],
                 "applies_to": legal[1:],
-            }
+            },
+            {"id": "b-first-choice", "text": "Prepared criterion for the first choice",
+             "material_refs": ["gate_background"], "applies_to": legal[:1]},
         ],
         "prepared_at": PREPARED_AT,
     }
@@ -535,7 +535,7 @@ def test_basis_not_applicable_to_the_answered_choice_is_refused(
     assert result["choice"] is None
     assert "out of enum" in result["detail"]
     options = backends.prepared_selection_options(dp_id, material, preparation)
-    assert not any(item["choice"] == choice for item in options.values())
+    assert not any(item["choice"] == choice and item["basis_id"] == "b-primary" for item in options.values())
     assert len(fake.calls) == 1
 
 
@@ -614,9 +614,10 @@ def test_long_core_material_is_sent_complete(
 ) -> None:
     dp_id = "dp-w-type"
     material = _material(dp_id)
-    long_requirement = "R" * 2000
+    long_requirement = ("Read the bounded fixture requirement in full. " * 60)[:2000]
     material["task_requirements"] = long_requirement
     preparation = _preparation(dp_id, material)
+    preparation["model_context"] = {"desc": ["Verify complete transfer of the long task requirements."]}
     fake = http(_ok_responder(dp_id, material))
     client = _make_client(tmp_path, monkeypatch)
 
@@ -624,7 +625,7 @@ def test_long_core_material_is_sent_complete(
         dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
     )
 
-    assert result["available"] is True
+    assert result["available"] is True, (result.get("reason"), result.get("detail"))
     sent = fake.calls[0]["payload"]["state"]["material"]["task_requirements"]
     assert sent == long_requirement
     assert len(sent) == 2000
@@ -653,14 +654,17 @@ def test_every_legal_choice_of_every_entry_is_accepted_in_one_same_call(
             }
         if dp_id == "dp-QG" and choice == "reopen":
             material["basis_issue"] = "the review requirement itself is wrong"
+        criteria = dpts.resolve_entry_choices(dp_id, material)
         preparation = {
+            **({"model_context": auto_context(material)} if dp_id == "dp-auto" else {}),
             "basis_catalog": [
                 {
-                    "id": f"b-{choice}",
-                    "text": f"PM-prepared reason for {choice}",
+                    "id": f"b-{criterion}",
+                    "text": f"PM-prepared reason for {criterion}",
                     "material_refs": [next(iter(material))],
-                    "applies_to": [choice],
+                    "applies_to": [criterion],
                 }
+                for criterion in criteria
             ],
             "prepared_at": PREPARED_AT,
         }
@@ -964,8 +968,8 @@ def test_branch_contract_violation_after_the_answer_is_refused(
     assert result["reason"] == "bad-response"
     assert result["business_decisions"] == 0
     assert result["choice"] is None
-    assert "out of enum" in result["detail"]
-    assert not any(item["choice"] == "reopen" for item in
+    assert result["issues"][0]["field"] == "basis_issue"
+    assert any(item["choice"] == "reopen" for item in
         backends.prepared_selection_options(dp_id, material, preparation).values())
     assert len(fake.calls) == 1
 
@@ -1244,7 +1248,9 @@ def test_transport_record_and_business_refusal_stay_separate_layers(
                 "text": "PM-prepared reason for a different choice",
                 "material_refs": ["gate_background"],
                 "applies_to": legal[1:],
-            }
+            },
+            {"id": "b-first-choice", "text": "Prepared criterion for the first choice",
+             "material_refs": ["gate_background"], "applies_to": legal[:1]},
         ],
         "prepared_at": PREPARED_AT,
     }
@@ -1530,7 +1536,7 @@ def test_observation_accepts_every_generated_schema3_case_book(
     sent = backend.calls[0]["state"]
     expected = dpts.send_state(dp_id, decision_book.book_state(book))[0]
     assert sent["material"] == expected
-    assert sent["preparation"] == book["preparation"]
+    assert "preparation" not in sent
     options = backends.prepared_selection_options(dp_id, material, book["preparation"])
     assert backend.calls[0]["questions"][backends.PREPARED_SELECTION_QUESTION_ID]["labels"] == {
         wire_id: item["label"] for wire_id, item in options.items()
@@ -1592,6 +1598,7 @@ def _auto_book(ids) -> dict:
     ]
     for entry in book["preparation"]["basis_catalog"]:
         entry["applies_to"] = list(ids)
+    book["preparation"]["model_context"] = auto_context(book["material"])
     return book
 
 
@@ -1634,7 +1641,7 @@ def test_auto_candidates_are_resolved_with_the_entry_id_not_the_legacy_bound(
 def test_observation_answers_every_pm_candidate_vocabulary(
     ids, tmp_path: pathlib.Path, monkeypatch
 ) -> None:
-    """Non-``cN`` ids and 2..N candidates are answered, rendered and snapshotted."""
+    """Free IDs and 2..5 candidates are answered, rendered and snapshotted."""
     book = _auto_book(ids)
     project = _observe_project(tmp_path)
     root = tmp_path / "test-run"
@@ -1769,7 +1776,7 @@ def test_prepared_observation_preserves_valid_question_edits(
             for choice, label in override[qid]["criteria"].items()
             if any(item["choice"] == choice for item in
                 backends.prepared_selection_options(dp_id, book["material"], book["preparation"]).values()))
-    assert sent["state"]["preparation"] == book["preparation"]
+    assert "preparation" not in sent["state"]
     assert set(sent["questions"]) == {backends.PREPARED_SELECTION_QUESTION_ID}
     assert outcome.preview["executor_invoked"] is False
     assert _tree(project) == before
@@ -1790,6 +1797,8 @@ def test_prepared_observation_refuses_real_limits_without_send_or_effects(
     if boundary == "questions":
         client.cfg.max_questions = 0
     elif boundary == "prepared-size":
+        client.cfg.max_total_tokens = 200
+        client.cfg.max_state_plus_question_tokens = 200
         book["preparation"]["basis_catalog"][0]["text"] = "prepared fact " * dpts.MAX_STATE_BYTES
     else:
         client.cfg.enabled = False
@@ -1806,8 +1815,7 @@ def test_prepared_observation_refuses_real_limits_without_send_or_effects(
         assert outcome.transport_reason == decision.REASON_BUDGET_EXHAUSTED
         assert client.cfg.max_questions == 0
     elif boundary == "prepared-size":
-        assert outcome.escalated_reason == "input-incomplete"
-        assert "book-budget" in outcome.detail
+        assert outcome.transport_reason == decision.REASON_BUDGET_EXHAUSTED
         assert book["preparation"]["basis_catalog"][0]["text"] == "prepared fact " * dpts.MAX_STATE_BYTES
     else:
         assert outcome.transport_reason == decision.REASON_DISABLED

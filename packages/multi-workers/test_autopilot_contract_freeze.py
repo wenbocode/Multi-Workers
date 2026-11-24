@@ -54,6 +54,9 @@ DESIGN = (
     "VC-002: second vc assertion\n"
     "       Layer: L1   Output: [VERIFY] VC-002: two=true   Source: AC-002\n"
 )
+DESIGN_WITH_FLOW = DESIGN.replace(
+    "## §7", "## Function Flow\n\n| FLOW-016 | Scoped flow | VC-002 |\n\n## §7",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -370,15 +373,63 @@ def test_cli_subprocess_json_and_argparse(tmp_path: pathlib.Path) -> None:
     print("[VERIFY] AC-025: cli_key_required=true json_relative=true")
 
 
+def test_cli_backfills_scoped_flows_without_enabling_signoff(tmp_path: pathlib.Path) -> None:
+    design = DESIGN_WITH_FLOW
+    project, key_dir = _project(tmp_path, "EXECUTE", design=design)
+    path = contract_guard.freeze_contract(key_dir, "k1", SPEC, design)
+    old = contract_guard.read_freeze(key_dir)
+    assert "function_flows" not in old
+    args = ("--project", str(project), "--key", "k1", "--json")
+
+    partial = _run_freeze_cli(*args, "--block", "ac")
+    assert partial.returncode == 0, partial.stderr
+    assert contract_guard.read_freeze(key_dir) == old
+    full = _run_freeze_cli(*args)
+    assert full.returncode == 0, full.stderr
+    assert json.loads(full.stdout)["function_flows"] == {"status": "written", "ids": ["FLOW-016"]}
+    flows = contract_guard.function_flow_identities(design)
+    assert contract_guard.read_freeze(key_dir) == {**old, "function_flows": flows}
+    digest = _file_sha(path)
+
+    again = _run_freeze_cli(*args)
+    assert again.returncode == 0, again.stderr
+    assert json.loads(again.stdout)["function_flows"]["status"] == "unchanged"
+    assert _file_sha(path) == digest
+
+    (key_dir / "design.md").write_text(design.replace("Scoped flow", "Changed flow"), encoding="utf-8")
+    drifted = _run_freeze_cli(*args)
+    assert drifted.returncode == 0, drifted.stderr
+    assert json.loads(drifted.stdout)["function_flows"]["status"] == "drifted"
+    assert _file_sha(path) == digest
+    _rewrite_first_ac(key_dir)
+    forced = _run_freeze_cli(*args, "--block", "ac", "--force")
+    assert forced.returncode == 0, forced.stderr
+    assert contract_guard.read_freeze(key_dir)["function_flows"] == flows
+
+
+def test_cli_flow_backfill_refuses_when_frozen_ac_differs(tmp_path: pathlib.Path) -> None:
+    design = DESIGN_WITH_FLOW
+    project, key_dir = _project(tmp_path, "EXECUTE", design=design)
+    path = contract_guard.freeze_contract(key_dir, "k1", SPEC, design)
+    digest = _file_sha(path)
+    _rewrite_first_ac(key_dir)
+
+    result = _run_freeze_cli("--project", str(project), "--key", "k1", "--json")
+    assert result.returncode == 1, result.stderr
+    assert "function_flows" not in json.loads(result.stdout)
+    assert _file_sha(path) == digest
+
+
 @pytest.mark.parametrize("drift", [None, "ac", "flow"])
 def test_cli_syncs_required_signoff_only_on_a_current_full_contract(tmp_path: pathlib.Path, drift: str | None) -> None:
-    design = DESIGN.replace("## §7", "## Function Flow\n\n| FLOW-016 | Scoped flow | VC-002 |\n\n## §7")
-    project, key_dir = _project(tmp_path, "VERIFY", design=design)
+    project, key_dir = _project(tmp_path, "VERIFY", design=DESIGN_WITH_FLOW)
     args = ("--project", str(project), "--key", "k1", "--json")
-    old = contract_guard.build_freeze("k1", SPEC, design)
-    old["function_flows"] = contract_guard.function_flow_identities(design)
-    path = contract_guard.write_freeze(key_dir, old)
+    assert _run_freeze_cli(*args).returncode == 0
+    path = contract_guard.freeze_path(key_dir)
+    old = contract_guard.read_freeze(key_dir)
+    assert old is not None and old.get("function_flows") and "decision_signoff" not in old
     spec = SPEC.replace("# Spec\n", "# Spec\n\n> Decision signoff: required\n")
+    design = DESIGN_WITH_FLOW
     if drift == "ac":
         spec = spec.replace("first ac text, locked", "first ac text, REWRITTEN")
     if drift == "flow":

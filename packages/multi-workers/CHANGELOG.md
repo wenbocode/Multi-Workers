@@ -4,16 +4,19 @@
 
 ### Breaking Changes
 
+- Prepared requests for all eight active decision points now send one `decision_selection` choice over legal conclusion/basis pairs instead of separate business and `basis_id` questions. Wire clients must answer a prepared pair ID such as `fixA`; normalized business results retain their original conclusion and basis, with one joint confidence. Active DP calls require prepared material and no longer accept the business-only structured request path.
+
 - Worker dispatch now requires an explicit workspace choice in `.agenticdoc/target.yml` or complete dual/partition environment activation. Missing or empty configuration no longer authorizes implicit `single/default` dispatch; use `active: single` only for an intentionally single workspace. Both dispatch channels reject omitted dual/partition configuration before task or queue writes and report the configuration path and repair guidance.
+
 - Interactive MW PM and autopilot now require a reviewed plan before entering `TASKS`. Existing keys in `PLAN` need a pruning record, a retained-task roster, and coverage for all ACs and required design paths. See the [plan closure guide](docs/plan-closure.md).
 
 ### Added
 
-- Added dual-mode `additional_write_roots` to `.agenticdoc/target.yml` (mw-dual-additional-write-roots): a v1 flat dual or v2 `active: dual` project can declare absolute repo-external write roots (`D:/Dark/Saved`-style, e.g. `D:/Dark/Agents/temp`) that `write_face_roots()` appends to the dispatch roots, so a card targeting a declared path no longer fails with `write-face-outside-base`; roots are realpath/short-name/junction/case normalized and rejected as `invalid-config` when relative, empty, duplicated, nested, overlapping control/game/engine, or a junction onto Engine/Game, checked against the env-overridden final roots; extra roots never widen the Game root or Engine read-only, `..`, undeclared external paths and junction-to-Engine keep their `write-face-escape` / `write-face-outside-base` / `write-face-read-only` codes, and no root is injected into workers (each re-reads `target.yml`). `mw target show` prints the declared roots, `mw target off|clear` and `mw partition set|on|clear` promote a top-level declaration into the `dual:` block before writing (fail-closed with zero writes on an unsupported layout), the v1→v2 migration keeps it, and profile/show/projection/read-scope/doctor `config`/probe-cache fingerprint stay byte-identical when the key is absent or `[]` (no new CLI flag, environment variable, directory creation or read-face widening).
-
-- Added `toa/hy4-flash` for PM windows and pi workers, with image input, 1M context, 64K output and configurable thinking through the existing TokenLink route.
-
 - Added `/mw ue-continue-develop-frame install` for dual projects. The installer stays within the Game `Plugins` directory and automatically checks the installed package. Failures include a log excerpt and the full log path.
+
+- Added explicit limited PM follow-up via `/duty-followup-on <project> <key>`, `mw_duty_status` and `mw_duty_followup`: persisted stop/outbox IDs, busy-safe supervisor wake and original-PM identity checks, without creating shift, stage or budget authority. Receipts and activity remain unverified business progress. See the [window duty guide](docs/mw-window-duty.md).
+
+- Added file-content evidence to prepared decisions: cited files and line ranges are read within the configured workspace scope and sent with source hashes and provenance. Oversized requests use explicitly marked excerpts that retain detected failures, constraints and unverified items; evidence that still cannot fit is refused with preparation guidance. Preview and capture use the same prepared source content.
 
 - Added `mw thinking show|set|clear` to inspect and atomically update project worker thinking defaults and role overrides while preserving unrelated configuration. See the [worker thinking guide](docs/worker-thinking.md).
 
@@ -26,6 +29,8 @@
 - Added direct pi worker dispatch for `zhient/<model>` using `ZHIENT_API_KEY` or the credential from `/login zhient`.
 
 - Added direct pi worker dispatch for `toa/hy4` and `toa/hy3`, with isolated TokenLink credentials. See the [TOA setup guide](docs/toa.md).
+
+- Added `toa/hy4-flash` for PM windows and pi workers, with image input, 1M context, 64K output and configurable thinking through the existing TokenLink route.
 
 - Added project-managed Codex CLI relay lifecycle with idempotent startup, authenticated status/login checks, request statistics and graceful draining. PM and workers discover the same project configuration without launcher environment changes.
 
@@ -157,6 +162,10 @@
 
 - Added `/mw model strict on|off` to give compatible project-configured worker role models priority over PM model overrides. The setting defaults to off and appears in `/mw model show`.
 
+- Added local decision drafts that bind field corrections to the owning matter and verify the prepared evidence snapshot again before sending.
+
+- Added dual-mode `additional_write_roots` to `.agenticdoc/target.yml` (mw-dual-additional-write-roots): a v1 flat dual or v2 `active: dual` project can declare absolute repo-external write roots (`D:/Dark/Saved`-style, e.g. `D:/Dark/Agents/temp`) that `write_face_roots()` appends to the dispatch roots, so a card targeting a declared path no longer fails with `write-face-outside-base`; roots are realpath/short-name/junction/case normalized and rejected as `invalid-config` when relative, empty, duplicated, nested, overlapping control/game/engine, or a junction onto Engine/Game, checked against the env-overridden final roots; extra roots never widen the Game root or Engine read-only, `..`, undeclared external paths and junction-to-Engine keep their `write-face-escape` / `write-face-outside-base` / `write-face-read-only` codes, and no root is injected into workers (each re-reads `target.yml`). `mw target show` prints the declared roots, `mw target off|clear` and `mw partition set|on|clear` promote a top-level declaration into the `dual:` block before writing (fail-closed with zero writes on an unsupported layout), the v1→v2 migration keeps it, and profile/show/projection/read-scope/doctor `config`/probe-cache fingerprint stay byte-identical when the key is absent or `[]` (no new CLI flag, environment variable, directory creation or read-face widening).
+
 ### Changed
 
 - `mw review-split set on` now refuses the value instead of persisting a no-op: the `on` tier (dispatch k unit cards + merge) was cancelled with the negative verdict of `claim-driven-review-orchestration`, so a persisted `on` behaved exactly like `off`. The setter exits 2 with `mode 'on' is not wired` and writes nothing; `status` (text and `--json`) gained a `wired` field (`wired=no` for a pre-existing `on` config), so a stale file can no longer look like an active feature. Parsing is unchanged — `on` stays a legal value for a future implementation.
@@ -192,7 +201,14 @@
 
 ### Fixed
 
+- Prepared quality decisions accept an explicit empty finding map, derive remaining findings from the selected IDs, and bind current criteria separately from historical mentions. Contract freezing and decision preparation both parse multi-layer verification entries.
+
 - Fixed runtime code identity scans descending into excluded `.tmp`, `test`, `dist` and `__pycache__` directories, avoiding large framework-cache walks during service startup and stale-code checks.
+
+- Autopilot dispatch honors the source card’s explicit timeout ahead of the project worker timeout.
+
+- Fixed decision replay and cached results outliving their file evidence: content and read-scope dependencies are checked before reuse, and changed, missing or unreadable sources require fresh material instead of reusing an old decision.
+
 - Fixed Python dispatch and conductor write-face checks rejecting configured dual and partition roots. Declarations now retain control-relative semantics and canonical absolute identities for overlap detection, including junction aliases.
 
 - Fixed the `config_sha_after` width in the `authority-change` archive row: the writer sliced a 16-hex value out of an already-sliced 64-hex one, so a reused digest could disagree with the table it claims to describe; the row now carries the documented 16 hex in both `override` and `settle`/`sign` paths (mw-decision-substitution W9).

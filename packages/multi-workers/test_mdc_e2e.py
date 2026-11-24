@@ -223,13 +223,10 @@ def test_vc105_n5_disjoint_write_faces_zero_multi_writer_pairs(
     assert len(started) == 5, started
 
     # Re-judge the REAL in-flight rows with the production parse + operator.
-    base = dispatch.write_face_base(project)
-    case_insensitive = dispatch.write_face_case_insensitive()
+    config = mw_common.load_target_config(project)
     parsed: dict[str, write_face.WriteFace] = {}
     for row in rows:
-        face = dispatch._parse_inflight_write_face(
-            row, base=base, case_insensitive=case_insensitive
-        )
+        face = dispatch._parse_inflight_write_face(row, project, config)
         assert isinstance(face, write_face.WriteFace), (row["task_key"], face)
         parsed[row["task_key"]] = face
 

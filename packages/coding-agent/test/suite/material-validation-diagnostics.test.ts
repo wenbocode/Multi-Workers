@@ -144,6 +144,7 @@ describe("local material validation diagnostics", () => {
 					decision_id: `dp-QG:${envelope.meta.logical_id}`,
 					mode: "suggest",
 					acted: false,
+					file_evidence: [],
 					answers: { qg_verdict: { value: choice }, basis_id: { value: "review" } },
 				}),
 			};
@@ -155,7 +156,7 @@ describe("local material validation diagnostics", () => {
 			stdout: JSON.stringify({ recorded: true, status: "written" }),
 		}));
 		const result = await runAskDecision({ ...request, runner, lifecycleRunner });
-		expect(result.payload.available).toBe(available);
+		expect(result.payload.available, JSON.stringify(result.payload)).toBe(available);
 		if (!available) expect(result.payload).toMatchObject({ unavailable: "bad-response" });
 		expect(runner).toHaveBeenCalledTimes(1);
 		expect(lifecycleRunner).toHaveBeenCalledTimes(available ? 1 : 0);

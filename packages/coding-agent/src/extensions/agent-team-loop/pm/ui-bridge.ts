@@ -4806,7 +4806,7 @@ export async function runMwModelCommand(
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
 export const MW_COMMAND_DESCRIPTION =
-	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / runtime / doctor / update / target / partition / ue-continue-develop-frame install / model / thinking / decide / rag / stats / pm-state compact / run-detached / ack / trim [task] / replan [task] / issue (report|retry|status|update|reply|bind), dev inbox [id]";
+	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / version / runtime / doctor / update / target / partition / ue-continue-develop-frame install / model / thinking / decide / rag / stats / pm-state compact / run-detached / ack / trim [task] / replan [task] / issue (report|retry|status|update|reply|bind), dev inbox [id]";
 
 const loadedExtension = (() => {
 	try {
@@ -6248,6 +6248,14 @@ function registerOwnedPmStateCompaction(
 	};
 }
 
+/** `--module` value from split argv, for the UE-frame generation handoff. */
+function ueFrameModuleArg(args: string[]): string | undefined {
+	const index = args.indexOf("--module");
+	if (index >= 0 && args[index + 1]) return args[index + 1];
+	const inline = args.find((arg) => arg.startsWith("--module="));
+	return inline?.slice("--module=".length) || undefined;
+}
+
 export function registerMwCommands(
 	pi: ExtensionAPI,
 	projectDir: string,
@@ -6269,6 +6277,37 @@ export function registerMwCommands(
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const trimmed = _args.trim();
 			const sub = trimmed.split(/\s+/)[0] ?? "status";
+
+			if (sub === "version") {
+				const mwPy = findMwPy();
+				const bundled = mwPy && path.join(path.dirname(mwPy), "mw_version.py");
+				const script =
+					bundled && fs.existsSync(bundled)
+						? bundled
+						: path.join(os.homedir(), ".local", "share", "multi-workers", "bin", "mw_version.py");
+				const result = await pi.exec(
+					PYTHON_EXE,
+					[
+						"-B",
+						"-X",
+						"utf8",
+						script,
+						`--project=${projectDir}`,
+						`--pi-window=${process.pid}`,
+						...(process.argv[1] ? [`--pi-cli=${process.argv[1]}`] : []),
+						...(loadedExtension
+							? [`--pi-extension=${loadedExtension.path}`, `--pi-extension-hash=${loadedExtension.sha256}`]
+							: []),
+						...(mwPy ? [`--pi-python=${mwPy}`] : []),
+					],
+					{ cwd: projectDir, timeout: 10_000 },
+				);
+				ctx.ui.notify(
+					(result.code === 0 ? result.stdout : result.stderr).trim(),
+					result.code === 0 ? "info" : "error",
+				);
+				return;
+			}
 
 			if (sub === "runtime") {
 				const python = findMwPy();
@@ -6420,9 +6459,13 @@ export function registerMwCommands(
 			}
 
 			if (sub === "ue-continue-develop-frame") {
+				// Thin wrapper: mw.py owns the dual/plugin/target/spec checks. Exit code 3 means
+				// "frame installed, module spec not generated yet" — that turn goes to the PM
+				// agent, which generates catalog.json and DESIGN.md from the real source and then
+				// verifies. The CLI never prints success for a draft install.
 				const args = splitCommandLine(trimmed.slice(sub.length).trim());
-				if (args[0] !== "install") {
-					ctx.ui.notify("用法：/mw ue-continue-develop-frame install [--module Plugins/<插件>]", "warning");
+				if (args[0] !== "install" && args[0] !== "verify") {
+					ctx.ui.notify("用法：/mw ue-continue-develop-frame install|verify --module Plugins/<插件>", "warning");
 					return;
 				}
 				const mwPy = findMwPy();
@@ -6435,11 +6478,28 @@ export function registerMwCommands(
 					["-X", "utf8", "-B", mwPy, sub, ...args, `--project=${projectDir}`],
 					{ cwd: projectDir },
 				);
-				const output = result.code === 0 ? result.stdout : `${result.stdout}${result.stderr}`;
-				ctx.ui.notify(
-					output.trim() || `UE 持续开发框架安装退出码：${result.code}`,
-					result.code === 0 ? "info" : "error",
-				);
+				const output = `${result.stdout}${result.stderr}`.trim();
+				if (result.code === 0) {
+					ctx.ui.notify(output, "info");
+					return;
+				}
+				if (result.code === 3) {
+					ctx.ui.notify(output, "info");
+					const module = ueFrameModuleArg(args) ?? "Plugins/<插件>";
+					deliverPmAlert(
+						pi,
+						[
+							`[UE-FRAME] ${module} 的框架已安装，但模块规范尚未生成（mw 退出码 3）。请完成生成与验收：`,
+							`1. 读取 ${module}/agent/GUIDE.md、agent/catalog.json、agent/module.json 与该插件真实源码；先运行 python agent/catalog.py --discover 获取真实符号与已注册 UE AutomationTest。`,
+							"2. 在 agent/catalog.json 写入该插件的 terms（真实符号 + 中文解释）、testcases（已实现 UE 测试的目的/前置/动作/预期）、gates（always/conditional 影响面策略）；不得编造术语、用例或门禁。",
+							"3. 按 agent/module.json 的 design_sections 补全 DESIGN.md（含 mermaid flow/state 图与 [T-...]、[N:qualified] 引用），完成后把 design_status 改为 ready。",
+							"4. 依次运行 python agent/catalog.py --write、--check 与 agent/gates/package_gate.py。",
+							`5. 运行 mw ue-continue-develop-frame verify --project ${projectDir} --module ${module}，汇报 terms/testcase/gates 数量与 agent/REVIEW.md 待审项；生成内容保持 proposed，不得自行批准，也不要改插件业务代码。`,
+						].join("\n"),
+					);
+					return;
+				}
+				ctx.ui.notify(output || `UE 持续开发框架安装退出码：${result.code}`, "error");
 				return;
 			}
 
@@ -6551,7 +6611,7 @@ export function registerMwCommands(
 			}
 
 			ctx.ui.notify(
-				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | ue-continue-develop-frame install | model show|set|clear|set-fallback|clear-fallback | thinking show|set <default|role> <level>|clear <default|role|all> | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | decide on|off|probe | decide dp on|off <id> | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | pm-state compact --key <k> --summary <file> [--apply <sha256>] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all | issue report|retry|status|update|reply|bind | issue inbox [id] (dev-only read)",
+				"Usage: /mw version | build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | ue-continue-develop-frame install | model show|set|clear|set-fallback|clear-fallback | thinking show|set <default|role> <level>|clear <default|role|all> | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | decide on|off|probe | decide dp on|off <id> | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | pm-state compact --key <k> --summary <file> [--apply <sha256>] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all | issue report|retry|status|update|reply|bind | issue inbox [id] (dev-only read)",
 				"warning",
 			);
 		},

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -65,13 +66,20 @@ const openLedger = `import mw, decision, decision_lifecycle
 root=Path(sys.argv[2])
 cfg=mw._decide_config_snapshot(root)
 store=mw._decide_lifecycle_store(root, cfg, decision.credential_snapshot(cfg))`;
-async function fixture(choices: string[], realLedger = false) {
+async function fixture(choices: string[], realLedger = false, withFileEvidence = true) {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dpc-t15-"));
 	dirs.push(root);
 	const dir = path.join(root, ".agenticdoc", "key-a", "workers", "read-card");
 	fs.mkdirSync(dir, { recursive: true });
 	const task = path.join(dir, "task.md");
-	fs.writeFileSync(task, "type: coding\ntimeout: 5\n\nReview the artifact.");
+	fs.writeFileSync(task, "---\ntype: coding\ntimeout: 5\n---\n\nReview the artifact.");
+	if (realLedger) {
+		const now = new Date().toISOString();
+		fs.writeFileSync(
+			path.join(root, ".agenticdoc", "_workers.parallel"),
+			`# mw-queue:v2\nread-card | running | pi | faux | ${task} | ${now} | ${now} |  | manual\n`,
+		);
+	}
 	const source = path.join(dir, "evidence.txt");
 	fs.writeFileSync(source, "fixture decision evidence");
 	env("PI_WORKER_TASK", task);
@@ -93,29 +101,42 @@ async function fixture(choices: string[], realLedger = false) {
 	const runner: DecideRunner = async (req) => {
 		const { meta } = JSON.parse(req.input);
 		calls.push(req.dp);
+		const choice = choices.shift();
 		if (realLedger) {
 			pythonFixture(
 				root,
 				`${openLedger}
-meta=decision_lifecycle.DecisionMeta.from_envelope(json.loads(sys.argv[3]))
-res=decision_lifecycle.record_start(store,meta,decision_id="dp-w-check-task:"+meta.logical_id)
-assert res.recorded`,
+envelope = json.loads(sys.argv[3])
+meta = decision_lifecycle.DecisionMeta.from_envelope(envelope)
+dp, choice = "dp-w-check-task", sys.argv[4]
+decision_id = dp + ":" + meta.logical_id
+assert decision_lifecycle.record_start(store, meta, decision_id=decision_id).recorded
+preparation = envelope["preparation"]
+basis = preparation["basis_catalog"][0]
+result = {"dp": dp, "available": True, "replayed": False, "choice": choice,
+          "basis_id": basis["id"], "basis_text": basis["text"], "basis_source": "pm-prepared",
+          "prepared_at": preparation["prepared_at"], "reason": None, "attempts": 1,
+          "transport_attempts": 1, "business_decisions": 1}
+assert decision_lifecycle.record_request(store, meta, decision_id=decision_id, result=result,
+    material=envelope["material"], preparation=preparation).recorded`,
 				root,
 				req.input,
+				choice ?? "",
 			);
 		}
-		const choice = choices.shift();
+		const reply: Record<string, unknown> = {
+			available: true,
+			mode: "auto",
+			acted: false,
+			decision_id: `${req.dp}:${meta.logical_id}`,
+			answers: { reachability: { value: choice }, basis_id: { value: "basis" } },
+		};
+		if (withFileEvidence) reply.file_evidence = [];
 		return {
 			status: 0,
 			stderr: "",
 			timedOut: false,
-			stdout: JSON.stringify({
-				available: true,
-				mode: "auto",
-				acted: false,
-				decision_id: `${req.dp}:${meta.logical_id}`,
-				answers: { reachability: { value: choice }, basis_id: { value: "basis" } },
-			}),
+			stdout: JSON.stringify(reply),
 		};
 	};
 	const h = await createHarness({
@@ -188,6 +209,194 @@ assert res.recorded`,
 		fauxAssistantMessage([fauxToolCall("read", { path: file })], { stopReason: "toolUse" });
 	return { h, ask, read, run, receipt, observations, calls, dir, root };
 }
+function toolResults(h: Harness) {
+	return h.session.messages
+		.filter((m) => m.role === "toolResult")
+		.map((m) => ({
+			text: getMessageText(m),
+			details: (m as { details?: unknown }).details,
+		}));
+}
+const observationNames = ["malformed-answer-result.json", "missing-metadata-result.json"] as const;
+type ObservationName = (typeof observationNames)[number];
+type OwnedObservationExport = {
+	dir: string;
+	ownerPath: string;
+	ownerId: string;
+};
+type ObservationOwnerRecord = {
+	owner: string;
+	ownerId: string;
+	pid: number;
+	dir: string;
+	names: string[];
+};
+type ObservationArchiveRequest = {
+	envName: string;
+	name: ObservationName;
+	value: unknown;
+	owned: OwnedObservationExport;
+	source: string;
+};
+type ObservationArchiveResult = {
+	marker: string;
+	source: string;
+	envName: string;
+	configuredTarget: string | null;
+	diagnosticOnly: true;
+	name: ObservationName;
+	path: string;
+	status: "written" | "refused-existing" | "export-error";
+	payload: unknown;
+	bytes: number | null;
+	sha256: string | null;
+	payloadSha256: string;
+	error?: string;
+	ownership: {
+		owner: string;
+		ownerId: string;
+		dir: string;
+		ownerPath: string;
+		ownerMarkerBytes: number;
+		pid: number;
+		cleanupRegistered: boolean;
+		tmpRoot: string;
+		insideOsTemp: boolean;
+		outsideTaskDocTree: boolean;
+		parent: string;
+		relativeName: string;
+	};
+};
+const observationOwner = "dp-consolidation-worker-owned-export";
+function escapes(relativePath: string) {
+	return relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath);
+}
+function createOwnedObservationExport(): OwnedObservationExport {
+	const created = fs.mkdtempSync(path.join(os.tmpdir(), "dpc-t15-owned-observation-"));
+	const dir = fs.realpathSync(created);
+	dirs.push(dir);
+	const ownerId = randomUUID();
+	const ownerPath = path.join(dir, "owner.json");
+	const record: ObservationOwnerRecord = {
+		owner: observationOwner,
+		ownerId,
+		pid: process.pid,
+		dir,
+		names: [...observationNames],
+	};
+	fs.writeFileSync(ownerPath, JSON.stringify(record), { encoding: "utf8", flag: "wx" });
+	return { dir, ownerPath, ownerId };
+}
+function assertOwnedTarget(owned: OwnedObservationExport, name: ObservationName) {
+	const tmpRoot = fs.realpathSync(os.tmpdir());
+	const dir = fs.realpathSync(owned.dir);
+	const relTmp = path.relative(tmpRoot, dir);
+	if (relTmp === "" || escapes(relTmp)) throw new Error("Owned observation export is outside OS temp");
+	const relDocs = path.relative(path.resolve("..", "..", ".agenticdoc"), dir);
+	if (!escapes(relDocs)) throw new Error("Owned observation export is inside the task doc tree");
+	const record = JSON.parse(fs.readFileSync(owned.ownerPath, "utf8")) as ObservationOwnerRecord;
+	if (
+		record.owner !== observationOwner ||
+		record.ownerId !== owned.ownerId ||
+		record.pid !== process.pid ||
+		record.dir !== dir ||
+		!record.names.includes(name)
+	) {
+		throw new Error("Owned observation export owner marker mismatch");
+	}
+	const dirStats = fs.lstatSync(dir);
+	if (!dirStats.isDirectory() || dirStats.isSymbolicLink())
+		throw new Error("Owned observation export is not a concrete directory");
+	const markerStats = fs.lstatSync(owned.ownerPath);
+	if (!markerStats.isFile() || markerStats.isSymbolicLink())
+		throw new Error("Owned observation export marker is not a concrete file");
+	const target = path.join(dir, name);
+	if (!path.isAbsolute(target) || path.dirname(target) !== dir || path.relative(dir, target) !== name) {
+		throw new Error("Owned observation export target escaped its directory");
+	}
+	return { dir, target, tmpRoot, record };
+}
+function archiveObservation(request: ObservationArchiveRequest): ObservationArchiveResult {
+	const { envName, name, value, owned, source } = request;
+	const configuredTarget = process.env[envName] ?? null;
+	const serialized = JSON.stringify(value, null, 2) ?? "{}";
+	const payloadSha256 = createHash("sha256").update(serialized).digest("hex");
+	const target = path.join(owned.dir, name);
+	let status: ObservationArchiveResult["status"] = "written";
+	let bytes: number | null = null;
+	let sha256: string | null = null;
+	let error: string | undefined;
+	let ownership: ObservationArchiveResult["ownership"] = {
+		owner: observationOwner,
+		ownerId: owned.ownerId,
+		dir: owned.dir,
+		ownerPath: owned.ownerPath,
+		ownerMarkerBytes: 0,
+		pid: process.pid,
+		cleanupRegistered: dirs.includes(owned.dir),
+		tmpRoot: os.tmpdir(),
+		insideOsTemp: false,
+		outsideTaskDocTree: false,
+		parent: owned.dir,
+		relativeName: name,
+	};
+	try {
+		const checked = assertOwnedTarget(owned, name);
+		ownership = {
+			owner: checked.record.owner,
+			ownerId: checked.record.ownerId,
+			dir: checked.dir,
+			ownerPath: owned.ownerPath,
+			ownerMarkerBytes: fs.statSync(owned.ownerPath).size,
+			pid: checked.record.pid,
+			cleanupRegistered: dirs.includes(owned.dir),
+			tmpRoot: checked.tmpRoot,
+			insideOsTemp: true,
+			outsideTaskDocTree: true,
+			parent: checked.dir,
+			relativeName: name,
+		};
+		try {
+			fs.writeFileSync(checked.target, serialized, { encoding: "utf8", flag: "wx" });
+			bytes = Buffer.byteLength(serialized, "utf8");
+			sha256 = payloadSha256;
+		} catch (writeError) {
+			if ((writeError as { code?: string }).code !== "EEXIST") throw writeError;
+			const existing = fs.readFileSync(checked.target);
+			status = "refused-existing";
+			bytes = existing.length;
+			sha256 = createHash("sha256").update(existing).digest("hex");
+		}
+	} catch (caught) {
+		status = "export-error";
+		error = caught instanceof Error ? caught.message : String(caught);
+	}
+	const result: ObservationArchiveResult = {
+		marker: "MW_T06O_OBSERVATION_V1",
+		source,
+		envName,
+		configuredTarget,
+		diagnosticOnly: true,
+		name,
+		path: target,
+		status,
+		payload: value,
+		bytes,
+		sha256,
+		payloadSha256,
+		ownership,
+	};
+	if (error !== undefined) result.error = error;
+	process.stdout.write(`MW_T06O_OBSERVATION_V1 ${JSON.stringify(result)}\n`);
+	return result;
+}
+function firstLinePayload(results: ReturnType<typeof toolResults>) {
+	return JSON.parse(results[0]?.text.split("\n")[0] ?? "{}") as Record<string, unknown>;
+}
+function firstDecisionFeedback(results: ReturnType<typeof toolResults>) {
+	const line = results[0]?.text.split("\n")[1] ?? "{}";
+	return (JSON.parse(line) as { decision_feedback?: Record<string, unknown> }).decision_feedback;
+}
 describe("real worker reachability", () => {
 	it("continues with the same budget and records the first real action", async () => {
 		const f = await fixture(["continue"]);
@@ -235,8 +444,14 @@ print(json.dumps(list(decision_lifecycle.read_lifecycle(store).events)))`,
 				f.root,
 			),
 		) as { kind: string; lifecycle?: string; logical_id: string; task_after?: { status: string } }[];
-		expect(rows.map((r) => r.lifecycle ?? r.kind)).toEqual(["record-start", "consumed", "executed", "settled"]);
-		expect(rows[2].task_after?.status).toBe("failed");
+		expect(rows.map((r) => r.lifecycle ?? r.kind)).toEqual([
+			"record-start",
+			"request",
+			"consumed",
+			"executed",
+			"settled",
+		]);
+		expect(rows[3].task_after?.status).toBe("failed");
 		expect(rows.every((r) => r.logical_id === f.run().reachability.decision_id.split(":")[1])).toBe(true);
 		const ts = readWorkerReachability(f.dir, "key-a", "read-card");
 		expect(ts).toMatchObject({ choice: "terminate", decisionId: f.run().reachability.decision_id });
@@ -287,6 +502,17 @@ describe("reachability boundaries and persisted gate axes", () => {
 		expect(f.receipt).toEqual([]);
 		expect(f.run()).toMatchObject({ status: "failed", exit: 1, reachability: { decision_id: null, choice: null } });
 		expect(f.run().reachability.reason).toContain("bad-response");
+		const malformedResults = toolResults(f.h);
+		const malformedPayload = firstLinePayload(malformedResults);
+		const malformedArchive = archiveObservation({
+			envName: "MW_T06F_MALFORMED_OBSERVATION",
+			name: "malformed-answer-result.json",
+			value: { toolResults: malformedResults, firstLinePayload: malformedPayload },
+			owned: createOwnedObservationExport(),
+			source: "worker-case",
+		});
+		expect((malformedPayload.missing_fields as string[] | undefined) ?? []).not.toContain("file_evidence");
+		expect(malformedArchive.status).toBe("written");
 	});
 	it("does not let an agent self-receipt an unexecuted reachability action", async () => {
 		const f = await fixture(["continue"]);
@@ -456,5 +682,189 @@ print(json.dumps([str(a),str(b)]))`,
 		});
 		expect(renderStatusText(parsed.model)).toContain("transport=answered business=steer effect=not-started");
 		expect(fs.readFileSync(legacy)).toEqual(old);
+	});
+	it("refuses an available reply without file_evidence metadata before any action or receipt", async () => {
+		const f = await fixture(["continue"], false, false);
+		f.h.setResponses([f.ask("continue"), f.read(), fauxAssistantMessage("Cannot proceed")]);
+		await f.h.session.prompt("Run the task");
+		const results = toolResults(f.h);
+		const payload = firstLinePayload(results);
+		const feedback = firstDecisionFeedback(results);
+		const code = {
+			unavailable: payload.unavailable,
+			action: payload.action,
+			missing_fields: payload.missing_fields,
+			feedback_category: feedback?.category,
+			feedback_raw_reason: feedback?.raw_reason,
+			feedback_gaps: feedback?.gaps,
+		};
+		const missingArchive = archiveObservation({
+			envName: "MW_T06F_OBSERVATION",
+			name: "missing-metadata-result.json",
+			value: { toolResults: results, firstLinePayload: payload, decisionFeedback: feedback, code },
+			owned: createOwnedObservationExport(),
+			source: "worker-case",
+		});
+		expect(payload).toMatchObject({
+			available: false,
+			unavailable: "bad-response",
+			action: "blocked-ask-human",
+			missing_fields: ["file_evidence"],
+		});
+		expect(code.unavailable).toBe("bad-response");
+		expect(results[0]?.text).toContain("file_evidence");
+		expect(f.observations).toEqual([]);
+		expect(f.receipt).toEqual([]);
+		expect(f.calls).toEqual(["dp-w-check-task"]);
+		expect(String(f.run().reachability.reason ?? "")).toContain("bad-response");
+		expect(missingArchive.status).toBe("written");
+	});
+});
+describe("owned observation export isolation", () => {
+	it("keeps an existing inherited observation destination diagnostic and preserves a fresh sentinel", () => {
+		const sentinelRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dpc-t15-sentinel-"));
+		dirs.push(sentinelRoot);
+		const sentinel = path.join(sentinelRoot, "stale-observation.json");
+		const sentinelBytes = "W9O fresh sentinel: never overwrite\n";
+		fs.writeFileSync(sentinel, sentinelBytes, { encoding: "utf8", flag: "wx" });
+		env("MW_T06F_MALFORMED_OBSERVATION", sentinel);
+		const value = {
+			toolResults: [
+				{ text: "sentinel observation\nfull tool text", details: { case: "sentinel", nested: { kept: true } } },
+			],
+			firstLinePayload: { unavailable: "bad-response" },
+		};
+		const archive = archiveObservation({
+			envName: "MW_T06F_MALFORMED_OBSERVATION",
+			name: "malformed-answer-result.json",
+			value,
+			owned: createOwnedObservationExport(),
+			source: "regression",
+		});
+		expect(archive.status).toBe("written");
+		expect(archive.configuredTarget).toBe(sentinel);
+		expect(archive.path).not.toBe(sentinel);
+		expect(archive.diagnosticOnly).toBe(true);
+		expect(fs.readFileSync(sentinel, "utf8")).toBe(sentinelBytes);
+		expect(JSON.parse(fs.readFileSync(archive.path, "utf8"))).toEqual(value);
+		expect(archive.payload).toEqual(value);
+		expect(archive.ownership.cleanupRegistered).toBe(true);
+		expect(archive.ownership.insideOsTemp).toBe(true);
+		expect(archive.ownership.outsideTaskDocTree).toBe(true);
+		expect(fs.existsSync(archive.ownership.ownerPath)).toBe(true);
+	});
+	it("does not create or write an inherited destination whose parent is absent", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "dpc-t15-absent-parent-"));
+		dirs.push(root);
+		const absentTarget = path.join(root, "absent-parent", "stale-observation.json");
+		env("MW_T06F_OBSERVATION", absentTarget);
+		const value = {
+			toolResults: [
+				{
+					text: "missing file_evidence\nfull tool text",
+					details: { case: "absent-parent", nested: { kept: true } },
+				},
+			],
+			firstLinePayload: { unavailable: "bad-response", missing_fields: ["file_evidence"] },
+			decisionFeedback: { category: "service-unavailable", raw_reason: "bad-response" },
+			code: { missing_fields: ["file_evidence"] },
+		};
+		const archive = archiveObservation({
+			envName: "MW_T06F_OBSERVATION",
+			name: "missing-metadata-result.json",
+			value,
+			owned: createOwnedObservationExport(),
+			source: "regression",
+		});
+		expect(archive.status).toBe("written");
+		expect(archive.configuredTarget).toBe(absentTarget);
+		expect(fs.existsSync(absentTarget)).toBe(false);
+		expect(fs.existsSync(path.dirname(absentTarget))).toBe(false);
+		expect(fs.readFileSync(archive.path, "utf8")).toContain("file_evidence");
+		expect(JSON.parse(fs.readFileSync(archive.path, "utf8"))).toEqual(value);
+		expect(archive.ownership.cleanupRegistered).toBe(true);
+		expect(archive.ownership.outsideTaskDocTree).toBe(true);
+	});
+	it("keeps independent exports distinct and refuses a same-owned-file overwrite", () => {
+		const sentinelRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dpc-t15-shared-"));
+		dirs.push(sentinelRoot);
+		const shared = path.join(sentinelRoot, "shared-stale-observation.json");
+		const sharedBytes = "W9O shared stale diagnostic: preserve\n";
+		fs.writeFileSync(shared, sharedBytes, { encoding: "utf8", flag: "wx" });
+		env("MW_T06F_MALFORMED_OBSERVATION", shared);
+		env("MW_T06F_OBSERVATION", shared);
+		const first = createOwnedObservationExport();
+		const second = createOwnedObservationExport();
+		const malformedValue = {
+			toolResults: [{ text: "malformed answer\nfull text", details: { case: "malformed", nested: { kept: true } } }],
+			firstLinePayload: { unavailable: "bad-response" },
+		};
+		const missingValue = {
+			toolResults: [
+				{ text: "missing file_evidence\nfull text", details: { case: "missing", nested: { kept: true } } },
+			],
+			firstLinePayload: { unavailable: "bad-response", missing_fields: ["file_evidence"] },
+			decisionFeedback: { category: "service-unavailable", raw_reason: "bad-response" },
+			code: { missing_fields: ["file_evidence"] },
+		};
+		const firstMalformed = archiveObservation({
+			envName: "MW_T06F_MALFORMED_OBSERVATION",
+			name: "malformed-answer-result.json",
+			value: malformedValue,
+			owned: first,
+			source: "regression",
+		});
+		const firstMissing = archiveObservation({
+			envName: "MW_T06F_OBSERVATION",
+			name: "missing-metadata-result.json",
+			value: missingValue,
+			owned: first,
+			source: "regression",
+		});
+		const secondMalformed = archiveObservation({
+			envName: "MW_T06F_MALFORMED_OBSERVATION",
+			name: "malformed-answer-result.json",
+			value: malformedValue,
+			owned: second,
+			source: "regression",
+		});
+		const secondMissing = archiveObservation({
+			envName: "MW_T06F_OBSERVATION",
+			name: "missing-metadata-result.json",
+			value: missingValue,
+			owned: second,
+			source: "regression",
+		});
+		const repeatValue = { toolResults: [{ text: "repeat attempt\nmust not truncate", details: { case: "repeat" } }] };
+		const repeated = archiveObservation({
+			envName: "MW_T06F_MALFORMED_OBSERVATION",
+			name: "malformed-answer-result.json",
+			value: repeatValue,
+			owned: first,
+			source: "regression",
+		});
+		expect([firstMalformed, firstMissing, secondMalformed, secondMissing].map((item) => item.status)).toEqual([
+			"written",
+			"written",
+			"written",
+			"written",
+		]);
+		expect(repeated.status).toBe("refused-existing");
+		expect(first.dir).not.toBe(second.dir);
+		expect(firstMalformed.path).not.toBe(secondMalformed.path);
+		expect(firstMalformed.name).not.toBe(firstMissing.name);
+		expect(fs.readFileSync(shared, "utf8")).toBe(sharedBytes);
+		expect(fs.readFileSync(firstMalformed.path, "utf8")).toBe(JSON.stringify(malformedValue, null, 2));
+		expect(fs.readFileSync(repeated.path, "utf8")).toBe(JSON.stringify(malformedValue, null, 2));
+		expect(JSON.parse(fs.readFileSync(firstMissing.path, "utf8"))).toEqual(missingValue);
+		expect(firstMalformed.payload).toEqual(malformedValue);
+		expect(firstMissing.payload).toEqual(missingValue);
+		expect(firstMalformed.payload).not.toEqual(firstMissing.payload);
+		expect(repeated.payload).toEqual(repeatValue);
+		expect(
+			[firstMalformed, firstMissing, secondMalformed, secondMissing, repeated].every(
+				(item) => item.ownership.cleanupRegistered,
+			),
+		).toBe(true);
 	});
 });

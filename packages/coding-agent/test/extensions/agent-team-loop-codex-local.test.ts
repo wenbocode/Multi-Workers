@@ -100,7 +100,12 @@ describe("local Codex adapter", () => {
 		vi.stubEnv("MW_CODEX_LOCAL_URL", model.baseUrl);
 		vi.stubEnv("MW_CODEX_LOCAL_TOKEN", token);
 		const registerProvider = vi.fn();
-		await activate({ registerProvider, on: vi.fn() } as unknown as ExtensionAPI);
+		await activate({
+			registerProvider,
+			registerTool: vi.fn(),
+			registerCommand: vi.fn(),
+			on: vi.fn(),
+		} as unknown as ExtensionAPI);
 		expect(registerProvider).toHaveBeenCalledWith(
 			LOCAL_CODEX_PROVIDER,
 			expect.objectContaining({

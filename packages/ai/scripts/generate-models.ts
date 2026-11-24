@@ -245,6 +245,20 @@ const ZAI_GLM52_THINKING_LEVEL_MAP = {
 	high: "high",
 	max: "max",
 } as const;
+// models.dev lists glm-5.4 efforts as low/high/max. The coding endpoint silently
+// accepts the other effort strings without changing behaviour, so only the
+// declared values are mapped instead of inventing equivalents.
+const ZAI_GLM54_THINKING_LEVEL_MAP = {
+	minimal: null,
+	low: "low",
+	medium: null,
+	high: "high",
+	max: "max",
+} as const;
+const ZAI_REASONING_EFFORT_THINKING_LEVEL_MAPS: Record<string, NonNullable<Model<Api>["thinkingLevelMap"]>> = {
+	"glm-5.2": ZAI_GLM52_THINKING_LEVEL_MAP,
+	"glm-5.4": ZAI_GLM54_THINKING_LEVEL_MAP,
+};
 const OPENCODE_GO_GLM52_THINKING_LEVEL_MAP = {
 	off: null,
 	minimal: null,
@@ -1964,7 +1978,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					if (m.tool_call !== true) continue;
 					const supportsImage = m.modalities?.input?.includes("image");
 
-					const isGlm52 = modelId === "glm-5.2";
+					const reasoningEffortThinkingLevelMap = ZAI_REASONING_EFFORT_THINKING_LEVEL_MAPS[modelId];
 
 					models.push({
 						id: modelId,
@@ -1973,7 +1987,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						provider,
 						baseUrl,
 						reasoning: m.reasoning === true,
-						...(isGlm52 ? { thinkingLevelMap: ZAI_GLM52_THINKING_LEVEL_MAP } : {}),
+						...(reasoningEffortThinkingLevelMap ? { thinkingLevelMap: reasoningEffortThinkingLevelMap } : {}),
 						input: supportsImage ? ["text", "image"] : ["text"],
 						cost: {
 							input: m.cost?.input || 0,
@@ -1984,7 +1998,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						compat: {
 							supportsDeveloperRole: false,
 							thinkingFormat: "zai",
-							...(isGlm52 ? { supportsReasoningEffort: true } : {}),
+							...(reasoningEffortThinkingLevelMap ? { supportsReasoningEffort: true } : {}),
 							...(!ZAI_TOOL_STREAM_UNSUPPORTED_MODELS.has(modelId) ? { zaiToolStream: true } : {}),
 						},
 						contextWindow: m.limit?.context || 4096,
@@ -2183,7 +2197,6 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				let api: Api;
 				let baseUrl: string;
 				let compat: OpenAICompletionsCompat | OpenAIResponsesCompat | undefined;
-
 				if (npm === "@ai-sdk/openai") {
 					api = "openai-responses";
 					baseUrl = `${variant.basePath}/v1`;
@@ -2203,6 +2216,14 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					// null, undefined, or @ai-sdk/openai-compatible
 					api = "openai-completions";
 					baseUrl = `${variant.basePath}/v1`;
+				}
+
+				if (variant.provider === "opencode-go" && api === "google-generative-ai") {
+					// models.dev occasionally lists a Gemini model under opencode-go, but that
+					// provider only registers the anthropic/openai-completions/responses APIs
+					// (the Zen variant does register google-generative-ai). Skip it instead of
+					// inventing a Google auth path for an endpoint nobody verified.
+					continue;
 				}
 
 				if (variant.provider === "opencode" && modelId === "grok-build-0.1") {

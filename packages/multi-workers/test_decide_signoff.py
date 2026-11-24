@@ -196,6 +196,8 @@ def _load_advance_phase():
         pytest.skip("AgenticTask framework clone not present under .agents/skills")
     if str(pathlib.Path(__file__).parent) not in sys.path:
         sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    if str(ADVANCE_PHASE.parent) not in sys.path:
+        sys.path.insert(0, str(ADVANCE_PHASE.parent))
     spec = importlib.util.spec_from_file_location("advance_phase_fixp", ADVANCE_PHASE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -983,7 +985,7 @@ def test_basis_change_during_the_model_request_is_not_bound_or_signed(
     def mutate_during_the_call(state, questions, cfg):
         business_id = cli_fixtures._business_question_id("dp-sign-key")
         assert set(questions) == {"decision_selection"}
-        assert state["preparation"] == envelope["preparation"]
+        assert "preparation" not in state
         (key_dir / "spec.md").write_text(
             "| AC-001 | rewritten during the model request |\n",
             encoding="utf-8",

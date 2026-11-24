@@ -27,10 +27,13 @@ import { type WorkerEntry, WorkerStore } from "../../src/extensions/agent-team-l
 
 const tempDirs: string[] = [];
 
-function mkdtemp(): string {
+function mkdtemp(projectRoot = false): string {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mw-dispatch-guard-"));
 	tempDirs.push(dir);
-	return dir;
+	const doc = path.join(dir, ".agenticdoc");
+	fs.mkdirSync(doc);
+	fs.writeFileSync(path.join(doc, "target.yml"), "active: single\n");
+	return projectRoot ? dir : doc;
 }
 
 afterEach(() => {
@@ -156,7 +159,7 @@ describe("dispatch scope split (T-19, AC-019)", () => {
 
 describe("dispatch alarm wiring (T-17)", () => {
 	it("a refused agent_settled scan writes one ledger row and alerts the PM once per kind", async () => {
-		const root = mkdtemp();
+		const root = mkdtemp(true);
 		const agenticdocRoot = path.join(root, ".agenticdoc");
 		fs.mkdirSync(agenticdocRoot, { recursive: true });
 		const cwd = process.cwd();
@@ -356,7 +359,7 @@ describe("fail-closed guards (T-17, AC-020/AC-021/AC-022)", () => {
 	});
 
 	it("reads the quota from the project's dispatch_max_per_scan (AC-021/D-026)", async () => {
-		const root = mkdtemp();
+		const root = mkdtemp(true);
 		const agenticdocRoot = path.join(root, ".agenticdoc");
 		fs.mkdirSync(agenticdocRoot, { recursive: true });
 		writePhaseDocs(agenticdocRoot, "k");
@@ -447,7 +450,7 @@ describe("run identity wiring (T-20, AC-022)", () => {
 	}
 
 	it("never re-queues a task whose own run already ended AND says why", async () => {
-		const root = mkdtemp();
+		const root = mkdtemp(true);
 		const agenticdocRoot = path.join(root, ".agenticdoc");
 		const taskDir = scratchTask(agenticdocRoot, "t-done");
 		fs.writeFileSync(path.join(taskDir, "output.md"), "already finished\n", "utf8");
@@ -473,7 +476,7 @@ describe("run identity wiring (T-20, AC-022)", () => {
 	});
 
 	it("refuses a live run that lost its queue row (no second writer)", async () => {
-		const root = mkdtemp();
+		const root = mkdtemp(true);
 		const agenticdocRoot = path.join(root, ".agenticdoc");
 		const taskDir = scratchTask(agenticdocRoot, "t-live");
 		runRecord(taskDir, "t-live", "running");
@@ -494,7 +497,7 @@ describe("run identity wiring (T-20, AC-022)", () => {
 	});
 
 	it("dispatches a replacement run that declares supersedes, leaving the old dir untouched", async () => {
-		const root = mkdtemp();
+		const root = mkdtemp(true);
 		const agenticdocRoot = path.join(root, ".agenticdoc");
 		const oldDir = scratchTask(agenticdocRoot, "t-old");
 		fs.writeFileSync(path.join(oldDir, "output.md"), "the finished first run\n", "utf8");
@@ -528,7 +531,7 @@ describe("run identity wiring (T-20, AC-022)", () => {
 	});
 
 	it("refuses to supersede a run that is not finished", async () => {
-		const root = mkdtemp();
+		const root = mkdtemp(true);
 		const agenticdocRoot = path.join(root, ".agenticdoc");
 		const liveDir = scratchTask(agenticdocRoot, "t-live");
 		runRecord(liveDir, "t-live", "running");

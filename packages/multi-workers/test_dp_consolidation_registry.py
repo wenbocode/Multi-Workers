@@ -8,7 +8,7 @@ Covers, on the isolated copy only:
   ``decide_for`` before the backend/executor, so the model-call count is 0;
 - each entry's role/material/choice/basis contract has one source, the frozen
   choice ids and the four baseline menus are exact;
-- dp-auto accepts PM-prepared candidates beyond the legacy 2..5/cN bounds and
+- dp-auto accepts 2..5 distinct PM-prepared candidates with free IDs and
   refuses invented ids/single-candidate sets; dp-route only names the other
   seven entries and owns no executor (a selection is not a release);
 - dp-sign-key keeps ``[]`` as a real value (null/missing refused) while the
@@ -33,6 +33,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))  # noqa: E402
 import decision  # noqa: E402
 import decision_points as dpts  # noqa: E402
 import mw  # noqa: E402
+from test_prepared_fixture_support import auto_context  # noqa: E402
 
 PACKAGE_DIR = pathlib.Path(__file__).resolve().parent
 EXPORT_PATH = PACKAGE_DIR / mw._DP_EXPORT_NAME
@@ -175,6 +176,7 @@ def _preparation(dp_id: str, material: dict) -> dict:
     legal = list(dpts.resolve_entry_choices(dp_id, material))
     ref = next(path for path in material)
     return {
+        **({"model_context": auto_context(material)} if dp_id == "dp-auto" else {}),
         "basis_catalog": [
             {
                 "id": "b-primary",
@@ -422,27 +424,33 @@ def test_w_type_four_types_and_the_image_gate() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. dp-auto: PM-prepared candidates, no legacy 2..5/cN
+# 4. dp-auto: 2..5 distinct PM-prepared candidates, with free IDs
 # ---------------------------------------------------------------------------
 
 
-def test_auto_has_no_static_menu_and_no_legacy_bounds() -> None:
+def test_auto_has_no_static_menu_and_bounds_the_candidate_count() -> None:
     entry = dpts.get_decision_point("dp-auto")
     assert entry.kind == "dynamic-candidates"
     assert entry.candidate_source == "pm-supplied:handling_options"
     assert entry.questions[0]["dynamic_choices"] == "handling_options"
     bounds = dict(entry.candidate_bounds or {})
-    assert bounds == {"min": 2, "max": None, "id_scheme": "free"}
+    assert bounds == {"min": 2, "max": 5, "id_scheme": "free"}
     assert dpts.ENTRY_CHOICES["dp-auto"] == ()
-    # The legacy cN/2..5 validator is untouched history; the new rule is not it.
-    six = _auto_candidates(6)
-    assert dpts.dynamic_choices_value_error(six), "fixture must be illegal for the old rule"
-    assert dpts.entry_candidates_issues("dp-auto", six) == ()
+    assert dpts.entry_candidates_issues("dp-auto", _auto_candidates(1))
+    assert not dpts.entry_candidates_issues("dp-auto", _auto_candidates(2))
+    assert not dpts.entry_candidates_issues("dp-auto", _auto_candidates(5))
+    assert dpts.entry_candidates_issues("dp-auto", _auto_candidates(6))
+    first = _auto_candidates(2)[0]
+    renamed = {**first, "id": "different-id", "label": "Different label",
+               "description": " " + first["description"].upper().replace(" ", "  ")}
+    assert dpts.entry_candidates_issues("dp-auto", [first, renamed]) == (
+        ("handling_options[1]", "duplicates the action, consequence, risk and conditions of handling_options[0]"),
+    )
 
 
 def test_auto_accepts_free_ids_and_refuses_invented_choices() -> None:
     material = _material("dp-auto")
-    material["handling_options"] = _auto_candidates(6)
+    material["handling_options"] = _auto_candidates(5)
     legal = dpts.resolve_entry_choices("dp-auto", material)
     assert legal == tuple(candidate["id"] for candidate in material["handling_options"])
     for candidate_id in legal:

@@ -37,6 +37,9 @@
 			"!packages/mom/data/**/*",
 			"!!**/node_modules",
 			"!!.tmp",
+			"!!**/.tmp",
+			"!!.agenticdoc",
+			"!!.mw",
 			"!!.agenticdoc/mw-dp-consolidation/implementation-worktree",
 			"!!.tmp/dpc"
 		]

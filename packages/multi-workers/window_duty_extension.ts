@@ -15,10 +15,12 @@ import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type {
 	ExtensionAPI,
+	ExtensionCommandContext,
 	ExtensionContext,
 } from "../coding-agent/src/core/extensions/types.ts";
 import { PmChannel } from "../coding-agent/src/extensions/agent-team-loop/pm/codex-channel.ts";
 import { conductorClaimState } from "../coding-agent/src/extensions/agent-team-loop/shared/index-store.ts";
+import { DutyFollowup, type FollowupNotice, type FollowupTarget } from "./duty_followup.ts";
 import { lockDutyTarget } from "./pm_duty_lease.ts";
 import { StopWatch } from "./pm_watch.ts";
 import { type Notice, parseShift, publishDutyFact, type Shift, WindowDuty } from "./window_duty.ts";
@@ -28,12 +30,56 @@ function unquote(path: string) {
 	return path.replace(/^(["'])(.*)\1$/, "$2");
 }
 
+const FOLLOWUP_CUSTOM_TYPE = "mw:duty-followup";
+const FOLLOWUP_NOTE_MAX_CHARS = 1000;
+const FOLLOWUP_NOTE_MAX_BYTES = 1600;
+
+/** Explicit follow-up target only: a registered shift card must never be selected here. */
 function explicitTarget(args: string, cwd: string) {
 	const match = /^(?:"([^"]+)"|'([^']+)'|(\S+))\s+([a-z0-9][a-z0-9-]{0,79})$/.exec(args.trim());
 	if (!match) return undefined;
 	const project = resolve(cwd, match[1] ?? match[2] ?? match[3]);
 	if (existsSync(project) && statSync(project).isFile()) return undefined;
 	return { project, key: match[4] };
+}
+
+function followupContent(notice: FollowupNotice, target: FollowupTarget) {
+	const lines = [
+		`MW 显式受限跟进（不是班次授权）: ${target.project} / ${target.key}`,
+		`Notice ID: ${notice.id}`,
+		`Kind: ${notice.kind}`,
+		`Summary: ${notice.summary}`,
+		"queued/received/started and PM working are transport/activity facts only; businessProgress=unverified.",
+		"Inspect the real engineering evidence under the target key (task cards, worker artifacts, evidence files) before judging progress.",
+	];
+	if (notice.kind === "no-progress")
+		lines.push(
+			"No new verified engineering progress after the follow-up: report missing progress once, do not resend automatically.",
+		);
+	if (notice.kind === "suspended")
+		lines.push("Follow-up delivery is suspended: create no new request until identity, session and phase are rechecked.");
+	lines.push(
+		"Only in this explicit mode may mw_duty_followup {id,note} send one bounded status/evidence request to the original PM.",
+		"The original PM verifies the facts and stays inside its existing authority; no gate, stage, budget or deadline is approved.",
+	);
+	return lines.join("\n");
+}
+
+/** Normalize the C1 controller status without assuming its concrete field names. */
+function statusArrays(detail: unknown) {
+	const record = (detail && typeof detail === "object" ? detail : {}) as Record<string, unknown>;
+	const pick = (...names: string[]) => {
+		for (const name of names) {
+			const value = record[name];
+			if (Array.isArray(value)) return value;
+		}
+		return [] as unknown[];
+	};
+	return {
+		pendingNotices: pick("pendingNotices", "notices", "pending"),
+		outbox: pick("outbox", "requests", "messages"),
+		receipts: pick("receipts", "receiptStates"),
+	};
 }
 
 function dutySource(args: string, cwd: string, home?: string, expectedClaim?: string) {
@@ -81,10 +127,13 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 	const warnings = new Map<string, string>();
 	const busy = new Error("Duty window is already processing an event");
 	let emit: (notice: Notice) => void;
-	type DutyMode = "inactive" | "observation" | "shift" | "waiting";
+	type DutyMode = "inactive" | "observation" | "followup" | "shift" | "waiting";
 	let mode: DutyMode = "inactive";
 	let observer:
-		| { watch: StopWatch; target: Pick<Shift["targets"][number], "project" | "key" | "claim" | "binding" | "session">; directory: string; observe: () => void }
+		| { watch: StopWatch; target: FollowupTarget; directory: string; observe: () => void }
+		| undefined;
+	let followup:
+		| { controller: DutyFollowup; target: FollowupTarget; directory: string; ctx: ExtensionCommandContext }
 		| undefined;
 	let waiting: { project: string; key: string; claim: string; directory: string } | undefined;
 	function close() {
@@ -98,6 +147,7 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 		registration = undefined;
 		mode = "inactive";
 		observer = undefined;
+		followup = undefined;
 		waiting = undefined;
 		for (const server of leases) server.close();
 		leases = [];
@@ -112,23 +162,43 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 		if (readFileSync(configFile, "utf8") !== original)
 			throw Error("Shift card changed; stop and reconcile before sending.");
 	}
+	/** Pin identity from the live original-PM channel, never from this supervisor window. */
+	function connectedTarget(project: string, key: string, ctx: ExtensionCommandContext): FollowupTarget {
+		const live = new PmChannel(project, home).status(key);
+		if (
+			!live.connected ||
+			live.status !== "active" ||
+			live.phase === "DONE" ||
+			typeof live.session !== "string" ||
+			typeof live.binding !== "string" ||
+			!live.binding ||
+			typeof live.claim !== "string"
+		)
+			throw Error(`No connected, unfinished original PM for ${project} / ${key}`);
+		if (live.session === ctx.sessionManager.getSessionId())
+			throw Error("Cannot follow up the current PM/session");
+		if (conductorClaimState(live.claim) !== "live") throw Error("Original PM claim is not live");
+		return { project, key: live.key, claim: live.claim, binding: live.binding, session: live.session };
+	}
 	function sameTarget(requested: { project: string; key: string }) {
 		const directory = new PmChannel(requested.project, home).dir;
 		const pin =
-			mode === "observation" ? observer : mode === "waiting" ? waiting : undefined;
+			mode === "followup" ? followup : mode === "observation" ? observer : mode === "waiting" ? waiting : undefined;
 		if (!pin || pin.directory !== directory) return false;
 		const pinnedKey = "target" in pin ? pin.target.key : pin.key;
 		return pinnedKey.toLowerCase() === requested.key.toLowerCase();
 	}
-	function dutyStatus(ctx: ExtensionContext) {
+	function dutyStatus(ctx: ExtensionContext, now = Date.now()) {
 		if (session !== undefined && ctx.sessionManager.getSessionId() !== session) {
 			close();
 			ctx.ui.notify("Duty released: supervisor session changed", "warning");
 		}
 		const pinnedTargets: object[] = [];
 		const observedStates: object[] = [];
-		const outbox: unknown[] = [];
-		const receipts: unknown[] = [];
+		let pendingNotices: unknown[] = [];
+		let outbox: unknown[] = [];
+		let receipts: unknown[] = [];
+		let controllerStatus: unknown = null;
 		if (mode === "observation" && observer) {
 			pinnedTargets.push({ ...observer.target });
 			observedStates.push({
@@ -136,6 +206,15 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 				key: observer.target.key,
 				...observer.watch.sample(),
 			});
+		} else if (mode === "followup" && followup) {
+			const { target, controller } = followup;
+			pinnedTargets.push({ ...target });
+			controllerStatus = controller.status(now);
+			const parts = statusArrays(controllerStatus);
+			pendingNotices = parts.pendingNotices;
+			outbox = parts.outbox;
+			receipts = parts.receipts;
+			observedStates.push({ project: target.project, key: target.key, ...controller.watch.sample() });
 		} else if (mode === "shift") {
 			for (const station of stations) {
 				pinnedTargets.push({
@@ -160,11 +239,57 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 			supervisorSession: session ?? null,
 			pinnedTargets,
 			observedStates,
+			pendingNotices,
 			outbox,
 			receipts,
+			controllerStatus,
 			businessProgress: "unverified" as const,
 			note: "Receipts and working activity are transport facts only; no engineering acceptance is verified here.",
 		};
+	}
+	/** One timer, one emit path; the controller keeps a notice pending when emit throws busy. */
+	function startFollowup(ctx: ExtensionCommandContext, version: number) {
+		const emitNotice = (notice: FollowupNotice) => {
+			if (!ctx.isIdle() || ctx.hasPendingMessages()) throw busy;
+			if (generation !== version || mode !== "followup" || !followup) throw busy;
+			if (ctx.sessionManager.getSessionId() !== session) {
+				close();
+				throw busy;
+			}
+			const { target } = followup;
+			pi.sendMessage(
+				{
+					customType: FOLLOWUP_CUSTOM_TYPE,
+					display: true,
+					details: { ...notice, project: target.project, key: target.key, mode: "followup" },
+					content: followupContent(notice, target),
+				},
+				{ triggerTurn: true },
+			);
+		};
+		const tick = () => {
+			if (generation !== version || mode !== "followup" || !followup) return;
+			if (ctx.sessionManager.getSessionId() !== session) {
+				close();
+				ctx.ui.notify("Duty follow-up released: supervisor session changed", "warning");
+				return;
+			}
+			const { controller, target } = followup;
+			try {
+				controller.poll(Date.now(), emitNotice);
+				warnings.delete(target.key);
+			} catch (error) {
+				if (error === busy || !ctx.isIdle() || ctx.hasPendingMessages()) return;
+				const message = String(error);
+				if (warnings.get(target.key) !== message) {
+					warnings.set(target.key, message);
+					ctx.ui.notify(`Duty follow-up suspended for ${target.key}: ${message}`, "warning");
+				}
+			}
+		};
+		tick();
+		timer = setInterval(tick, 5000);
+		timer.unref();
 	}
 	pi.registerCommand("duty-report-on", {
 		description: "Attach this original PM as the producer of structured stops and progress",
@@ -434,15 +559,168 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 			}
 		},
 	});
+	pi.registerCommand("duty-followup-on", {
+		description:
+			"Explicitly enable limited follow-up for <project path> <key>. No shift, new budget or new authority is created.",
+		handler: async (args, ctx) => {
+			if (reporting || opening) throw Error("Requires an interactive duty window without active reporting");
+			if (ctx.mode !== "tui") throw Error("Requires an interactive duty window");
+			const requested = explicitTarget(args, ctx.cwd);
+			if (!requested)
+				throw Error(
+					"Use /duty-followup-on <project path> <key>; a registered shift card is not an explicit follow-up target",
+				);
+			const directory = new PmChannel(requested.project, home).dir;
+			if (session !== undefined) {
+				if (ctx.sessionManager.getSessionId() !== session)
+					throw Error("Supervisor session changed; run /duty-off and re-enable explicitly");
+				if (!sameTarget(requested))
+					throw Error("A different target, full shift or mode is active; run /duty-off first");
+				if (mode === "followup") {
+					ctx.ui.notify(`Duty already active: ${JSON.stringify(dutyStatus(ctx))}`, "info");
+					return;
+				}
+				if (mode !== "observation" || !observer)
+					throw Error("Full shift or waiting mode is active; run /duty-off first");
+				opening = true;
+				const version = generation;
+				const prior = observer;
+				const priorLeases = [...leases];
+				const priorWarnings = new Map(warnings);
+				let sendLease: Server | undefined;
+				let swapped = false;
+				let committed = false;
+				try {
+					const live = connectedTarget(requested.project, requested.key, ctx);
+					if (
+						live.claim !== prior.target.claim ||
+						live.binding !== prior.target.binding ||
+						live.session !== prior.target.session
+					)
+						throw Error("Original PM identity changed; /duty-off and re-enable explicitly");
+					const lease = await lockDutyTarget(directory, live.key, "send");
+					sendLease = lease;
+					if (version !== generation) throw Error("Window changed during handoff");
+					// All fallible controller preparation happens before the observer timer is stopped.
+					const controller = new DutyFollowup(live, home);
+					if (version !== generation) throw Error("Window changed during handoff");
+					clearInterval(timer);
+					timer = undefined;
+					observer = undefined;
+					mode = "followup";
+					followup = { controller, target: live, directory, ctx };
+					leases = [...priorLeases, lease];
+					swapped = true;
+					startFollowup(ctx, version);
+					ctx.ui.notify(
+						`Duty follow-up enabled for ${live.project} / ${live.key}; same-target observer upgraded without a second monitor lease`,
+						"info",
+					);
+					committed = true;
+				} catch (error) {
+					if (sendLease?.listening) sendLease.close();
+					if (!committed && swapped) {
+						if (generation !== version || session === undefined) {
+							close();
+						} else {
+							clearInterval(timer);
+							observer = prior;
+							mode = "observation";
+							followup = undefined;
+							leases = priorLeases;
+							warnings.clear();
+							for (const [key, value] of priorWarnings) warnings.set(key, value);
+							timer = setInterval(prior.observe, 5000);
+							timer.unref();
+						}
+					}
+					throw error;
+				} finally {
+					opening = false;
+				}
+				return;
+			}
+			opening = true;
+			const version = generation;
+			const acquired: Server[] = [];
+			try {
+				const live = connectedTarget(requested.project, requested.key, ctx);
+				acquired.push(await lockDutyTarget(directory, live.key));
+				acquired.push(await lockDutyTarget(directory, live.key, "send"));
+				if (version !== generation) throw Error("Window changed during handoff");
+				const controller = new DutyFollowup(live, home);
+				session = ctx.sessionManager.getSessionId();
+				leases = acquired;
+				mode = "followup";
+				followup = { controller, target: live, directory, ctx };
+				startFollowup(ctx, version);
+				ctx.ui.notify(`Duty follow-up enabled for ${live.project} / ${live.key}`, "info");
+			} catch (error) {
+				for (const server of acquired) if (server.listening) server.close();
+				throw error;
+			} finally {
+				opening = false;
+			}
+		},
+	});
 	pi.registerTool({
 		name: "mw_duty_status",
 		label: "Report duty mode and observed state",
 		description:
-			"Report this window's actual duty mode (inactive/observation/shift/waiting), pinned targets, observed states and outbox/receipts. Business progress is always unverified here.",
+			"Report this window's actual duty mode (inactive/observation/followup/shift/waiting), pinned targets, observed states, pending notices and outbox/receipts. Business progress is always unverified here.",
 		parameters: Type.Object({}),
 		async execute(_id, _params, _signal, _update, ctx) {
 			const status = dutyStatus(ctx);
 			return { content: [{ type: "text", text: JSON.stringify(status) }], details: status };
+		},
+	});
+	pi.registerTool({
+		name: "mw_duty_followup",
+		label: "Send one bounded follow-up to the original PM",
+		description:
+			"Only in explicit /duty-followup-on mode and the matching supervisor session. Send one bounded status/evidence request for the current stable notice ID through the follow-up controller. No shift approval or DP receipt is implied.",
+		parameters: Type.Object({
+			id: Type.String({ minLength: 1, maxLength: 128 }),
+			note: Type.String({ minLength: 1, maxLength: FOLLOWUP_NOTE_MAX_CHARS }),
+		}),
+		async execute(_id, params, _signal, _update, ctx) {
+			if (!session || mode !== "followup" || !followup || session !== ctx.sessionManager.getSessionId())
+				throw Error("Explicit limited follow-up is not active in this supervisor session");
+			const { id, note } = params;
+			if (
+				!note.trim() ||
+				!id.trim() ||
+				Buffer.byteLength(note, "utf8") > FOLLOWUP_NOTE_MAX_BYTES ||
+				/[\u0000-\u001f\u007f]/.test(note) ||
+				/[\u0000-\u001f\u007f]/.test(id)
+			)
+				throw Error(
+					`Follow-up note must be non-empty, <=${FOLLOWUP_NOTE_MAX_CHARS} characters, <=${FOLLOWUP_NOTE_MAX_BYTES} UTF-8 bytes and contain no control characters`,
+				);
+			const { target, directory } = followup;
+			const channel = new PmChannel(target.project, home);
+			if (channel.dir !== directory) throw Error("Original project changed; no request created");
+			const live = channel.status(target.key);
+			if (
+				!live.connected ||
+				live.status !== "active" ||
+				live.phase === "DONE" ||
+				live.claim !== target.claim ||
+				live.binding !== target.binding ||
+				live.session !== target.session ||
+				live.session === session
+			)
+				throw Error("Original PM offline, DONE or owner/binding/session changed; no request created");
+			const result = followup.controller.send(id, note, Date.now());
+			const response = {
+				mode: "followup" as const,
+				id,
+				target: { project: target.project, key: target.key },
+				transport: result,
+				businessProgress: "unverified" as const,
+				note: "Receipt and working states are transport facts only. Inspect real engineering evidence before claiming progress.",
+			};
+			return { content: [{ type: "text", text: JSON.stringify(response) }], details: response };
 		},
 	});
 	pi.registerTool({

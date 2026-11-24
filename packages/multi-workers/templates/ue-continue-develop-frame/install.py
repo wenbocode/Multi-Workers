@@ -16,6 +16,8 @@ def install(target, name, sources):
     for source in sources:
         if not (target / source).resolve().is_relative_to(target):
             raise ValueError('source-root escapes module')
+        if not (target / source).is_dir():
+            raise ValueError('source-root directory missing: ' + source)
     target.mkdir(parents=True, exist_ok=True)
     shutil.copytree(PACKAGE / 'agent', target / 'agent', ignore=shutil.ignore_patterns('__pycache__'))
     shutil.copyfile(PACKAGE.parent / 'MW-TASK.md', target / 'agent/MW-TASK.md')
@@ -32,9 +34,9 @@ def install(target, name, sources):
     (target / 'agent/module.json').write_text(json.dumps(config, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     command = [sys.executable, '-B', str(target / 'agent/catalog.py'), '--write']
     result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
-    if result.returncode:
-        raise ValueError('Installed draft files; catalog generation needs attention: ' + result.stdout + result.stderr)
-    return {'status': 'installed_draft', 'module': str(target), 'next': 'Fill GOAL/DESIGN and agent/catalog.json; review proposed gates before execution'}
+    catalog = 'generated' if not result.returncode else 'pending: ' + (result.stdout + result.stderr).strip()
+    return {'status': 'installed_draft', 'module': str(target), 'catalog': catalog,
+            'next': 'Generate agent/catalog.json terms/testcases/gates and DESIGN.md from the real source per agent/GUIDE.md, then run catalog.py --write/--check and gates/package_gate.py'}
 
 
 if __name__ == '__main__':

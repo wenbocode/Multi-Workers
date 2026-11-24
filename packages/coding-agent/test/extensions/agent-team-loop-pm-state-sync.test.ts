@@ -85,6 +85,13 @@ function mkdtemp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "atl-pm-state-sync-"));
 }
 
+function setUpDispatchRoot(project: string): string {
+	const root = path.join(project, ".agenticdoc");
+	fs.mkdirSync(root);
+	fs.writeFileSync(path.join(root, "target.yml"), "active: single\n", "utf8");
+	return root;
+}
+
 /** Write `lines` joined with CRLF (plus trailing terminator) as UTF-8 bytes
  * and return the pm-state.md path. */
 function writePmState(root: string, key: string, lines: string[]): string {
@@ -162,8 +169,7 @@ function fakeToolCtx(): ExtensionContext {
 	} as unknown as ExtensionContext;
 }
 
-/** Complete spec-side chain for a key (no goal.md → §0 check skipped):
- * spec.md >= 500 bytes with a numbered AC, and one spec research note. */
+/** Required spec document with a numbered AC. The project has no goal.md. */
 function writeSpecSide(root: string, key: string): void {
 	const keyDir = path.join(root, key);
 	fs.mkdirSync(keyDir, { recursive: true });
@@ -172,9 +178,6 @@ function writeSpecSide(root: string, key: string): void {
 		`# Spec\n${"x".repeat(600)}\n\n| AC-001 | in x, y returns z |\n`,
 		"utf8",
 	);
-	const research = path.join(keyDir, "evidence", "research");
-	fs.mkdirSync(research, { recursive: true });
-	fs.writeFileSync(path.join(research, "spec-topic-2026-01-01.md"), "# research\n", "utf8");
 }
 
 /** A key whose pm-state.md carries only the phase line. */
@@ -272,8 +275,9 @@ describe("takeOverKey claim sync (D-107/D-108)", () => {
 
 describe("dispatch entrances read the owner key's phase (D-101/D-110)", () => {
 	it("VC-012: type=coding dispatch at phase SPEC is not blocked by the phase gate", async () => {
-		const root = mkdtemp();
+		const project = mkdtemp();
 		try {
+			const root = setUpDispatchRoot(project);
 			writePhaseOnly(root, "vc12-key", "SPEC");
 			writeSpecSide(root, "vc12-key");
 			// T-02: a compliant card so the envelope gate passes.
@@ -341,7 +345,7 @@ describe("dispatch entrances read the owner key's phase (D-101/D-110)", () => {
 			const codingAtSpecAllowed = !text.includes("missing phase documentation") && fs.existsSync(taskMd);
 			verify(`[VERIFY] VC-012: coding_at_spec_allowed=${codingAtSpecAllowed}`);
 		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
+			fs.rmSync(project, { recursive: true, force: true });
 		}
 	});
 
@@ -378,8 +382,9 @@ describe("dispatch entrances read the owner key's phase (D-101/D-110)", () => {
 	});
 
 	it("wiring control: the dispatchNewTasks scan reads the SCAN key's pm-state phase (D-110)", async () => {
-		const root = mkdtemp();
+		const project = mkdtemp();
 		try {
+			const root = setUpDispatchRoot(project);
 			writePhaseOnly(root, "scan-key", "DESIGN");
 			writeSpecSide(root, "scan-key");
 			const taskDir = path.join(root, "scan-key", "workers", "t-scan");
@@ -388,7 +393,7 @@ describe("dispatch entrances read the owner key's phase (D-101/D-110)", () => {
 			const store = new WorkerStore(root);
 			const gates: Array<{ key: string; gaps: string[] }> = [];
 
-			// DESIGN phase + spec side only → blocked with both design-side gaps.
+			// DESIGN phase + spec side only → blocked on the missing design.
 			await dispatchNewTasks(store, root, {
 				warnedKeys: new Set<string>(),
 				onDocGate: (key, gaps) => {
@@ -398,16 +403,10 @@ describe("dispatch entrances read the owner key's phase (D-101/D-110)", () => {
 			});
 			expect(store.readAll().filter((e) => e.taskKey === "t-scan")).toHaveLength(0);
 			expect(gates).toHaveLength(1);
-			expect(gates[0]?.gaps).toContain("design.md missing or under 500 bytes");
-			expect(gates[0]?.gaps).toHaveLength(2);
+			expect(gates[0]?.gaps).toEqual(["design.md missing or under 500 bytes"]);
 
-			// Completing the design side unblocks the very same task.
+			// The design document alone unblocks the very same task.
 			fs.writeFileSync(path.join(root, "scan-key", "design.md"), `# Design\n${"x".repeat(600)}`, "utf8");
-			fs.writeFileSync(
-				path.join(root, "scan-key", "evidence", "research", "design-topic-2026-01-01.md"),
-				"# research\n",
-				"utf8",
-			);
 			await dispatchNewTasks(store, root, {
 				warnedKeys: new Set<string>(),
 				onDocGate: (key, gaps) => {
@@ -417,7 +416,7 @@ describe("dispatch entrances read the owner key's phase (D-101/D-110)", () => {
 			});
 			expect(store.findByKey("t-scan")?.status).toBe("pending");
 		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
+			fs.rmSync(project, { recursive: true, force: true });
 		}
 	});
 });
