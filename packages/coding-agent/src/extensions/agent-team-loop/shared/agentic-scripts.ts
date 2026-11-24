@@ -114,12 +114,21 @@ export function inspectPlanGate(projectDir: string): AgenticScriptResult {
 	const closure = path.join(dir, "plan_closure.py");
 	try {
 		const source = fs.readFileSync(advance, "utf8");
-		const imported = /^from plan_closure import problems(?: as (\w+))?\s*$/m.exec(source);
+		const code = source.replace(/#[^\r\n]*/g, "");
+		// Newer framework scripts also import contract helpers from this module.
+		const imported = [...code.matchAll(/^from[ \t]+plan_closure[ \t]+import[ \t]+(\([^)]*\)|[^\r\n]+)/gm)].some(
+			([, names = ""]) => {
+				const entries = names.startsWith("(") ? names.slice(1, -1) : names;
+				return entries.split(",").some((entry) => {
+					const binding = /^problems(?:[ \t]+as[ \t]+([A-Za-z_]\w*))?$/.exec(entry.trim());
+					return binding !== null && new RegExp(`\\b${binding[1] ?? "problems"}\\s*\\(`).test(code);
+				});
+			},
+		);
 		if (
 			!fs.statSync(closure).isFile() ||
 			!imported ||
-			!new RegExp(`\\b${imported[1] ?? "problems"}\\s*\\(`).test(source) ||
-			!/["']tasks["']\s*:\s*\[\s*\(\s*["']plan\.md["']\s*,\s*["']plan_closure["']/.test(source)
+			!/["']tasks["']\s*:\s*\[\s*\(\s*["']plan\.md["']\s*,\s*["']plan_closure["']/.test(code)
 		) {
 			throw new Error("missing PLAN → TASKS closure registration");
 		}
