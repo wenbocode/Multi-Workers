@@ -1,0 +1,21 @@
+{
+  "release": "mw-anti-ornament-a575737ba",
+  "commit": "a575737bae6d9d72c60cdbb453cb1df370afaaaa",
+  "global": {
+    "entry": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\bin\\mw.cmd",
+    "path": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-anti-ornament-a575737ba\\packages\\multi-workers\\mw.py",
+    "root": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-anti-ornament-a575737ba",
+    "release": "mw-anti-ornament-a575737ba",
+    "commit": "a575737bae6d9d72c60cdbb453cb1df370afaaaa",
+    "base_commit": "a06b380a7af99263a31353a129931b87df948102"
+  },
+  "global_extension": {
+    "path": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-anti-ornament-a575737ba\\packages\\multi-workers\\mw.py",
+    "root": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-anti-ornament-a575737ba",
+    "release": "mw-anti-ornament-a575737ba",
+    "commit": "a575737bae6d9d72c60cdbb453cb1df370afaaaa",
+    "base_commit": "a06b380a7af99263a31353a129931b87df948102",
+    "uses_global_default": true
+  },
+  "backup": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-anti-ornament-a575737ba\\deployment-backup"
+}

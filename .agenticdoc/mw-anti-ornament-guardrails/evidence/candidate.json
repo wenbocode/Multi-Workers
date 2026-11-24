@@ -1,0 +1,37 @@
+{
+  "release_id": "mw-anti-ornament-a575737ba",
+  "phase": "candidate-verified",
+  "commit": "a575737bae6d9d72c60cdbb453cb1df370afaaaa",
+  "base_commit": "a06b380a7af99263a31353a129931b87df948102",
+  "parent_release": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-lean-followup-a06b380a7",
+  "included_keys": [
+    "mw-lean-execution",
+    "mw-dual-additional-write-roots",
+    "mw-remaining-closeout",
+    "mw-signoff-freeze-metadata",
+    "ue-frame-install-generate",
+    "mw-runtime-version",
+    "mw-pi-version",
+    "mw-zai-glm54",
+    "mw-duty-followup",
+    "mw-plan-gate-capability-fix",
+    "mw-lean-followup",
+    "mw-anti-ornament-guardrails"
+  ],
+  "agentic_task_commit": "abed2de",
+  "source_overlay": {
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts": "93ef193ef62d9a8232c910f7e1417ab121465d9992e7d55bb7bd96e5c1edf48f",
+    "packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts": "1db2a0ca4a7b88599dfaf227de29c8f46475a0475bfe3b5317baf8f668edfcfe",
+    "packages/coding-agent/test/extensions/agent-team-loop.test.ts": "64e846e9b264e1dd3975457bb760fc888fc76c5dfed0d12c82afacc6220739ff",
+    "packages/multi-workers/templates/AGENTS.md": "8686808a207f1088594e0d078d19d530c567bc6ab41123d14a81d8f2c6cfe793",
+    "packages/multi-workers/test_init_agents_guide.py": "ec5afe2e2125b191acb300c388a3cf8d6f69094f735afd0feb2f6c928f83db34",
+    "packages/multi-workers/docs/plan-closure.md": "20bab560d229097315264320e13b11a182fb0144bbff873462bea5d3d36b9d42",
+    "packages/multi-workers/docs/dual-toolchain-practice-guide.md": "5a0f877d5bb1f07e6c88bc0b06a1d7d015770ffefd893005d9cc15f856f44f81"
+  },
+  "pi_version": "0.83.0",
+  "artifacts": {
+    "packages/multi-workers/mw.py": "905e002568303f3e47a2bcbff265a04ae811f59d9399a6c679c23d2af36aea27",
+    "packages/coding-agent/dist/cli.js": "71cad79c13de14f1eea0d122356ce7b9fa562d4ebc9faff8a04ad1e950cde84f",
+    "packages/multi-workers/dist/extensions/agent-team-loop.js": "77d9ea780e58d049d8abd63dfa2a417236a2a994bb2e6fbbbd8458878ff7c341"
+  }
+}

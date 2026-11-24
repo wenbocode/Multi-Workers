@@ -14,5 +14,7 @@
 
 ## 遗留
 
-- Multi-Workers 与 AgenticTask 仓库的 `git commit` / `push`、用户级全局 `mw` / `pi` 运行版本更新（`mw build --install`），以及向 Gaze、RenderPerformance 等外部工作区同步最新 `AGENTS.md` 与 AgenticTask 技能，按项目规则待用户明确授权后执行。
+- 已提交：Multi-Workers `dev/AgentTeam` 提交 `a575737ba`，AgenticTask `master` 提交 `abed2de`（`.agents/skills/agentic-task` 安装克隆；`packages/multi-workers/.tmp/agentic-task` 开发克隆保留同样的未提交改动，未改动其 HEAD）。均为本地提交，未推送。
+- 已安装：用户级全局 `mw`、`pi` 与扩展切到冻结版 `mw-anti-ornament-a575737ba`（pi 0.83.0，基于 `mw-lean-followup-a06b380a7` 叠加本次 7 个源文件），回滚副本在该发布的 `deployment-backup`。证据见 `evidence/candidate.json`、`evidence/installed.json`、`evidence/tools/anti-ornament-release.py`。
+- 已打开的 pi 窗口需 `/reload` 或重开；项目后台（当前 PID 71188 仍为 `mw-remaining-closeout-20261124`）本次只涉及 TS 扩展与文档，无需为生效重启。AgenticTask 与 AGENTS.md 规模节向 Gaze、RenderPerformance 等外部项目的同步、远端推送另行处理。
 - 后续在 Gaze 返工卡与 RenderPerformance 竖切试点中跟踪自建证据一致性脚本归零与重型真机留证零作废两项对照指标。

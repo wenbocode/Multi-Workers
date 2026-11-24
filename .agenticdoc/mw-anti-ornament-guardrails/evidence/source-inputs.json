@@ -1,0 +1,13 @@
+{
+  "base": "a06b380a7af99263a31353a129931b87df948102",
+  "paths": {
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts": "93ef193ef62d9a8232c910f7e1417ab121465d9992e7d55bb7bd96e5c1edf48f",
+    "packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts": "1db2a0ca4a7b88599dfaf227de29c8f46475a0475bfe3b5317baf8f668edfcfe",
+    "packages/coding-agent/test/extensions/agent-team-loop.test.ts": "64e846e9b264e1dd3975457bb760fc888fc76c5dfed0d12c82afacc6220739ff",
+    "packages/multi-workers/templates/AGENTS.md": "8686808a207f1088594e0d078d19d530c567bc6ab41123d14a81d8f2c6cfe793",
+    "packages/multi-workers/test_init_agents_guide.py": "ec5afe2e2125b191acb300c388a3cf8d6f69094f735afd0feb2f6c928f83db34",
+    "packages/multi-workers/docs/plan-closure.md": "20bab560d229097315264320e13b11a182fb0144bbff873462bea5d3d36b9d42",
+    "packages/multi-workers/docs/dual-toolchain-practice-guide.md": "5a0f877d5bb1f07e6c88bc0b06a1d7d015770ffefd893005d9cc15f856f44f81"
+  },
+  "conflicts": []
+}
