@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { Check } from "typebox/value";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import {
@@ -21,6 +22,7 @@ import {
 	CLAIM_DIAGNOSIS_RECOVERY,
 	type ClaimDiagnosis,
 	claimRefusalOutcome,
+	type DECISION_RECEIPT_PARAMETERS,
 	DECISION_RECEIPT_TOOL,
 	type DecideRunner,
 	type DecideRunRequest,
@@ -535,6 +537,54 @@ describe("claim refusal diagnostics — VC-002 zero side effects, one read", () 
 		expect(t.spy.signCalls).toHaveLength(signAfterAsk);
 		expect(fs.readFileSync(indexFileOf(root)).equals(before)).toBe(true);
 		expect(fs.existsSync(lockFileOf(root))).toBe(false);
+	});
+
+	it.each([null, TASK])("keeps task_after optional for a receipt bound to %s", async (taskKey) => {
+		const root = pmProject();
+		setIndex(root, selfActive);
+		const { ask, receipt, spy } = pmTools(root);
+		const confirmed = payloadOf(
+			(await ask.execute("ask", { ...askParams(undefined), ...(taskKey ? { task_key: taskKey } : {}) })).content[0]
+				?.text ?? "",
+		);
+		expect(confirmed.available).toBe(true);
+		const event = {
+			decision_id: confirmed.decision_id,
+			stage: "executed",
+			action: "record",
+			event_id: "same-receipt",
+		};
+		const schema = JSON.parse(JSON.stringify(receipt.parameters)) as typeof DECISION_RECEIPT_PARAMETERS;
+		const observation = {
+			status: "done",
+			source: "agent-report",
+			observed_at: "2026-11-24T08:00:00Z",
+			completed: null,
+			remaining: null,
+			blockers: null,
+		};
+		const before = spy.lifecycleCalls.length;
+		const observed = { ...event, task_after: observation };
+		expect(Check(schema, event)).toBe(true);
+		expect(Check(schema, { ...event, task_after: null })).toBe(true);
+		expect(Check(schema, observed)).toBe(true);
+		const result = await receipt.execute("observe-task", observed);
+		expect(result.details).toMatchObject({ status: taskKey ? "written" : "refused" });
+		if (taskKey) {
+			expect((spy.lifecycleCalls.at(-1) as { input: string }).input).toContain('"task_after":');
+			expect(spy.lifecycleCalls).toHaveLength(before + 1);
+		} else {
+			expect(spy.lifecycleCalls).toHaveLength(before);
+			for (const input of [event, { ...event, task_after: null }]) {
+				const result = await receipt.execute("receipt-absent", input);
+				expect(result.details).toMatchObject({ status: "written" });
+				const row = JSON.parse((spy.lifecycleCalls.at(-1) as { input: string }).input);
+				expect(row).toMatchObject({ ...event, meta: { task_key: null } });
+				expect(row).not.toHaveProperty("task_after");
+			}
+			expect(spy.lifecycleCalls).toHaveLength(before + 2);
+		}
+		expect(spy.decideCalls).toHaveLength(1);
 	});
 
 	it("faux-provider harness: a claim refusal reaches the real execute with zero spawns", async () => {

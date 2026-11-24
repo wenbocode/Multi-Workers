@@ -2539,7 +2539,11 @@ export const DECISION_RECEIPT_PARAMETERS = Type.Object(
 		),
 		reason: Type.Optional(Type.String({ description: "settled/executed: short free-text reason" })),
 		event_id: Type.Optional(Type.String({ description: "Reuse the SAME id only when retrying this very write" })),
-		task_after: Type.Optional(AGENT_TASK_STATE_SCHEMA),
+		task_after: Type.Optional(
+			Type.Union([AGENT_TASK_STATE_SCHEMA, Type.Null()], {
+				description: "Omit when the decision has no task_key. If a value is required, use null for no observation.",
+			}),
+		),
 	},
 	{ additionalProperties: false },
 );
@@ -3690,7 +3694,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			"settled needs one closed outcome: pending, ok, rework, rollback, inconclusive. settled is this round, " +
 				"not the whole task.",
 			"Never receipt an action you did not perform; a failed receipt is reported, not retried with a new action.",
-			"task_after is an optional local Agent report AFTER the actual handling, for this decision's exact task. It does not execute work. Use source=agent-report and the actual observation time; missing progress is null, not guessed. Round ok is not task done.",
+			"Omit task_after for a decision without task_key, or use null if the field must be included. For a real task, report only its actual observation after handling, with source=agent-report and the actual observation time. Use null for unknown progress. Round ok is not task done.",
 		],
 		parameters: DECISION_RECEIPT_PARAMETERS,
 		executionMode: "sequential",
@@ -3728,10 +3732,8 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 					boundReceipt.key === undefined ? boundReceipt.diagnosis : claimDiagnosis("worker-key-mismatch");
 				return refusal(ASK_DECISION_REASON_INPUT_INCOMPLETE, known.dp, undefined, diagnosis);
 			}
-			if (
-				params.task_after !== undefined &&
-				(known.meta.task_key === null || !isTaskStateSnapshot(params.task_after))
-			)
+			const taskAfter = params.task_after ?? undefined;
+			if (taskAfter !== undefined && (known.meta.task_key === null || !isTaskStateSnapshot(taskAfter)))
 				return refusal(ASK_DECISION_REASON_INPUT_INCOMPLETE, known.dp);
 			const eventId = params.event_id ?? randomUUID();
 			let envelope: DecisionLifecycleEnvelope;
@@ -3766,7 +3768,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				};
 				if (params.reason !== undefined) envelope.reason = params.reason;
 			}
-			if (params.task_after !== undefined) envelope.task_after = copyTaskState(params.task_after);
+			if (taskAfter !== undefined) envelope.task_after = copyTaskState(taskAfter);
 			const feedback = await writeDecisionLifecycle(projectDir, envelope, options.lifecycleRunner ?? runLifecycleMw);
 			appendDecisionTrace(
 				tracePath,
