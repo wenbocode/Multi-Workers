@@ -2178,6 +2178,8 @@ export function createDecisionBlockCounter(): DecisionBlockCounter {
 // ── Registration ────────────────────────────────────────────────────────────
 
 export interface AskDecisionToolOptions {
+	/** Route real PM windows through the durable receipt writer. */
+	persistentPmReceipts?: boolean;
 	/** Control workspace root (`.agenticdoc`'s parent). Defaults to the root
 	 * derived from `PI_WORKER_TASK`, else `process.cwd()`. */
 	projectDir?: string;
@@ -2548,6 +2550,29 @@ export const DECISION_RECEIPT_PARAMETERS = Type.Object(
 	{ additionalProperties: false },
 );
 
+// Invalid receipt fields must reach the PM handler so it can return a repair step.
+const PM_RECEIPT_PARAMETERS = Type.Object(
+	{
+		decision_id: Type.Optional(Type.Unknown({ description: "The original formal decision ID" })),
+		stage: Type.Optional(Type.Unknown({ description: "executed or settled" })),
+		action: Type.Optional(Type.Unknown({ description: "The real executed action" })),
+		outcome: Type.Optional(Type.Unknown({ description: "The actual settled outcome" })),
+		result: Type.Optional(Type.Unknown({ description: "What the real result was based on" })),
+		reason: Type.Optional(Type.Unknown({ description: "A short explanation" })),
+		event_id: Type.Optional(Type.Unknown({ description: "Keep the original event ID on retry" })),
+		task_after: Type.Optional(
+			Type.Unknown({
+				description:
+					"Actual bound task observation with status, source=agent-report, observed_at, completed, remaining and blockers. Use null for no observation.",
+			}),
+		),
+		check_only: Type.Optional(
+			Type.Unknown({ description: "Set to true to check the original event without writing" }),
+		),
+	},
+	{ additionalProperties: true },
+);
+
 /** Receipt tool details: the outcome of ONE receipt attempt. */
 export interface DecisionReceiptDetails {
 	decision_id: string;
@@ -2573,10 +2598,8 @@ export interface DecisionReceiptDetails {
  * `workerModeActivate`), so the append wins over the role allowlist
  * recomputation. It never enters `TOOL_ALLOWLISTS` (T-17 Python parity lock).
  *
- * The process keeps one in-memory map of the decisions this window asked. The
- * receipt op resolves a `decision_id` against it, so `executed`/`settled` can
- * only ever be written for a decision this window really made (and with the
- * same `logical_id` meta).
+ * Worker receipts keep the local run's decision binding. PM production
+ * receipts verify the original decision against the current key and ledger.
  */
 export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionToolOptions = {}): AskDecisionToolHandle {
 	const taskPath = options.taskPath ?? process.env.PI_WORKER_TASK;
@@ -2597,6 +2620,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 	const initiatorRole = resolvedTaskPath
 		? initiatorRoleFromWorkerTask(resolvedTaskPath)
 		: (options.initiatorRole ?? "unknown");
+	const persistentPmReceipts = options.persistentPmReceipts === true && initiatorRole === "pm";
 
 	function boundKey(requested: string | undefined): BoundKeyResult {
 		if (ownerKey !== undefined) {
@@ -3631,7 +3655,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			const iso = new Date().toISOString();
 			if (outcome.payload.available) {
 				counter.clear(params.dp);
-				if (isMaterialDp(params.dp) && outcome.meta !== undefined) {
+				if (!persistentPmReceipts && isMaterialDp(params.dp) && outcome.meta !== undefined) {
 					// Same decision, same logical_id: the receipt joins the consume row.
 					asked.set(outcome.payload.decision_id, { meta: outcome.meta, dp: params.dp });
 				}
@@ -3675,8 +3699,85 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 		},
 	});
 
-	// The receipt op: `consumed` is automatic (the asker received the selection);
-	// `executed`/`settled` are only ever recorded here, after the real action.
+	// Append after the worker recomputes its active set, without changing its allowlist.
+	pi.on("before_agent_start", () => {
+		const active = pi.getActiveTools();
+		const missing = [ASK_DECISION_TOOL, DECISION_RECEIPT_TOOL].filter((name) => !active.includes(name));
+		if (missing.length > 0) pi.setActiveTools([...active, ...missing]);
+	});
+
+	// consumed is automatic; executed/settled record only subsequent real actions.
+	if (persistentPmReceipts) {
+		pi.registerTool({
+			name: DECISION_RECEIPT_TOOL,
+			label: DECISION_RECEIPT_TOOL,
+			description: "Record or check a PM receipt against the original formal decision in the current key.",
+			promptSnippet:
+				"decision_receipt(decision_id, stage, event_id?, check_only?, ...) — resume the original receipt.",
+			promptGuidelines: [
+				"Record only actions actually performed or handling outcomes you verified.",
+				"Use stage=executed with action, or stage=settled with outcome. A decision without a task has no task_after.",
+				"Follow the returned next using the same decision and event. Use check_only to reconcile an uncertain write.",
+			],
+			parameters: PM_RECEIPT_PARAMETERS,
+			executionMode: "sequential",
+			execute: async (_toolCallId, params, signal) => {
+				const binding = boundKey(undefined);
+				const identity = {
+					decision_id: typeof params.decision_id === "string" ? params.decision_id : null,
+					stage: params.stage === "executed" || params.stage === "settled" ? params.stage : null,
+					...(typeof params.event_id === "string" ? { event_id: params.event_id } : {}),
+				};
+				let details: Record<string, unknown>;
+				if (binding.key === undefined) {
+					details = {
+						...identity,
+						status: "refused",
+						code: "receipt-binding",
+						claim_diagnosis: binding.diagnosis,
+						next: { owner: "pm", action: "recover-receipt-binding", done_when: binding.diagnosis.recovery },
+					};
+				} else {
+					const mwPy = findMwPy();
+					const argv = mwPy && [
+						PYTHON_EXE,
+						"-X",
+						"utf8",
+						mwPy,
+						"decide",
+						"receipt",
+						`--project=${projectDir}`,
+						`--key=${binding.key}`,
+						"--stdin",
+					];
+					const raw =
+						argv &&
+						(await spawnWithTimeout(argv, {
+							timeoutMs: DECISION_LIFECYCLE_TIMEOUT_MS,
+							stdin: JSON.stringify(params),
+							signal,
+						}));
+					const reply = raw && !raw.timedOut && parseDecisionJson(raw.stdout);
+					const runtimeUnavailable =
+						!mwPy || (raw && raw.status === 2 && /invalid choice: ['"]receipt['"]/.test(raw.stderr));
+					details = reply || {
+						...identity,
+						status: "failed",
+						code: runtimeUnavailable ? "receipt-runtime-unavailable" : "ledger-unconfirmed",
+						next: {
+							owner: "pm",
+							action: runtimeUnavailable ? "recover-receipt-runtime" : "reconcile-receipt",
+							done_when: runtimeUnavailable
+								? "Load a user-level MW runtime with the receipt command."
+								: "Check the same receipt with check_only=true before retrying.",
+						},
+					};
+				}
+				return { content: [{ type: "text", text: jsonText(details) }], details };
+			},
+		});
+		return { projectDir, tracePath, counter };
+	}
 	pi.registerTool<typeof DECISION_RECEIPT_PARAMETERS, DecisionReceiptDetails>({
 		name: DECISION_RECEIPT_TOOL,
 		label: DECISION_RECEIPT_TOOL,
@@ -3783,16 +3884,6 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			};
 			return { content: [{ type: "text", text: JSON.stringify(details) }], details };
 		},
-	});
-
-	// Active-set append (spec §5.3 / design Q5 §5.2): runs after the worker's
-	// own before_agent_start recomputation, so every role sees the tools without
-	// touching TOOL_ALLOWLISTS. Idempotent — a repeated append is a no-op.
-	pi.on("before_agent_start", () => {
-		const active = pi.getActiveTools();
-		const missing = [ASK_DECISION_TOOL, DECISION_RECEIPT_TOOL].filter((name) => !active.includes(name));
-		if (missing.length === 0) return;
-		pi.setActiveTools([...active, ...missing]);
 	});
 
 	return { projectDir, tracePath, counter };

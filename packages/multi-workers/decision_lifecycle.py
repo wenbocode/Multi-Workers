@@ -194,6 +194,11 @@ class LifecycleInputError(ValueError):
     may itself be a known secret) is never echoed.
     """
 
+    def __init__(self, message: str, *, field: str | None = None, code: str = "invalid-field"):
+        super().__init__(message)
+        self.field = field
+        self.code = code
+
 
 @dataclass(frozen=True)
 class LifecycleResult:
@@ -231,8 +236,8 @@ class LifecycleResult:
 # ---------------------------------------------------------------------------
 
 
-def _refuse(field: str, rule: str) -> None:
-    raise LifecycleInputError(f"{field} is not valid: {rule}")
+def _refuse(field: str, rule: str, *, code: str = "invalid-field") -> None:
+    raise LifecycleInputError(f"{field} is not valid: {rule}", field=field, code=code)
 
 
 def _check_key(field: str, value: object) -> str:
@@ -354,16 +359,7 @@ def _stable_event_id(prefix: str, *parts: str) -> str:
     return f"{prefix}-{digest[:32]}"
 
 
-def _ledger_facts(
-    store: "LifecycleStore", meta: "DecisionMeta"
-) -> tuple[dict[str, object], list[dict[str, object]]]:
-    """The same task's single creation fact plus the readable ledger rows.
-
-    Raises :class:`LifecycleInputError` when the creation association is not
-    provable (damaged ledger, no creation fact, or a fact of another task). An
-    unreadable ledger propagates ``OSError``: "cannot read" must never look like
-    "nothing recorded".
-    """
+def _receipt_events(store: "LifecycleStore") -> list[dict[str, object]]:
     prior = read_lifecycle(store)
     if any(
         (
@@ -375,14 +371,22 @@ def _ledger_facts(
         )
     ):
         _refuse("logical_id", "creation association is not provable on a damaged ledger")
+    return prior.events
+
+
+def _ledger_facts(
+    store: "LifecycleStore", meta: "DecisionMeta"
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    """The same task's single creation fact plus the readable ledger rows."""
+    events = _receipt_events(store)
     starts = [
         row
-        for row in prior.events
+        for row in events
         if row.get("kind") == "record-start" and row.get("logical_id") == meta.logical_id
     ]
     if len(starts) != 1 or starts[0].get("key") != meta.key or starts[0].get("task_key") != meta.task_key:
         _refuse("logical_id", "requires the same task's creation fact")
-    return starts[0], prior.events
+    return starts[0], events
 
 
 def _check_before(
@@ -420,9 +424,10 @@ def _check_before(
 def require_receipt_binding(
     store: "LifecycleStore", meta: "DecisionMeta", *, decision_id: str,
     stage: str, answer: object = None, event_id: object = None, required_choice: str | None = None,
+    facts: tuple[dict[str, object], list[dict[str, object]]] | None = None,
 ) -> None:
     """Bind an external receipt to the accepted request and its recorded role."""
-    start, events = _ledger_facts(store, meta)
+    start, events = facts if facts is not None else _ledger_facts(store, meta)
     if start.get("decision_id") != decision_id or start.get("initiator_role") != meta.initiator_role:
         _refuse("decision_id", "does not match this actor's recorded decision")
     requests = [
@@ -444,7 +449,29 @@ def require_receipt_binding(
              or row.get("key") != meta.key or row.get("task_key") != meta.task_key)
         for row in events
     ):
-        _refuse("event_id", "belongs to another decision or receipt stage")
+        _refuse("event_id", "belongs to another decision or receipt stage", code="event-conflict")
+
+
+def recover_pm_receipt(
+    store: "LifecycleStore", key: str, decision_id: str, stage: str, event_id: str,
+) -> tuple[DecisionMeta, list[dict[str, object]]]:
+    """Read the original accepted PM decision from this project's ledger."""
+    _check_decision_id("decision_id", decision_id)
+    _, logical_id = decision_id.split(":", 1)
+    events = _receipt_events(store)
+    if any(row.get("event_id") == event_id and row.get("project_id") != store.project_id for row in events):
+        _refuse("event_id", "belongs to a different project", code="event-conflict")
+    events = [row for row in events if row.get("project_id") == store.project_id]
+    starts = [row for row in events if row.get("kind") == "record-start" and row.get("logical_id") == logical_id]
+    if (
+        len(starts) != 1 or starts[0].get("key") != key or starts[0].get("decision_id") != decision_id
+        or starts[0].get("initiator_role") != "pm"
+    ):
+        _refuse("decision_id", "requires the current key's single recorded PM decision", code="receipt-binding")
+    start = starts[0]
+    meta = DecisionMeta.from_envelope({"meta": {name: start[name] for name in META_ALLOWED_KEYS if name in start}})
+    require_receipt_binding(store, meta, decision_id=decision_id, stage=stage, event_id=event_id, facts=(start, events))
+    return meta, events
 
 
 def _event_is_recorded(
@@ -489,7 +516,7 @@ def _refuse_preceding_after(
             if prior is not None:
                 decision_task_state.validate_observation_order(prior, task_after)
     except decision_task_state.TaskStateInputError as exc:
-        raise LifecycleInputError(str(exc)) from None
+        raise LifecycleInputError(str(exc), field="task_after") from None
 
 
 def _recorded_after_floor(
@@ -1122,6 +1149,7 @@ def record_lifecycle(
     answer_source: str | None = None,
     actor: tuple[str, str] | None = None,
     event_id: str | None = None,
+    authorize_append: Callable[[], None] | None = None,
 ) -> LifecycleResult:
     """Write one feedback fact for a recorded decision (core of the four APIs).
 
@@ -1141,7 +1169,7 @@ def record_lifecycle(
         task_after = decision_task_state.validate_task_state(task_after)
         decision_task_state.validate_observation_order(meta.task_before, task_after)
     except decision_task_state.TaskStateInputError as exc:
-        raise LifecycleInputError(str(exc)) from None
+        raise LifecycleInputError(str(exc), field="task_after") from None
     if task_after is not None:
         # Fail fast on a *new* older observation, but never refuse a replay: a
         # call that reuses an ``event_id`` this ledger already recorded appends
@@ -1243,6 +1271,13 @@ def record_lifecycle(
         actor=actor,
         event_id=event_id,
     )
+
+    def append_guard() -> None:
+        if authorize_append is not None:
+            authorize_append()
+        if task_after is not None:
+            _recorded_after_floor(store, meta, task_after)
+
     return _append(
         store,
         meta,
@@ -1250,7 +1285,7 @@ def record_lifecycle(
         scope=scope,
         event=event,
         decision_id=decision_id,
-        guard=None if task_after is None else lambda: _recorded_after_floor(store, meta, task_after),
+        guard=append_guard if task_after is not None or authorize_append is not None else None,
     )
 
 

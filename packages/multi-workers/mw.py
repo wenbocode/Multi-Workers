@@ -59,6 +59,7 @@ import decision_monitor
 import decision_points
 import decision_policy
 import decision_prepare
+import decision_receipts
 import decision_signoff_result
 import decision_wire
 import mw_common
@@ -6015,6 +6016,44 @@ _DECIDE_LIFECYCLE_KEYS = frozenset(
 )
 
 
+def _decide_pm_receipt(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    payload, error = _decide_read_envelope_json(args)
+    if error or not isinstance(payload, dict):
+        _decide_print(decision_receipts.reply(
+            {"decision_id": None, "stage": None}, "refused", action="repair-receipt", field="arguments",
+            code="invalid-field", instruction="Submit one receipt argument object.",
+        ), True)
+        return 2
+    control = _decide_control_root(project_dir)
+    binding = argparse.Namespace(key=args.key, initiator_role="pm", task_key=None)
+
+    def authorized() -> bool:
+        if _ap_projection.key_name_refusal(args.key):
+            return False
+        try:
+            rows = _ap_projection.strict_rows_from_bytes((control / ".agenticdoc" / "_index.parallel").read_bytes())
+        except (OSError, _ap_projection.ActiveProjectionError):
+            return False
+        key = _ap_projection.normalize_key(args.key)
+        matches = [row for row in rows if _ap_projection.normalize_key(row["key"]) == key]
+        if len(matches) != 1 or matches[0]["phase"].lower() == "done":
+            return False
+        role, _, _ = _decide_actor_binding(control, binding)
+        return role == "pm"
+
+    if not authorized():
+        _decide_print(decision_receipts.binding_refusal({"decision_id": None, "stage": None}), True)
+        return 2
+    cfg = _decide_config_snapshot(project_dir)
+    try:
+        store = _decide_lifecycle_store(control, cfg, decision.credential_snapshot(cfg))
+        result = decision_receipts.operate(control, store, args.key, payload, authorized)
+    except (OSError, ValueError):
+        result = decision_receipts.reconcile({"decision_id": None, "stage": None}, "ledger-unconfirmed")
+    _decide_print(result, True)
+    return 0
+
+
 def _decide_lifecycle(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
     """`mw decide lifecycle --stdin`: the single feedback write face (T02).
 
@@ -7565,6 +7604,8 @@ def cmd_decide(args: argparse.Namespace) -> int:
         return _decide_run(args, project_dir)
     if action == "lifecycle":
         return _decide_lifecycle(args, project_dir)
+    if action == "receipt":
+        return _decide_pm_receipt(args, project_dir)
     if action == "prepare":
         payload, error = _decide_read_envelope_json(args)
         if error or not isinstance(payload, dict):
@@ -15738,6 +15779,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--stdin", action="store_true", help="Read the request from stdin"
     )
     decide_lifecycle_p.add_argument("--json", action="store_true", help="Accepted (output is JSON)")
+    decide_receipt_p = decide_sub.add_parser("receipt", help="Resume one PM receipt using the existing lifecycle ledger")
+    decide_receipt_p.add_argument("--project", required=True, help="Project directory")
+    decide_receipt_p.add_argument("--key", required=True, help="Key claimed by the calling PM")
+    decide_receipt_p.add_argument("--stdin", action="store_true", required=True)
     decide_probe_p = decide_sub.add_parser(
         "probe", help="Probe candidate transports/endpoint shapes (diagnostic, never fails)"
     )

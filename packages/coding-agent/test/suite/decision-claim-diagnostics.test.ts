@@ -8,6 +8,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Check } from "typebox/value";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -622,6 +623,41 @@ describe("claim refusal diagnostics — VC-002 zero side effects, one read", () 
 		expect(fs.readFileSync(indexFileOf(root)).equals(before)).toBe(true);
 		expect(fs.existsSync(lockFileOf(root))).toBe(false);
 		process.stdout.write("[VERIFY] VC-002: refusal_side_effects=0\n");
+	});
+
+	it("lets malformed receipt fields reach the persistent PM handler through the real tool schema", async () => {
+		const root = pmProject();
+		setIndex(root, selfActive);
+		process.env.MW_PY = fileURLToPath(new URL("../../../multi-workers/mw.py", import.meta.url));
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					registerAskDecisionTool(pi, { projectDir: root, initiatorRole: "pm", persistentPmReceipts: true });
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall(DECISION_RECEIPT_TOOL, {
+						decision_id: "dp-QG:original",
+						stage: ["wrong"],
+						event_id: "original-event",
+					}),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done"),
+		]);
+		await harness.session.prompt("Validate this receipt.");
+		const result = harness.session.messages.filter((message) => message.role === "toolResult").at(-1);
+		expect(payloadOf(getMessageText(result))).toMatchObject({
+			status: "refused",
+			decision_id: "dp-QG:original",
+			next: { owner: "pm", action: "repair-receipt", field: "stage", event_id: "original-event" },
+		});
+		expect(fs.existsSync(path.join(root, ".agenticdoc", "_autopilot", "decision-lifecycle.jsonl"))).toBe(false);
 	});
 });
 

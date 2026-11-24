@@ -151,6 +151,7 @@ async function compose(pi: ExtensionAPI): Promise<AgentTeamLoopComposition> {
 		// real task) — this call site never guesses either.
 		registerAskDecisionTool(pi, {
 			initiatorRole: "pm",
+			persistentPmReceipts: true,
 			submitHandle,
 			stageSource: () => host.stageIdentity(),
 		});
