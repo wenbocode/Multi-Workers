@@ -2574,6 +2574,14 @@ const PM_RECEIPT_PARAMETERS = Type.Object(
 );
 
 /** Receipt tool details: the outcome of ONE receipt attempt. */
+interface DecisionReceiptNext {
+	owner: DecisionInitiatorRole;
+	action: "repair-receipt" | "recover-receipt-binding" | "reconcile-receipt";
+	field?: "task_after" | "action" | "outcome" | "decision_id";
+	event_id?: string;
+	done_when: string;
+}
+
 export interface DecisionReceiptDetails {
 	decision_id: string;
 	dp: string | null;
@@ -2582,6 +2590,7 @@ export interface DecisionReceiptDetails {
 	unavailable?: string;
 	/** Same independent diagnosis on a LOCAL claim/key-binding receipt refusal. */
 	claim_diagnosis?: ClaimDiagnosis;
+	next?: DecisionReceiptNext;
 }
 
 /**
@@ -3783,9 +3792,8 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 		label: DECISION_RECEIPT_TOOL,
 		description:
 			"Record what really happened with a decision this window asked: executed (the action happened) " +
-			"and settled (this round of handling finished). Returns ONE line of JSON " +
-			"{stage, status, decision_id}; status=failed means the feedback ledger rejected the write — the " +
-			"action itself is not undone. An unknown decision id or action is NOT recorded.",
+			"and settled (this round of handling finished). Returns the receipt status and a next action when " +
+			"the receipt cannot be recorded.",
 		promptSnippet:
 			"decision_receipt(decision_id, stage, action?, result?, outcome?, reason?) — record the real action/closure.",
 		promptGuidelines: [
@@ -3794,7 +3802,7 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				"escalate, continue, user-confirm, record.",
 			"settled needs one closed outcome: pending, ok, rework, rollback, inconclusive. settled is this round, " +
 				"not the whole task.",
-			"Never receipt an action you did not perform; a failed receipt is reported, not retried with a new action.",
+			"Follow next for a refused or failed receipt. Keep the same decision, stage, and event_id while correcting or checking the receipt.",
 			"Omit task_after for a decision without task_key, or use null if the field must be included. For a real task, report only its actual observation after handling, with source=agent-report and the actual observation time. Use null for unknown progress. Round ok is not task done.",
 		],
 		parameters: DECISION_RECEIPT_PARAMETERS,
@@ -3803,27 +3811,37 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			const refusal = (
 				reason: string,
 				dp: string | null,
-				missing?: string[],
+				next: Omit<DecisionReceiptNext, "owner">,
 				claim?: ClaimDiagnosis,
 			): { content: Array<{ type: "text"; text: string }>; details: DecisionReceiptDetails } => {
-				const refused =
-					claim !== undefined
-						? claimRefusalOutcome(dp ?? "unknown", claim)
-						: refusalOutcome(reason, dp ?? "unknown", missing);
+				const details: DecisionReceiptDetails = {
+					decision_id: params.decision_id,
+					dp,
+					stage: params.stage,
+					status: "refused",
+					unavailable: reason,
+					...(claim !== undefined ? { claim_diagnosis: claim } : {}),
+					next: { owner: initiatorRole, ...next },
+				};
+				const payload = {
+					available: false,
+					...details,
+					action: claim === undefined ? next.action : ASK_DECISION_BLOCKED_ACTION,
+				};
 				return {
-					content: [{ type: "text", text: refused.text }],
-					details: {
-						decision_id: params.decision_id,
-						dp,
-						stage: params.stage,
-						status: "refused",
-						unavailable: reason,
-						...(claim !== undefined ? { claim_diagnosis: claim } : {}),
-					},
+					content: [{ type: "text", text: jsonText(payload) }],
+					details,
 				};
 			};
 			const known = asked.get(params.decision_id);
-			if (known === undefined) return refusal(ASK_DECISION_REASON_UNKNOWN_DECISION, null);
+			if (known === undefined) {
+				return refusal(ASK_DECISION_REASON_UNKNOWN_DECISION, null, {
+					action: "recover-receipt-binding",
+					field: "decision_id",
+					event_id: params.event_id,
+					done_when: "Verify the original decision_id against the decision bound to the receipt window.",
+				});
+			}
 			const boundReceipt = boundKey(known.meta.key);
 			if (boundReceipt.key !== known.meta.key) {
 				// A valid binding can only equal the stored key; otherwise it is
@@ -3831,18 +3849,38 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				// is an unreachable defensive fallback, never a fabricated claim.
 				const diagnosis: ClaimDiagnosis =
 					boundReceipt.key === undefined ? boundReceipt.diagnosis : claimDiagnosis("worker-key-mismatch");
-				return refusal(ASK_DECISION_REASON_INPUT_INCOMPLETE, known.dp, undefined, diagnosis);
+				return refusal(
+					ASK_DECISION_REASON_INPUT_INCOMPLETE,
+					known.dp,
+					{ action: "recover-receipt-binding", event_id: params.event_id, done_when: diagnosis.recovery },
+					diagnosis,
+				);
 			}
-			const taskAfter = params.task_after ?? undefined;
-			if (taskAfter !== undefined && (known.meta.task_key === null || !isTaskStateSnapshot(taskAfter)))
-				return refusal(ASK_DECISION_REASON_INPUT_INCOMPLETE, known.dp);
 			const eventId = params.event_id ?? randomUUID();
+			const taskAfter = params.task_after ?? undefined;
+			if (taskAfter !== undefined && (known.meta.task_key === null || !isTaskStateSnapshot(taskAfter))) {
+				return refusal(ASK_DECISION_REASON_INPUT_INCOMPLETE, known.dp, {
+					action: "repair-receipt",
+					field: "task_after",
+					event_id: eventId,
+					done_when:
+						known.meta.task_key === null
+							? "This decision has no task_key. Set task_after to null and resubmit with the same decision_id, stage, and event_id."
+							: "Correct task_after using the actual task observation and resubmit with the same decision_id, stage, and event_id.",
+				});
+			}
 			let envelope: DecisionLifecycleEnvelope;
 			if (params.stage === "executed") {
 				const action = params.action ?? "";
 				if (!DECISION_EXECUTED_ACTIONS.includes(action)) {
 					// "未知动作只未记录": no row, no guessing at a nearby label.
-					return refusal(ASK_DECISION_REASON_UNKNOWN_ACTION, known.dp);
+					return refusal(ASK_DECISION_REASON_UNKNOWN_ACTION, known.dp, {
+						action: "repair-receipt",
+						field: "action",
+						event_id: eventId,
+						done_when:
+							"Set action to the supported label for the step actually performed and resubmit the same receipt.",
+					});
 				}
 				envelope = {
 					meta: known.meta,
@@ -3857,7 +3895,13 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			} else {
 				const outcome = params.outcome ?? "";
 				if (!DECISION_OUTCOMES.includes(outcome)) {
-					return refusal(ASK_DECISION_REASON_UNKNOWN_ACTION, known.dp);
+					return refusal(ASK_DECISION_REASON_UNKNOWN_ACTION, known.dp, {
+						action: "repair-receipt",
+						field: "outcome",
+						event_id: eventId,
+						done_when:
+							"Set outcome to the supported value for the actual handling result and resubmit the same receipt.",
+					});
 				}
 				envelope = {
 					meta: known.meta,
@@ -3882,6 +3926,15 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 				stage: feedback.stage,
 				status: feedback.status,
 			};
+			if (feedback.status === "failed") {
+				details.next = {
+					owner: initiatorRole,
+					action: "reconcile-receipt",
+					event_id: eventId,
+					done_when:
+						"Check whether this event_id is already recorded in the lifecycle ledger before retrying the receipt.",
+				};
+			}
 			return { content: [{ type: "text", text: JSON.stringify(details) }], details };
 		},
 	});

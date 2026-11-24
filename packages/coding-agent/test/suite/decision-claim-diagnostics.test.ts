@@ -206,7 +206,7 @@ function spies(): Spies {
 			timedOut: false,
 		};
 	};
-	const lifecycle: LifecycleRunner = async (request) => {
+	const lifecycle = vi.fn<LifecycleRunner>(async (request) => {
 		lifecycleCalls.push(request);
 		const env = JSON.parse(request.input) as { stage?: string };
 		return {
@@ -220,7 +220,7 @@ function spies(): Spies {
 			stderr: "",
 			timedOut: false,
 		};
-	};
+	});
 	const sign: SignRunner = async (request) => {
 		signCalls.push(request);
 		return { status: 0, stdout: "{}", stderr: "", timedOut: false };
@@ -532,6 +532,7 @@ describe("claim refusal diagnostics — VC-002 zero side effects, one read", () 
 		const details = receiptResult.details as { status?: string; claim_diagnosis?: Diagnosis };
 		expect(details.status).toBe("refused");
 		expect(details.claim_diagnosis?.reason).toBe("key-not-found");
+		expect(receiptResult.details).toMatchObject({ next: { owner: "pm", action: "recover-receipt-binding" } });
 		// Zero NEW decision/sign/lifecycle activity from the refusal.
 		expect(t.spy.decideCalls).toHaveLength(decideAfterAsk);
 		expect(t.spy.lifecycleCalls).toHaveLength(lifecycleAfterAsk);
@@ -576,15 +577,93 @@ describe("claim refusal diagnostics — VC-002 zero side effects, one read", () 
 			expect(spy.lifecycleCalls).toHaveLength(before + 1);
 		} else {
 			expect(spy.lifecycleCalls).toHaveLength(before);
-			for (const input of [event, { ...event, task_after: null }]) {
+			const expectedNext = {
+				owner: "pm",
+				action: "repair-receipt",
+				field: "task_after",
+				event_id: event.event_id,
+				done_when: expect.stringContaining("Set task_after to null"),
+			};
+			expect(result.details).toMatchObject({
+				decision_id: event.decision_id,
+				stage: event.stage,
+				next: expectedNext,
+			});
+			expect(payloadOf(result.content[0].text)).toMatchObject({ action: "repair-receipt", next: expectedNext });
+			for (const input of [
+				{ ...event, task_after: null },
+				{ decision_id: event.decision_id, stage: "settled", outcome: "ok", event_id: "settled-event" },
+			]) {
 				const result = await receipt.execute("receipt-absent", input);
 				expect(result.details).toMatchObject({ status: "written" });
+				expect(result.details).not.toHaveProperty("next");
 				const row = JSON.parse((spy.lifecycleCalls.at(-1) as { input: string }).input);
-				expect(row).toMatchObject({ ...event, meta: { task_key: null } });
+				const { task_after: _unused, ...written } = "task_after" in input ? input : { ...input, task_after: null };
+				expect(row).toMatchObject({ ...written, meta: { task_key: null } });
 				expect(row).not.toHaveProperty("task_after");
 			}
 			expect(spy.lifecycleCalls).toHaveLength(before + 2);
 		}
+		expect(spy.decideCalls).toHaveLength(1);
+	});
+
+	it("returns one next step for invalid receipt fields and reconciles an uncertain write", async () => {
+		const root = pmProject();
+		setIndex(root, selfActive);
+		const { ask, receipt, spy } = pmTools(root);
+		const confirmed = payloadOf(
+			(await ask.execute("ask", { ...askParams(undefined), task_key: TASK })).content[0]?.text ?? "",
+		);
+		expect(confirmed.available).toBe(true);
+		const event = { decision_id: confirmed.decision_id, event_id: "same-event" };
+		const cases = [
+			{ field: "action", input: { stage: "executed", action: "unsupported" } },
+			{ field: "outcome", input: { stage: "settled", outcome: "unsupported" } },
+			{
+				field: "task_after",
+				input: {
+					stage: "executed",
+					action: "record",
+					task_after: {
+						status: "done",
+						source: "agent-report",
+						observed_at: "2026-02-31T08:00:00Z",
+						completed: null,
+						remaining: null,
+						blockers: null,
+					},
+				},
+			},
+		];
+		for (const { field, input } of cases) {
+			const result = await receipt.execute(`bad-${field}`, { ...event, ...input });
+			expect(result.details).toMatchObject({
+				status: "refused",
+				decision_id: event.decision_id,
+				stage: input.stage,
+				next: { owner: "pm", action: "repair-receipt", field, event_id: event.event_id },
+			});
+		}
+		const unknown = await receipt.execute("unknown-decision", {
+			...event,
+			decision_id: "unknown",
+			stage: "executed",
+			action: "record",
+		});
+		expect(unknown.details).toMatchObject({
+			status: "refused",
+			next: { owner: "pm", action: "recover-receipt-binding", field: "decision_id", event_id: event.event_id },
+		});
+		expect(spy.lifecycle).toHaveBeenCalledTimes(1);
+		vi.mocked(spy.lifecycle).mockResolvedValueOnce({ status: null, stdout: "", stderr: "", timedOut: true });
+		const uncertain = await receipt.execute("write-timeout", { ...event, stage: "executed", action: "record" });
+		expect(uncertain.details).toMatchObject({
+			status: "failed",
+			decision_id: event.decision_id,
+			stage: "executed",
+			next: { owner: "pm", action: "reconcile-receipt", event_id: event.event_id },
+		});
+		expect(spy.lifecycle).toHaveBeenCalledTimes(2);
 		expect(spy.decideCalls).toHaveLength(1);
 	});
 
