@@ -46,6 +46,8 @@ MW PM 在推进任务时，如果已经找到可行方向、正准备建议下�
 
 在 `spec.md` 的 `§0 Goal Alignment` 下确认 `### spec_goal`。常规 SPEC 和 `/mw-spec-goal` 使用同一格式。
 
+在认领该 key 的 pi 窗口运行 `/mw-spec-goal show`，可查看已保存的完整目标。
+
 ```text
 Goal ID: ueperf-t43/GOAL-01
 目标: 让 T25 通过版本化 JSON 合同只读复验固定帧 CSV 完成证据。

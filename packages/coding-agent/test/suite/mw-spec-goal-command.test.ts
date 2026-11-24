@@ -99,6 +99,27 @@ it.each([true, false])("preserves the alignment text with an existing empty goal
 	expect(appendKeyGoal("", docs, "alpha")).toBe(`## [mw] Current key goal (alpha)\n\n${goal}`);
 });
 
+it.each(["saved", "missing", "unowned"])("shows the %s goal without drafting or writing", async (state) => {
+	const saved = `# Spec\n\n## §0 Goal Alignment\n\n### spec_goal\n\n${goal}\n`;
+	const spec = state === "missing" ? specification : saved;
+	const { file, harness, editor, confirm, notify, generate } = await setup(
+		spec,
+		state === "unowned" ? "some-other-window:9" : windowClaimId(),
+	);
+	await harness.session.prompt("/mw-spec-goal show");
+	if (state === "saved") {
+		expect(notify).toHaveBeenCalledWith(`## [mw] Current key goal (alpha)\n\n${goal}`, "info");
+	} else if (state === "missing") {
+		expect(notify).toHaveBeenCalledWith("alpha 尚未填写 spec_goal。", "warning");
+	} else {
+		expect(notify).toHaveBeenCalledWith("请先在本窗口认领一个进行中的 SDD key。", "error");
+	}
+	expect(generate).not.toHaveBeenCalled();
+	expect(editor).not.toHaveBeenCalled();
+	expect(confirm).not.toHaveBeenCalled();
+	expect(fs.readFileSync(file, "utf8")).toBe(spec);
+});
+
 it.each(["cancel editing", "decline save", "spec changed", "claim switched", "unowned", "model failed"])(
 	"leaves the spec intact when %s",
 	async (condition) => {

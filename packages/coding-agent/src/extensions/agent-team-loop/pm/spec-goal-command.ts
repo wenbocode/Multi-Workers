@@ -37,23 +37,34 @@ export function registerSpecGoalCommand(pi: ExtensionAPI, projectDir: string): v
 	const docRoot = agenticdocRoot(projectDir);
 	let open = false;
 	pi.registerCommand("mw-spec-goal", {
-		description: "Draft, edit, and confirm the current key's spec_goal",
+		description: "Draft the current key's spec_goal or view it with /mw-spec-goal show",
 		handler: async (args, ctx) => {
-			if (!ctx.hasUI || args.trim() || !ctx.isIdle() || ctx.hasPendingMessages() || open) {
+			const operation = args.trim();
+			const show = operation === "show";
+			if (!ctx.hasUI || (operation && !show)) {
+				ctx.ui.notify("用法：/mw-spec-goal 或 /mw-spec-goal show。", "warning");
+				return;
+			}
+			if (!show && (!ctx.isIdle() || ctx.hasPendingMessages() || open)) {
 				ctx.ui.notify("在空闲的 PM 窗口运行 /mw-spec-goal。", "warning");
 				return;
 			}
-			open = true;
+			if (!show) open = true;
 			try {
 				const root = fs.realpathSync(docRoot);
 				const key = currentKey(root);
+				const currentGoal = appendKeyGoal("", root, key);
+				if (show) {
+					ctx.ui.notify(currentGoal || `${key} 尚未填写 spec_goal。`, currentGoal ? "info" : "warning");
+					return;
+				}
 				const lite = path.join(root, key, "codex_doc.md");
 				if (
 					fs.existsSync(lite) &&
 					/^- Workflow:[ \t]*codex-lite\s*$/m.test(readLocalDocument(lite).split(/^##[ \t]+/m, 1)[0])
 				)
 					throw new Error("Codex-lite key 的目标由 Codex PM 在 codex_doc.md 的「目标」段维护。");
-				if (appendKeyGoal("", root, key)) {
+				if (currentGoal) {
 					ctx.ui.notify(`${key} 已有 spec_goal。`, "info");
 					return;
 				}
@@ -121,9 +132,9 @@ export function registerSpecGoalCommand(pi: ExtensionAPI, projectDir: string): v
 				}
 				ctx.ui.notify(`${key} 的 spec_goal 已写入，将用于下一轮请求。`, "info");
 			} catch (error) {
-				ctx.ui.notify(error instanceof Error ? error.message : "无法拟定或写入 spec_goal。", "error");
+				ctx.ui.notify(error instanceof Error ? error.message : "无法读取或写入 spec_goal。", "error");
 			} finally {
-				open = false;
+				if (!show) open = false;
 			}
 		},
 	});
