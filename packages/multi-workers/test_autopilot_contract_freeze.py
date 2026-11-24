@@ -370,6 +370,45 @@ def test_cli_subprocess_json_and_argparse(tmp_path: pathlib.Path) -> None:
     print("[VERIFY] AC-025: cli_key_required=true json_relative=true")
 
 
+@pytest.mark.parametrize("drift", [None, "ac", "flow"])
+def test_cli_syncs_required_signoff_only_on_a_current_full_contract(tmp_path: pathlib.Path, drift: str | None) -> None:
+    design = DESIGN.replace("## §7", "## Function Flow\n\n| FLOW-016 | Scoped flow | VC-002 |\n\n## §7")
+    project, key_dir = _project(tmp_path, "VERIFY", design=design)
+    args = ("--project", str(project), "--key", "k1", "--json")
+    old = contract_guard.build_freeze("k1", SPEC, design)
+    old["function_flows"] = contract_guard.function_flow_identities(design)
+    path = contract_guard.write_freeze(key_dir, old)
+    spec = SPEC.replace("# Spec\n", "# Spec\n\n> Decision signoff: required\n")
+    if drift == "ac":
+        spec = spec.replace("first ac text, locked", "first ac text, REWRITTEN")
+    if drift == "flow":
+        design = design.replace("Scoped flow", "Changed flow")
+    (key_dir / "spec.md").write_text(spec, encoding="utf-8")
+    (key_dir / "design.md").write_text(design, encoding="utf-8")
+
+    digest = _file_sha(path)
+    partial = _run_freeze_cli(*args, "--block", "vc")
+    assert partial.returncode == 0, partial.stderr
+    assert _file_sha(path) == digest
+
+    result = _run_freeze_cli(*args, *(["--force"] if drift == "flow" else []))
+    receipt = json.loads(result.stdout)
+    if drift:
+        assert result.returncode == 1, receipt
+        assert receipt["decision_signoff"]["status"] == "blocked"
+        assert _file_sha(path) == digest
+        return
+
+    assert result.returncode == 0, receipt
+    assert receipt["decision_signoff"] == {"status": "written", "value": "required"}
+    assert contract_guard.read_freeze(key_dir) == {**old, "decision_signoff": "required"}
+    digest = _file_sha(path)
+    repeat = _run_freeze_cli(*args)
+    assert repeat.returncode == 0, repeat.stderr
+    assert json.loads(repeat.stdout)["decision_signoff"]["status"] == "unchanged"
+    assert _file_sha(path) == digest
+
+
 # ── first-sight x CLI: historical key anchored only by the CLI ─────────────────
 
 def test_execute_key_without_sidecar_is_anchored_only_by_cli(tmp_path: pathlib.Path) -> None:

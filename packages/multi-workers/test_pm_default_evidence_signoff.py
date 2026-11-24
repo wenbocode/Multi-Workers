@@ -19,7 +19,7 @@ def _project(tmp_path: pathlib.Path) -> pathlib.Path:
     return project
 
 
-@pytest.mark.parametrize("case", ["handoff", "conductor-output", "no-review", "evidence-drift", "approval-pending", "approval-rejected"])
+@pytest.mark.parametrize("case", ["handoff", "conductor-output", "legacy-freeze", "legacy-drift", "no-review", "evidence-drift", "approval-pending", "approval-rejected"])
 @pytest.mark.parametrize("default_done", [False, True])
 def test_reviewed_evidence_signoff_survives_handoff(tmp_path, monkeypatch, capsys, case, default_done):
     project = _project(tmp_path)
@@ -33,9 +33,26 @@ def test_reviewed_evidence_signoff_survives_handoff(tmp_path, monkeypatch, capsy
         "# Design\n\n| FLOW-001 | Check the result |\n\nVC-001: Checked result\n"
         "       Layer: L2\n       Output: [VERIFY] checked\n       Source: AC-001\n"
     )
-    (key_dir / "spec.md").write_text(spec, encoding="utf-8")
     (key_dir / "design.md").write_text(design, encoding="utf-8")
-    contract_guard.freeze_contract(key_dir, KEY, spec, design)
+    if case.startswith("legacy-"):
+        legacy_spec = spec.replace("> Decision signoff: required\n", "")
+        frozen = contract_guard.build_freeze(KEY, legacy_spec, design)
+        frozen["function_flows"] = contract_guard.function_flow_identities(design)
+        contract_guard.write_freeze(key_dir, frozen)
+        cfg = project / ".mw"
+        cfg.mkdir(exist_ok=True)
+        (cfg / "decide-points.json").write_text(json.dumps({
+            "points": {"dp-sign-key": {"enabled": False}},
+        }), encoding="utf-8")
+        assert mw.decision_points.load_points_config(project).row("dp-sign-key").enabled is False
+    else:
+        contract_guard.freeze_contract(key_dir, KEY, spec, design)
+    freeze_path = contract_guard.freeze_path(key_dir)
+    original_freeze = freeze_path.read_bytes()
+    if case == "legacy-drift":
+        design = design.replace("Check the result", "Check the changed result")
+        (key_dir / "design.md").write_text(design, encoding="utf-8")
+    (key_dir / "spec.md").write_text(spec, encoding="utf-8")
     product = project / "result.txt"
     product.write_bytes(b"checked")
     digest = hashlib.sha256(product.read_bytes()).hexdigest()
@@ -85,11 +102,17 @@ def test_reviewed_evidence_signoff_survives_handoff(tmp_path, monkeypatch, capsy
     index.write_text(f"| {KEY} | active | VERIFY | new-pm:2 | | | |\n", encoding="utf-8")
     args = argparse.Namespace(json=True, retry_write=None, for_done=True, key=KEY, key_pos=None)
     request = {"decision_source": "pm-evidence", "review_task": "review-1", "review_source": f"workers/review-1/{artifact}"}
+    if case == "legacy-freeze":
+        with pytest.raises(decision_signoff_result.SignoffResultError, match="decision_signoff: required"):
+            decision_signoff_result.capture_reviewed_signoff(key_dir, KEY, "review-1", request["review_source"])
+        assert not decision_signoff_result.signoff_path(key_dir).exists()
+        assert freeze_path.read_bytes() == original_freeze
     rc = mw._decide_sign(args, project) if default_done else mw._decide_sign_reviewed(args, key_dir, KEY, request)
     receipt = json.loads(capsys.readouterr().out)
-    if case not in {"handoff", "conductor-output"}:
+    if case not in {"handoff", "conductor-output", "legacy-freeze"}:
         assert rc == 2
         expected_problem = {
+            "legacy-drift": "differs from the frozen sign-off contract",
             "no-review": "file is missing",
             "evidence-drift": "evidence bytes changed",
             "approval-pending": "required approval is unresolved",
@@ -97,9 +120,12 @@ def test_reviewed_evidence_signoff_survives_handoff(tmp_path, monkeypatch, capsy
         }
         assert expected_problem[case] in receipt["problems"][0]
         assert not decision_signoff_result.signoff_path(key_dir).exists()
+        assert freeze_path.read_bytes() == original_freeze
         return
     assert rc == 0, receipt
     assert receipt["signoff_status"] == "written"
+    if case == "legacy-freeze":
+        assert contract_guard.read_freeze(key_dir) == {**json.loads(original_freeze), "decision_signoff": "required"}
     index.write_text(f"| {KEY} | idle | DONE | - | | | |\n", encoding="utf-8")
     assert decision_signoff_result.validate_signoff(key_dir, KEY).valid
     rc = mw._decide_sign(args, project) if default_done else mw._decide_sign_reviewed(args, key_dir, KEY, request)

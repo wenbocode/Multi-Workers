@@ -1196,6 +1196,9 @@ def dispatch_card(project_root: pathlib.Path, owner: str, stem: str) -> dict | N
     }
 
 
+FIXED_PARENT_FIELD = re.compile(r"^\s*-\s*.*`parent_matter_ref`\s*[:：]", re.M)
+
+
 def dispatch_parent_refusal(
     project: pathlib.Path, owner: str, child: str, envelope: str, *,
     allocation: dict | None = None, launching: bool = False,
@@ -1210,8 +1213,7 @@ def dispatch_parent_refusal(
         if pin and (not candidate.is_file() or candidate.resolve() != candidate or card_digest(candidate) != pin):
             return "resource-limited: pinned dispatch card unavailable or changed"
         if candidate.is_file() and candidate.resolve() == candidate:
-            fixed = bool(re.search(r"^\s*-\s*.*`parent_matter_ref`\s*[:：]",
-                                   candidate.read_text(encoding="utf-8"), re.M))
+            fixed = bool(FIXED_PARENT_FIELD.search(candidate.read_text(encoding="utf-8")))
     fixed_refusal = "resource-limited: fixed child requires original budgeted PM dispatch"
     if parent is None:
         return fixed_refusal if fixed and not launching else None
@@ -1248,11 +1250,13 @@ def dispatch_parent_refusal(
         if status in ("canceled", "stopped", "failed-by-stop") or (status == "failed" and run.get("aborted") is True):
             return f"parent-cancel: {parent}"
         if status == "failed" and run.get("stop_kind") == "worker-deadline":
-            if not fixed:
-                return f"worker-deadline: {parent}"
             try:
                 pin = card_digest(card)
                 approval = replan_tasks.deadline_successor(project.resolve(), owner, child, relative_card, pin, parent)
+                if not fixed:
+                    if mw_common.read_task_header_scalar(envelope, "deadline_successor") == "yes":
+                        return "resource-limited: fixed allocation requires a matching declaration in the pinned card"
+                    return None
                 budget = replan_tasks.deadline_budget(project.resolve(), owner, child, relative_card, pin, approval, envelope)
                 if allocation is not None:
                     allocation.update(budget)

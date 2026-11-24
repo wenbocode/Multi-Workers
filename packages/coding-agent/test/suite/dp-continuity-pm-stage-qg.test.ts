@@ -255,6 +255,50 @@ function expected(f: Fixture, stageMatterRef = f.grant.matter_ref): RuntimeOffer
 	};
 }
 
+it("queues an approved ordinary deadline successor without opening a PM stage", async () => {
+	const f = fixture({ key: "demo" });
+	const mw = path.resolve("../multi-workers");
+	const setup = path.join(f.root, "setup-ordinary-recovery.py");
+	fs.writeFileSync(
+		setup,
+		[
+			"import json, sys",
+			"from pathlib import Path",
+			`sys.path.insert(0, ${JSON.stringify(mw)})`,
+			"from test_replan_tasks import fixture, deadline_plan",
+			"print(json.dumps(deadline_plan(fixture.__wrapped__(Path(sys.argv[1])), with_budget=False)))",
+		].join("\n"),
+	);
+	const [parent, pin] = JSON.parse(
+		execFileSync(process.platform === "win32" ? "python" : "python3", ["-B", "-X", "utf8", setup, f.root], {
+			encoding: "utf8",
+		}),
+	) as [string, string];
+	const doc = path.join(f.root, ".agenticdoc");
+	const taskDir = path.join(doc, "demo", "workers", "recover");
+	const taskPath = path.join(taskDir, "task.md");
+	const cardRef = "tasks/recover.md";
+	const store = new WorkerStore(doc);
+	const entry = { taskKey: "recover", status: "pending" as const, cli: "pi", provider: "", model: "", taskPath };
+	vi.stubEnv("MW_PY", path.join(mw, "mw.py"));
+	expect(
+		await dispatchTask(entry, store, {
+			card: { headerPath: cardRef, sha256: pin, resolvedPath: path.join(doc, "demo", cardRef) },
+			publishCard() {
+				fs.mkdirSync(taskDir, { recursive: true });
+				fs.writeFileSync(
+					taskPath,
+					`type: coding\ntimeout: 8\ncard_path: ${cardRef}\ncard_sha256: ${pin}\nparent_worker_run: ${parent}\nwrite_face: src/recover.py\n\nCheck the remaining acceptance.\n`,
+				);
+			},
+		}),
+	).toEqual({ ok: true });
+	expect(store.readAll().filter((row) => row.taskKey === "recover")).toHaveLength(1);
+	const envelope = fs.readFileSync(taskPath, "utf8");
+	expect(envelope).toContain("timeout: 8");
+	expect(envelope).not.toContain("fixed_child_steps");
+});
+
 it("reserves one new allocation after a timeout and resumes queue publication with the persisted approval", async () => {
 	const f = fixture({
 		key: "demo",

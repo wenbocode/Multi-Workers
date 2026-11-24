@@ -1261,12 +1261,16 @@ def _require_complete_local_qg(
     frozen = contract_guard.read_freeze(key_dir)
     if (
         frozen is None
-        or (scope is None and frozen.get("decision_signoff") != "required")
         or frozen.get("spec") != contract.acs
         or frozen.get("design") != contract.vcs
         or frozen.get("function_flows") != flows
     ):
         raise SignoffResultError("the current AC, VC or Function Flow differs from the frozen sign-off contract")
+    if scope is None and frozen.get("decision_signoff") != "required":
+        raise SignoffResultError(
+            "the frozen contract lacks decision_signoff: required; sync the spec declaration "
+            "with mw autopilot contract-freeze --block all"
+        )
     expected = scope if scope is not None else set(contract.ids) | set(flows)
     if not expected or not expected <= set(contract.ids) | set(flows):
         raise SignoffResultError("the review scope does not name current contract criteria")
@@ -1653,8 +1657,10 @@ def publish_reviewed_signoff(
         rows = [row for row in state.read_index(key_dir.parent.parent) if row["key"] == key]
         if len(rows) != 1 or rows[0]["phase"].upper() not in {"VERIFY", "DONE"}:
             raise SignoffResultError("reviewed evidence sign-off requires an unambiguous VERIFY or DONE key")
-        record = capture_reviewed_signoff(key_dir, key, review_task, review_source)
         target = signoff_path(key_dir)
+        if rows[0]["phase"].upper() == "VERIFY" and not target.exists():
+            sync_reviewed_freeze_metadata(key_dir, key)
+        record = capture_reviewed_signoff(key_dir, key, review_task, review_source)
         if target.exists():
             if not local_signoff_matches_disk(key_dir, record):
                 raise SignoffResultError("existing sign-off differs from the current reviewed snapshot")
@@ -1671,6 +1677,32 @@ def publish_reviewed_signoff(
             raise SignoffResultError("reviewed evidence changed before sign-off publication")
         write_signoff_text(key_dir, local_signoff_text(record), replace=False)
         return "written", record
+
+
+def sync_reviewed_freeze_metadata(key_dir: pathlib.Path, key: str) -> str | None:
+    """With the publication lock held, bring an unchanged legacy freeze up to date."""
+    frozen = contract_guard.read_freeze(key_dir)
+    spec_path = key_dir / contract_guard.SPEC_FILE_NAME
+    design_path = key_dir / contract_guard.DESIGN_FILE_NAME
+    if frozen is None or frozen.get("key") != key or not spec_path.is_file():
+        return None
+    spec = _safe_read_text(key_dir, spec_path)
+    if not contract_guard.requires_decision_signoff(spec):
+        return None
+    if frozen.get("decision_signoff") == "required":
+        return "unchanged"
+    if not design_path.is_file():
+        return "blocked"
+    current = contract_guard.build_freeze(key, spec, _safe_read_text(key_dir, design_path))
+    if not all(
+        current.get(family) and current[family] == frozen.get(family)
+        for family in ("spec", "design", "function_flows")
+    ):
+        return "blocked"
+    path = _assert_safe_target(key_dir, contract_guard.freeze_path(key_dir))
+    _assert_safe_target(key_dir, path.with_name(path.name + ".tmp"))
+    contract_guard.write_freeze(key_dir, {**frozen, "decision_signoff": "required"})
+    return "written"
 
 
 def prepare_reviewed_done(key_dir: pathlib.Path, key: str) -> dict:

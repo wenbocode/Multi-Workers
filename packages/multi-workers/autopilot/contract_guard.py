@@ -266,6 +266,12 @@ def _iso_now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
+def requires_decision_signoff(spec_text: str) -> bool:
+    """Read the explicit sign-off declaration from the spec header."""
+    header = re.split(r"(?m)^#{1,6}[ \t]+", spec_text, maxsplit=2)
+    return len(header) > 1 and bool(re.search(r"(?m)^> Decision signoff: required[ \t]*$", header[1]))
+
+
 def build_freeze(
     key: str,
     spec_text: str,
@@ -284,8 +290,7 @@ def build_freeze(
         "design": dict(sorted(identity.vcs.items())),
         "generator": generator,
     }
-    header = re.split(r"(?m)^#{1,6}[ \t]+", spec_text, maxsplit=2)
-    if len(header) > 1 and re.search(r"(?m)^> Decision signoff: required[ \t]*$", header[1]):
+    if requires_decision_signoff(spec_text):
         payload["decision_signoff"] = "required"
         payload["function_flows"] = function_flow_identities(design_text)
     return payload

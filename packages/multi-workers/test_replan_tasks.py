@@ -112,7 +112,7 @@ def test_offline_recovery_parallel_apply_and_dispatch(fixture):
     assert send("two").ok
 
 
-def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None, *, legacy=False):
+def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None, *, legacy=False, with_budget=True):
     project, key, folder, _ = fixture
     put(key.parent / "_index.parallel", f"| demo | active | EXECUTE | {claim} | | | now |\n")
     run = json.loads(rp.body(folder / "run.json"))
@@ -139,7 +139,9 @@ def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None, *, leg
     recovery["covers"] = ["AC-001", "AC-002"]
     deadline = deadline or (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(
         timespec="milliseconds").replace("+00:00", "Z")
-    recovery["markdown"] = (f"parent_worker_run: {run['run_id']}\n" + recovery["markdown"] +
+    recovery["markdown"] = f"parent_worker_run: {run['run_id']}\n" + recovery["markdown"]
+    if with_budget:
+        recovery["markdown"] += (
                             "\n## 事项预算事实\n"
                             "- `budget_ref`: `tasks/recover.md#事项预算事实` + SHA\n"
                             "- `matter_ref`: `demo/recover`\n"
@@ -164,7 +166,7 @@ def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None, *, leg
     return run["run_id"], pin
 
 
-def replan_unstarted(project, source, successor, parent):
+def replan_unstarted(project, source, successor, parent, *, with_budget=True):
     inspected = tool(project, "inspect", task=source)
     assert inspected["facts"]["status"] == "unstarted"
     args = {k: inspected[k] for k in ("issue", "snapshot")}
@@ -172,7 +174,8 @@ def replan_unstarted(project, source, successor, parent):
     recovery["covers"] = ["AC-001", "AC-002"]
     if parent:
         recovery["markdown"] = f"parent_worker_run: {parent}\n" + recovery["markdown"]
-    recovery["markdown"] += "\n## 事项预算事实\n- `parent_matter_ref`: `stage`\n"
+    if with_budget:
+        recovery["markdown"] += "\n## 事项预算事实\n- `parent_matter_ref`: `stage`\n"
     prepared = tool(project, "preview", **args, plan={
         "action": "narrow", "reason": "Narrow the remaining work before dispatch", "units": [recovery],
     })
@@ -321,6 +324,38 @@ def test_deadline_successor_refuses_invalid_multihop_recovery(fixture, monkeypat
     envelope = dispatch.render_task_md("phase-writer", "check", loop="execute", attempt=1, card=card_data)
     assert reason in dispatch.dispatch_parent_refusal(project, "demo", child, envelope, allocation={})
     assert not (key / "workers" / child).exists()
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_ordinary_deadline_successor_publishes_and_dispatches_with_worker_timeout(fixture, legacy):
+    project, key, folder, _ = fixture
+    parent, _ = deadline_plan(fixture, legacy=legacy, with_budget=False)
+    replan_unstarted(project, "recover", "leaf", parent, with_budget=False)
+    old_run = (folder / "run.json").read_bytes()
+
+    def send():
+        return dispatch.dispatch(project, "demo", "leaf", "phase-writer", "check", loop="execute", attempt=1)
+
+    if legacy:
+        assert "inspect and authorize" in send().reason
+        child = dispatch.task_key_for("demo", "leaf")
+        assert not (key / "workers" / child).exists()
+        args = {"card": "tasks/leaf.md", "parent": parent}
+        reviewed = tool(project, "inspect_deadline_recovery", **args)
+        assert tool(project, "authorize_deadline_recovery", **args, snapshot=reviewed["snapshot"],
+                    recovery_reason="Verified the original timeout and both applied cards")["state"] == "authorized"
+
+    result = send()
+    assert result.ok and result.row_verified, result.reason
+    envelope = rp.body(result.task_md)
+    assert mw_common.read_task_header_scalar(envelope, "timeout") == "8"
+    assert mw_common.read_task_header_scalar(envelope, "deadline_successor") is None
+    assert mw_common.read_task_header_scalar(envelope, "fixed_child_steps") is None
+    assert dispatch.dispatch_parent_refusal(project, "demo", result.task_key, envelope, launching=True) is None
+    assert not send().ok
+    assert (folder / "run.json").read_bytes() == old_run
+    put(folder / "run.json", json.dumps({**json.loads(old_run), "aborted": True}))
+    assert "parent-cancel" in dispatch.dispatch_parent_refusal(project, "demo", result.task_key, envelope, launching=True)
 
 
 def test_historical_deadline_recovery_requires_current_review_and_fresh_budget(fixture, monkeypatch):

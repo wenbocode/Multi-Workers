@@ -12453,54 +12453,46 @@ def _ap_contract_freeze(args: argparse.Namespace, project_dir: pathlib.Path) -> 
     untouched (``unchanged``); an existing block whose text changed is refused
     without ``--force`` (exit 1, the replaced ids are printed) and re-frozen
     with ``--force`` (old/new family sha printed). The write goes through
-    ``contract_guard.write_freeze`` (tmp+replace). No lock is added: the
-    sidecar is a per-key file, so the same-key concurrent case is handled by
-    re-reading immediately before the write - if a writer got there first, the
-    decision is re-derived from that snapshot and the write is idempotent.
+    ``contract_guard.write_freeze`` under the publication lock. A full freeze
+    also synchronizes an explicit required sign-off declaration when the
+    existing AC, VC and Function Flow identities match.
     """
     key = args.key
     force = bool(getattr(args, "force", False))
     selected = _CONTRACT_FREEZE_BLOCKS[getattr(args, "block", "all") or "all"]
     key_dir = project_dir / ".agenticdoc" / key
     freeze_rel = contract_guard.freeze_path(key_dir).relative_to(project_dir).as_posix()
+    signoff_status = None
     try:
-        existing = contract_guard.read_freeze(key_dir)
-        identity = contract_guard.extract_contract(
-            _read_optional_text(key_dir / contract_guard.SPEC_FILE_NAME),
-            _read_optional_text(key_dir / contract_guard.DESIGN_FILE_NAME),
-        )
-        blocks, statuses, replaced = _contract_freeze_plan(existing, identity, selected, force)
-        for name, _family in selected:
-            if statuses[name]["status"] != "written":
-                continue
-            # Lock-free idempotence: re-read right before the write. A block
-            # that appeared since the snapshot wins, so re-derive once.
-            latest = contract_guard.read_freeze(key_dir)
-            if latest != existing:
-                existing = latest
-                blocks, statuses, replaced = _contract_freeze_plan(latest, identity, selected, force)
-            if any(statuses[n]["status"] == "written" for n, _f in selected):
+        with contract_guard.contract_publication_lock(key_dir):
+            existing = contract_guard.read_freeze(key_dir)
+            identity = contract_guard.extract_contract(
+                _read_optional_text(key_dir / contract_guard.SPEC_FILE_NAME),
+                _read_optional_text(key_dir / contract_guard.DESIGN_FILE_NAME),
+            )
+            blocks, statuses, replaced = _contract_freeze_plan(existing, identity, selected, force)
+            if any(statuses[name]["status"] == "written" for name, _ in selected) or (
+                existing is not None
+                and existing.get("decision_signoff") == "required"
+                and not existing.get("function_flows")
+                and len(selected) == 2
+                and all(statuses[name]["status"] == "unchanged" for name, _ in selected)
+            ):
                 _write_contract_freeze(key_dir, key, blocks)
-            break
-        if (
-            existing is not None
-            and existing.get("decision_signoff") == "required"
-            and not existing.get("function_flows")
-            and {name for name, _ in selected} == {"ac", "vc"}
-            and all(statuses[name]["status"] == "unchanged" for name, _ in selected)
-        ):
-            _write_contract_freeze(key_dir, key, blocks)
-    except (OSError, ValueError) as exc:  # UnicodeDecodeError / relative_to are ValueError
+            if len(selected) == 2:
+                signoff_status = decision_signoff_result.sync_reviewed_freeze_metadata(key_dir, key)
+    except (OSError, ValueError, RuntimeError) as exc:
         print(f"[mw autopilot contract-freeze] Error: {exc}", file=sys.stderr)
         return 1
 
-    refused = any(statuses[name]["status"] == "refused" for name in ("ac", "vc"))
+    refused = signoff_status == "blocked" or any(statuses[name]["status"] == "refused" for name in ("ac", "vc"))
     if getattr(args, "as_json", False):
         print(json.dumps(
             {
                 "key": key,
                 "freeze_rel": freeze_rel,
                 "blocks": {name: statuses[name] for name in ("ac", "vc")},
+                **({"decision_signoff": {"status": signoff_status, "value": "required"}} if signoff_status else {}),
             },
             ensure_ascii=False,
             indent=2,
@@ -12509,6 +12501,9 @@ def _ap_contract_freeze(args: argparse.Namespace, project_dir: pathlib.Path) -> 
         return 1 if refused else 0
 
     print(f"contract-freeze: {key} freeze={freeze_rel}")
+    if signoff_status:
+        detail = " (requires current AC, VC and Function Flow)" if signoff_status == "blocked" else ""
+        print(f"contract-freeze: decision_signoff {signoff_status} value=required{detail}")
     family_of = {"ac": "spec", "vc": "design"}
     for name in ("ac", "vc"):
         status = statuses[name]["status"]

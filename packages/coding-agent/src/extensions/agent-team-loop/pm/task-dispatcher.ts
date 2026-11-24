@@ -541,6 +541,7 @@ export async function dispatchTask(
 		const inputPath = oldCard?.resolvedPath ?? entry.taskPath;
 		const pinnedBytes = fs.existsSync(inputPath) ? fs.readFileSync(inputPath) : Buffer.alloc(0);
 		const prior = pinnedBytes.toString("utf8");
+		const fixedChild = FIXED_PARENT_FIELD.test(prior);
 		const prepareProfile = readTaskHeaderScalar(prior, "prepare_profile");
 		const prepareModel = readTaskHeaderScalar(prior, "model");
 		const prepareSources = (readTaskHeaderScalar(prior, "prepare_sources") ?? "")
@@ -552,7 +553,7 @@ export async function dispatchTask(
 				prepareProfile !== PREPARE_PROFILE ||
 				readTaskType(prior).type !== "decide_prepare" ||
 				!oldCard ||
-				!FIXED_PARENT_FIELD.test(prior) ||
+				!fixedChild ||
 				entry.cli !== "pi" ||
 				!route?.modelId ||
 				!["claude", "deepseek", "openai", "toa", "zhient", "zai"].includes(route.prefix) ||
@@ -584,8 +585,7 @@ export async function dispatchTask(
 		let approval: Record<string, unknown> | undefined;
 		if (stopped) {
 			const parent = oldCard?.sections?.parentWorkerRun ?? readTaskHeaderScalar(prior, "parent_worker_run");
-			if (stopped.code !== "worker-deadline" || !oldCard || !parent || !FIXED_PARENT_FIELD.test(prior))
-				return stopped;
+			if (stopped.code !== "worker-deadline" || !oldCard || !parent) return stopped;
 			deadlineRequest = {
 				operation: "deadline-successor",
 				key: owner,
@@ -703,7 +703,7 @@ export async function dispatchTask(
 				reason: "dispatch-card-drift",
 				detail: "Dispatch card changed before queue publication",
 			};
-		if (oldCard && FIXED_PARENT_FIELD.test(prior)) {
+		if (oldCard && fixedChild) {
 			const bytes = fs.readFileSync(inputPath);
 			const budget = buildMatterBudgetFromCard(bytes.toString("utf8"), {
 				cardRef: oldCard.headerPath,
@@ -825,6 +825,11 @@ export async function dispatchTask(
 		if (deadlineRequest) {
 			const stop = checkStop();
 			if (stop) return stop;
+			if (!fixedChild) {
+				const verified = requestReplan(controlRoot, deadlineRequest);
+				if (verified.ok !== true && stopped)
+					return { ...stopped, detail: String(verified.reason ?? stopped.detail) };
+			}
 		}
 		store.upsertWithinLock(full);
 	} finally {
