@@ -48,6 +48,51 @@ PM 在 `false` 下规划 Game 侧包装与适配，在 `true` 下可以规划授
 
 这些是路径权限和任务准入规则，不是对 UBT 进程全部副作用的 OS 级隔离。真实 UBT/UHT/插件加载是否通过、是否还需要其它生成路径，须在业务 key 中实际验证；遇到额外路径应报告，不在本规则中默许。
 
+## 仓库外额外可写根
+
+除 `control_root` / `game_root` / `engine_root` 之外，dual 项目可以在 `.agenticdoc/target.yml` 声明一至多个额外可写根，用于 `D:/Dark/Saved`、`D:/Dark/Agents/temp` 这类仓库外目录。声明只是把外部目录纳入“可被任务写面授权”的候选根，不扩大 Game 根，也不改变 Engine 只读。
+
+v1 平铺 dual 的顶层声明：
+
+```yaml
+mode: dual
+game: 'D:\Dark\DarkGame'
+engine: 'D:\Dark\UnrealEngine'
+additional_write_roots:
+  - 'D:/Dark/Saved'
+  - 'D:/Dark/Agents/temp'
+```
+
+v2 的 canonical 位置是 `dual:` 块内的同名键：
+
+```yaml
+active: dual
+dual:
+  game: 'D:\Dark\DarkGame'
+  engine: 'D:\Dark\UnrealEngine'
+  additional_write_roots:
+    - 'D:/Dark/Saved'
+```
+
+v2 `active: dual` 同时接受顶层声明（读侧兼容用户给出的形式），写侧以 `dual.additional_write_roots` 为 canonical；同一文件两处并存会被拒绝，不做隐式优先级。`active: single` 与 `active: partition` 下的顶层声明被拒绝，因为这两种模式没有 dual 写面根可追加。parked 的 `dual:` 块不参与解析，其中的声明不改变当前模式行为；`mw target on` 切回 dual 后声明才生效。
+
+声明值必须是非空列表，每项是平台原生绝对路径字符串。以下情况在配置解析期以 `invalid-config` 拒绝，并在消息中点名字段与原因：相对路径、空字符串、非字符串、非列表、`additional_write_roots:` 后无值。路径按最终根做 realpath、8.3 短名、junction 与大小写归一后再比较，因此下列重叠同样拒绝：
+
+- 归一后重复的根（大小写、短名或尾部分隔符差异不再算作两个根）；
+- 额外根之间相等或互相包含；
+- 额外根与 control / game / engine 根相等、包含或被包含；
+- 额外根本身经 junction 指向 Engine 或 Game（归一后落回该根，按上一条处理）。
+
+`MW_TARGET_GAME` / `MW_TARGET_ENGINE` 覆盖根路径后，防重叠检查基于最终解析出的根，而不是文件里的原始值。`additional_write_roots: []` 与未声明等价：不产生配置字段，也不改任何输出。
+
+额外根是独立可写根，不会把 Game 根扩展到外部目录，也不授予任何 Engine 写权限。声明之后任务卡仍须在 `## 写入允许面` 写出目标路径；卡片只接受已声明根内的路径。未声明的外部绝对路径、含 `..` 的上跳路径、经 junction 指向 Engine 的路径继续使用现有拒绝码：`write-face-outside-base`、`write-face-escape`、`write-face-read-only`。Engine 的只读根、构建产物例外和 deny 判定顺序保持不变。
+
+宿主派发（TS PM 与 Python PM/conductor）把已声明的根追加到写面根集合后判定卡片；Worker 启动时自行重解析同一份 `target.yml` 取得写根，宿主不通过环境变量或参数向 Worker 注入写根。额外根只进入允许侧：`bashWriteDenyReason` 的 deny 判据、`.git/**` 拒绝、其他 key 与 PM 状态文件的隔离线，以及 `worker_file` 通道都不因声明而放宽。
+
+未声明或声明为空列表时，profile、`mw target show` 摘要、投影、read-scope、doctor `config` 段与探针缓存 fingerprint、以及现有 golden 保持逐字节不变。本特性不新增 CLI 参数、不新增环境变量、不自动创建外部目录，也不扩展读面：额外根是写面授权，读取这些目录仍受任务卡读范围限制。
+
+PM profile 与 `mw target show` 在 dual 且已声明时逐条列出额外根（无声明时 profile 不新增行）。`mw target off`、`mw target clear`、`mw partition set|on|clear` 在把 `active` 切离 dual 或迁移到 v2 之前，先把顶层声明搬进 `dual:` 块再写盘，避免留下 `active: single|partition` 加顶层声明的非法组合；遇到顶层与块内并存、缺少 `dual:` 块或 flow/inline 列表等不支持的布局时，命令在写盘前失败、零写入并给出修复方式。v1→v2 迁移把声明保留到 `dual:` 块内，`mw target set|on` 不切离 dual，按现有行级写入保留声明。
+
 ## Engine 只读时的代码规范
 
 1. 所有引擎扩展落在 Game 的插件或模块中。每份需要扩展的原实现用项目自己的包装代码文件引用原 Engine 代码，仅维护新增、替换或接入行为。

@@ -1801,13 +1801,20 @@ def write_face_base(project_root: pathlib.Path) -> str:
 
 
 def write_face_roots(project_root: pathlib.Path, config: dict | None = None) -> list[str] | None:
-    """Configured roots for separated-workspace absolute file identities."""
+    """Configured roots for separated-workspace absolute file identities.
+
+    Dual mode appends the declared `additional_write_roots` (mw-dual-
+    additional-write-roots AC-002): the same list the config parser already
+    normalized and validated, so the write-face layer stays the single
+    place that judges a candidate path. Single still has no roots (relative
+    write faces only); partition is unchanged."""
     if config is None:
         config = mw_common.load_target_config(project_root)
     if config["mode"] == "single":
         return None
     if config["mode"] == "dual":
         roots = [config["control_root"], config["game_root"], config["engine_root"]]
+        roots.extend(config.get("additional_write_roots") or [])
     else:
         roots = [config["control_root"], config["partition_root"], config["parent_root"],
                  *(config.get("roots") or {}).values()]

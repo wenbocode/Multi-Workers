@@ -5271,10 +5271,13 @@ def _tc_parse_contract(value: object) -> dict:
 # Rule-table row 1: a v2 file (top-level `active:`) must not carry v1 flat
 # fields alongside.
 _V1_SHAPE_KEYS = ("mode", "game", "engine", "uproject")
-# v2 top-level whitelist (AC-003(c)).
-_V2_TOP_KEYS = frozenset(("active", "dual", "partition"))
+# v2 top-level whitelist (AC-003(c)). `additional_write_roots` is accepted
+# at the top level only as a read-side convenience for `active: dual`; the
+# canonical placement is inside the dual block (mw-dual-additional-write-roots
+# D-001).
+_V2_TOP_KEYS = frozenset(("active", "dual", "partition", "additional_write_roots"))
 # Mode-block whitelists (AC-003(d)/(e)).
-_DUAL_BLOCK_KEYS = frozenset(("game", "engine", "engine_writable", "vcs", "uproject", "toolchain", "ignore", "contract"))
+_DUAL_BLOCK_KEYS = frozenset(("game", "engine", "engine_writable", "vcs", "uproject", "toolchain", "ignore", "contract", "additional_write_roots"))
 _PARTITION_BLOCK_KEYS = frozenset(("parent", "partition", "vcs", "roots", "toolchain", "ignore", "contract"))
 # roots key constraints (AC-003(f)).
 _ROOTS_RESERVED = frozenset(("parent", "partition", "game", "engine", "uproject"))
@@ -5389,7 +5392,8 @@ def _decide_active_mode(
 
 
 def _tc_check_v2_top_whitelist(raw: dict) -> None:
-    """AC-003(c): the v2 top level allows exactly active/dual/partition."""
+    """AC-003(c): the v2 top level allows exactly active/dual/partition plus
+    the read-side `additional_write_roots` compatibility key."""
     extra = [str(k) for k in raw if k not in _V2_TOP_KEYS]
     if extra:
         _tc_fail(
@@ -5442,6 +5446,82 @@ def _tc_parse_roots(value: object, control_root: str) -> dict[str, str]:
             _tc_fail("invalid-config", f"target.yml: roots.{name} must be a non-empty string")
         out[name] = _tc_normalize_root(raw_path, control_root)
     return out
+
+
+def _tc_relation_norm(value: str) -> str:
+    """Identity key for root comparison (case-folded separators on Windows)."""
+    return os.path.normcase(os.path.normpath(value))
+
+
+def _tc_roots_overlap(a: str, b: str) -> bool:
+    """True when two normalized roots are equal or one contains the other."""
+    na = _tc_relation_norm(a)
+    nb = _tc_relation_norm(b)
+    return na == nb or na.startswith(nb + os.sep) or nb.startswith(na + os.sep)
+
+
+def _tc_parse_additional_write_roots(
+    value: object,
+    control_root: str,
+    final_roots: Sequence[tuple[str, str | None]],
+) -> list[str]:
+    """dual additional write roots (mw-dual-additional-write-roots AC-001,
+    design D-002/D-004).
+
+    Deliberately independent of ``_tc_string_array``: that helper maps a
+    declared ``null`` to ``[]``, which cannot distinguish "not declared"
+    (field absent) from "declared empty" (fail closed). ``[]`` itself is a
+    no-op (no field, no profile/show/fingerprint change).
+
+    Every entry must be a native absolute path; identity is realpath +
+    normcase + normpath (the same normalization the write-face layer applies
+    to candidates), so 8.3 short names, junctions and case spelling compare
+    equal. Entries must be distinct and non-nested among themselves and must
+    not be equal to or nested with the final control/game/engine roots
+    (env overrides included) — an additional root is an independent writable
+    root, never an extension of Game or a way around the read-only Engine.
+    """
+    if not isinstance(value, list):
+        _tc_fail(
+            "invalid-config",
+            "target.yml: field 'additional_write_roots' must be a list of absolute paths",
+        )
+    normalized: list[str] = []
+    for index, item in enumerate(value):
+        where = f"additional_write_roots[{index}]"
+        if not isinstance(item, str) or item.strip() == "":
+            _tc_fail("invalid-config", f"target.yml: {where} must be a non-empty string")
+        if not os.path.isabs(item):
+            _tc_fail(
+                "invalid-config",
+                f"target.yml: {where} must be a native absolute path, got '{item}'",
+            )
+        root = _tc_normalize_root(item, control_root)
+        for previous_index, previous in enumerate(normalized):
+            if _tc_relation_norm(root) == _tc_relation_norm(previous):
+                _tc_fail(
+                    "invalid-config",
+                    f"target.yml: {where} duplicates additional_write_roots[{previous_index}] "
+                    f"after normalization ({root})",
+                )
+            if _tc_roots_overlap(root, previous):
+                _tc_fail(
+                    "invalid-config",
+                    f"target.yml: {where} ({root}) and additional_write_roots[{previous_index}] "
+                    f"({previous}) must not be nested",
+                )
+        for label, final_root in final_roots:
+            if final_root is None:
+                continue
+            if _tc_roots_overlap(root, final_root):
+                _tc_fail(
+                    "invalid-config",
+                    f"target.yml: {where} ({root}) must not be equal to or nested with the "
+                    f"final {label} root ({final_root}); additional write roots are independent "
+                    "writable roots, not an extension of control/game/engine",
+                )
+        normalized.append(root)
+    return normalized
 
 
 def _tc_check_root_relation(parent_root: str, partition_root: str) -> None:
@@ -5549,6 +5629,31 @@ def _load_legacy_config(
 
     control_norm = _tc_normalize_root(control_root, control_root)
     game_root = _tc_normalize_root(game_raw, control_root) if mode == "dual" else control_norm
+    engine_root = None if engine_raw is None else _tc_normalize_root(engine_raw, control_root)
+    # Additional write roots are dual-only and only exist when declared
+    # non-empty (mw-dual-additional-write-roots D-001/D-002). The validation
+    # runs after the env overlay and root normalization, so MW_TARGET_GAME /
+    # MW_TARGET_ENGINE are checked against the final roots.
+    additional_roots: list[str] = []
+    if "additional_write_roots" in raw:
+        if mode != "dual":
+            _tc_fail(
+                "invalid-config",
+                "target.yml: field 'additional_write_roots' requires dual mode "
+                f"(resolved mode is '{mode}'; configure a game root first)",
+            )
+        declaration = raw.get("additional_write_roots")
+        if declaration is None:
+            _tc_fail(
+                "invalid-config",
+                "target.yml: field 'additional_write_roots' is declared with an empty value "
+                "(expected a list of absolute paths)",
+            )
+        additional_roots = _tc_parse_additional_write_roots(
+            declaration,
+            control_root,
+            (("control", control_norm), ("game", game_root), ("engine", engine_root)),
+        )
     if env_game is not None:
         source = "env"
     elif game_raw is not None or file_mode is not None:
@@ -5559,8 +5664,9 @@ def _load_legacy_config(
         "mode": mode,
         "control_root": control_norm,
         "game_root": game_root,
-        "engine_root": None if engine_raw is None else _tc_normalize_root(engine_raw, control_root),
+        "engine_root": engine_root,
         **({"engine_writable": raw.get("engine_writable") is True} if mode == "dual" else {}),
+        **({"additional_write_roots": additional_roots} if additional_roots else {}),
         "vcs": _tc_optional_string(raw.get("vcs"), "vcs"),
         "uproject": _tc_optional_string(raw.get("uproject"), "uproject"),
         "toolchain": _tc_parse_toolchain(raw.get("toolchain")),
@@ -5619,8 +5725,15 @@ def load_target_config(
 
     if decision["mode"] == "single":
         # Row 5: mode blocks are parked (not parsed, not validated); the
-        # top-level whitelist still applies (AC-003(c)).
+        # top-level whitelist still applies (AC-003(c)). A top-level
+        # additional_write_roots is not mode-scoped to dual → fail closed.
         _tc_check_v2_top_whitelist(raw)
+        if "additional_write_roots" in raw:
+            _tc_fail(
+                "invalid-config",
+                "target.yml: field 'additional_write_roots' requires active: dual "
+                f"(active is '{active}'); declare it under 'dual:' or switch to active: dual",
+            )
         return {
             "mode": "single",
             "control_root": control_norm,
@@ -5643,22 +5756,36 @@ def load_target_config(
         block = _tc_v2_block(raw, "dual")  # row 4
         _tc_check_v2_top_whitelist(raw)
         _tc_check_block_keys(block, "dual", _DUAL_BLOCK_KEYS)
-        config = _load_legacy_config(
-            control_root,
-            {
-                "mode": "dual",
-                "game": block.get("game"),
-                "engine": block.get("engine"),
-                **({"engine_writable": block["engine_writable"]} if "engine_writable" in block else {}),
-                "vcs": block.get("vcs"),
-                "uproject": block.get("uproject"),
-                "toolchain": block.get("toolchain"),
-                "ignore": block.get("ignore"),
-                "contract": block.get("contract"),
-            },
-            env_game,
-            env_engine,
-        )
+        # canonical: dual.additional_write_roots; the top level is the
+        # read-side compatibility placement. Two declarations in one file
+        # have no precedence rule → fail closed (D-002).
+        block_declared = "additional_write_roots" in block
+        top_declared = "additional_write_roots" in raw
+        if block_declared and top_declared:
+            _tc_fail(
+                "invalid-config",
+                "target.yml: field 'additional_write_roots' is declared both at the top level "
+                "and in the 'dual' block; keep exactly one declaration "
+                "(canonical: dual.additional_write_roots)",
+            )
+        synthesized: dict = {
+            "mode": "dual",
+            "game": block.get("game"),
+            "engine": block.get("engine"),
+            **({"engine_writable": block["engine_writable"]} if "engine_writable" in block else {}),
+            "vcs": block.get("vcs"),
+            "uproject": block.get("uproject"),
+            "toolchain": block.get("toolchain"),
+            "ignore": block.get("ignore"),
+            "contract": block.get("contract"),
+        }
+        # Explicitly forward the declaration into the legacy resolver — an
+        # unlisted key would be silently dropped here.
+        if block_declared:
+            synthesized["additional_write_roots"] = block["additional_write_roots"]
+        elif top_declared:
+            synthesized["additional_write_roots"] = raw["additional_write_roots"]
+        config = _load_legacy_config(control_root, synthesized, env_game, env_engine)
         config["parent_root"] = None
         config["partition_root"] = None
         config["roots"] = None
@@ -5669,6 +5796,12 @@ def load_target_config(
         # Row 7: fields from the partition block, EP overlay on top.
         block = _tc_v2_block(raw, "partition")  # row 4
         _tc_check_v2_top_whitelist(raw)
+        if "additional_write_roots" in raw:
+            _tc_fail(
+                "invalid-config",
+                "target.yml: field 'additional_write_roots' requires active: dual "
+                f"(active is '{active}'); declare it under 'dual:' or switch to active: dual",
+            )
         _tc_check_block_keys(block, "partition", _PARTITION_BLOCK_KEYS)
         return _load_partition_config(
             control_root,
@@ -6273,6 +6406,13 @@ def render_dual_profile_md(config: dict, ignore_enforced: bool = True) -> str:
     ]
     if config["engine_root"] is not None:
         lines.append(f"Engine root: {config['engine_root']}")
+    # Conditional segment, byte-identical to the TS renderProfileBlock line
+    # protocol; no declaration → not a single byte added (P-018).
+    additional_roots = config.get("additional_write_roots") or []
+    if additional_roots:
+        lines.append("Additional write roots:")
+        for root_path in additional_roots:
+            lines.append(f"- {root_path}")
     lines.extend(dual_engine_policy_lines(config))
     lines.extend(_profile_sections(config, ignore_enforced))
     return "\n".join(lines)
@@ -6353,6 +6493,10 @@ def _probe_fingerprint(config: dict) -> str:
     }
     for root_name, root_path in (config.get("roots") or {}).items():
         roots[f"root:{root_name}"] = root_path
+    # Only a non-empty declaration moves the fingerprint (doctor probe cache);
+    # an undeclared config serializes exactly as before (P-018).
+    for index, root_path in enumerate(config.get("additional_write_roots") or []):
+        roots[f"additional:{index}"] = root_path
     return json.dumps({"mode": config["mode"], "roots": sorted(roots.items())}, sort_keys=True)
 
 

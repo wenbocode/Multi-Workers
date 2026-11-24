@@ -9,6 +9,8 @@
 
 ### Added
 
+- Added dual-mode `additional_write_roots` to `.agenticdoc/target.yml` (mw-dual-additional-write-roots): a v1 flat dual or v2 `active: dual` project can declare absolute repo-external write roots (`D:/Dark/Saved`-style, e.g. `D:/Dark/Agents/temp`) that `write_face_roots()` appends to the dispatch roots, so a card targeting a declared path no longer fails with `write-face-outside-base`; roots are realpath/short-name/junction/case normalized and rejected as `invalid-config` when relative, empty, duplicated, nested, overlapping control/game/engine, or a junction onto Engine/Game, checked against the env-overridden final roots; extra roots never widen the Game root or Engine read-only, `..`, undeclared external paths and junction-to-Engine keep their `write-face-escape` / `write-face-outside-base` / `write-face-read-only` codes, and no root is injected into workers (each re-reads `target.yml`). `mw target show` prints the declared roots, `mw target off|clear` and `mw partition set|on|clear` promote a top-level declaration into the `dual:` block before writing (fail-closed with zero writes on an unsupported layout), the v1→v2 migration keeps it, and profile/show/projection/read-scope/doctor `config`/probe-cache fingerprint stay byte-identical when the key is absent or `[]` (no new CLI flag, environment variable, directory creation or read-face widening).
+
 - Added `toa/hy4-flash` for PM windows and pi workers, with image input, 1M context, 64K output and configurable thinking through the existing TokenLink route.
 
 - Added `/mw ue-continue-develop-frame install` for dual projects. The installer stays within the Game `Plugins` directory and automatically checks the installed package. Failures include a log excerpt and the full log path.

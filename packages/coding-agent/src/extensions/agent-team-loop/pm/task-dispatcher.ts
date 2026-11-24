@@ -82,6 +82,15 @@ function renderProfileBlock(config: WorkspaceConfig, ignoreEnforced: boolean): s
 		lines.push(`Control workspace: ${config.controlRoot}`);
 		lines.push(`Game root: ${config.gameRoot}`);
 		if (config.engineRoot !== null) lines.push(`Engine root: ${config.engineRoot}`);
+		// Declared additional write roots (mw-dual-additional-write-roots
+		// D-005): conditional section, byte-identical to Python's
+		// render_dual_profile_md. No declaration → zero lines added (the dual
+		// profile golden stays byte-exact).
+		const additionalRoots = config.additionalWriteRoots ?? [];
+		if (additionalRoots.length > 0) {
+			lines.push("Additional write roots:");
+			for (const root of additionalRoots) lines.push(`- ${root}`);
+		}
 		lines.push(...dualEnginePolicyLines(config));
 	}
 	const toolNames = Object.keys(config.toolchain);

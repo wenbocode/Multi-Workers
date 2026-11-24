@@ -103,6 +103,11 @@ export interface WorkspaceConfig {
 	/** Named extra roots (partition mode only), or null. Name → normalized
 	 * absolute path (relative entries anchor to the control root). */
 	roots: Record<string, string> | null;
+	/** Additional writable roots outside control/game/engine (dual mode only).
+	 * Present only when the target.yml declares a non-empty
+	 * `additional_write_roots` list; absent for undeclared/`[]` and for
+	 * single/partition mode (mw-dual-additional-write-roots D-001/D-002). */
+	additionalWriteRoots?: readonly string[];
 	vcs: string | null;
 	/** Explicit `uproject:` field value (not discovered). Lazy discovery
 	 * happens in discoverUproject()/renderToolchainCommand(). */
@@ -263,8 +268,12 @@ export function rawTargetYml(controlRoot: string): Record<string, unknown> {
 /** Rule-table row 1: a v2 file (top-level `active:`) must not carry v1
  * flat fields alongside. */
 const V1_SHAPE_KEYS = ["mode", "game", "engine", "uproject"] as const;
-/** v2 top-level whitelist (AC-003(c)). */
-const V2_TOP_KEYS = new Set(["active", "dual", "partition"]);
+/** v2 top-level whitelist (AC-003(c)). `additional_write_roots` is accepted
+ * at the top level only for `active: dual` read-side compatibility (the
+ * canonical v2 location is the dual block); the mode branches still reject
+ * it under active single/partition.
+ */
+const V2_TOP_KEYS = new Set(["active", "dual", "partition", "additional_write_roots"]);
 /** Mode-block whitelists (AC-003(d)/(e)). */
 const DUAL_BLOCK_KEYS = new Set([
 	"game",
@@ -275,6 +284,7 @@ const DUAL_BLOCK_KEYS = new Set([
 	"toolchain",
 	"ignore",
 	"contract",
+	"additional_write_roots",
 ]);
 const PARTITION_BLOCK_KEYS = new Set(["parent", "partition", "vcs", "roots", "toolchain", "ignore", "contract"]);
 /** roots key constraints (AC-003(f)). */
@@ -432,6 +442,19 @@ function checkBlockKeys(block: Record<string, unknown>, name: "dual" | "partitio
 	}
 }
 
+/** A top-level `additional_write_roots` declaration is dual-only: under an
+ * active single/partition mode it is not mode-scoped, so it fails closed
+ * instead of being parked with the mode block or silently ignored
+ * (mw-dual-additional-write-roots D-001). */
+function rejectUnscopedAdditionalWriteRoots(raw: Record<string, unknown>, active: "single" | "partition"): void {
+	if (!("additional_write_roots" in raw)) return;
+	fail(
+		"invalid-config",
+		`target.yml: top-level field 'additional_write_roots' requires 'active: dual' (active is '${active}'); ` +
+			"move it under the 'dual:' block or set active: dual",
+	);
+}
+
 /** partition.roots (AC-001/AC-003(f)): name -> normalized path; names must
  * match [A-Za-z0-9_-]+ and avoid the reserved names; relative paths anchor
  * to the control root (same rule as game/engine).
@@ -494,6 +517,18 @@ function parseRoots(value: unknown, controlRoot: string, rootsAst: YAMLMap | nul
 function relationNorm(p: string): string {
 	const normalized = path.normalize(p);
 	return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+/** Equality / nesting relation between two normalized roots. Deliberately
+ * separate from checkRootRelation(): that one owns the partition
+ * parent/partition wording, this one is scoped to additional write roots and
+ * names them in its messages (task T-001 requirement 4). */
+function rootRelation(a: string, b: string): "same" | "nested" | null {
+	const na = relationNorm(a);
+	const nb = relationNorm(b);
+	if (na === nb) return "same";
+	if (na.startsWith(nb + path.sep) || nb.startsWith(na + path.sep)) return "nested";
+	return null;
 }
 
 /** AC-003(g): parent and partition must be distinct and non-nested
@@ -561,6 +596,80 @@ function loadPartitionConfig(
 	};
 }
 
+/** Dual `additional_write_roots` (mw-dual-additional-write-roots D-002/
+ * D-004): an independent declaration, NOT an extension of the game/engine
+ * roots.
+ *
+ * Independent of stringArray() on purpose: `undefined` means "not declared"
+ * and yields no field, `[]` is a no-op, while an explicitly declared null, a
+ * non-list, or an empty entry is a *declared* invalid value and fails closed.
+ * Every entry must be a native absolute path; it is normalized through the
+ * same normalizeRoot() (realpath + case fold, 8.3/junction aware) the fixed
+ * roots use, then compared against the FINAL (env-overridden) control / game
+ * / engine roots. Duplicates, extra-vs-extra nesting and overlap with any
+ * fixed root raise invalid-config; a junction pointing at Engine/Game
+ * normalizes onto that root and is refused by the same relation check (no
+ * engine build-artifact exception here — design D-004).
+ */
+function parseAdditionalWriteRoots(
+	value: unknown,
+	controlRoot: string,
+	final: { controlRoot: string; gameRoot: string | null; engineRoot: string | null },
+): readonly string[] | undefined {
+	if (value === undefined) return undefined;
+	if (value === null) {
+		fail(
+			"invalid-config",
+			"target.yml: field 'additional_write_roots' must be a list of native absolute paths (got null; omit the field instead)",
+		);
+	}
+	if (!Array.isArray(value)) {
+		fail("invalid-config", "target.yml: field 'additional_write_roots' must be a list of native absolute paths");
+	}
+	const named: ReadonlyArray<{ field: string; root: string | null }> = [
+		{ field: "control root", root: final.controlRoot },
+		{ field: "game root", root: final.gameRoot },
+		{ field: "engine root", root: final.engineRoot },
+	];
+	const out: string[] = [];
+	for (let index = 0; index < value.length; index++) {
+		const raw: unknown = value[index];
+		if (typeof raw !== "string" || raw.trim() === "") {
+			fail("invalid-config", `target.yml: additional_write_roots[${index}] must be a non-empty string`);
+		}
+		if (!path.isAbsolute(raw)) {
+			fail(
+				"invalid-config",
+				`target.yml: additional_write_roots[${index}] '${raw}' must be a native absolute path (relative entries are not allowed)`,
+			);
+		}
+		const root = normalizeRoot(raw, controlRoot);
+		for (const prior of out) {
+			const relation = rootRelation(prior, root);
+			if (relation === "same") {
+				fail("invalid-config", `target.yml: additional_write_roots entry '${root}' duplicates '${prior}'`);
+			}
+			if (relation === "nested") {
+				fail(
+					"invalid-config",
+					`target.yml: additional_write_roots entry '${root}' must not be nested with additional_write_roots entry '${prior}'`,
+				);
+			}
+		}
+		for (const { field, root: other } of named) {
+			if (other === null) continue;
+			if (rootRelation(other, root) !== null) {
+				fail(
+					"invalid-config",
+					`target.yml: additional_write_roots entry '${root}' must not be equal to or nested with the ${field} '${other}'`,
+				);
+			}
+		}
+		out.push(root);
+	}
+	return out.length === 0 ? undefined : out;
+}
+
 /** v1 / no-file resolution — the pre-partition logic, byte-identical (spec
  * §1.5 rows 8/11/12; AC-013 zero-regression). */
 function resolveLegacyConfig(
@@ -606,15 +715,31 @@ function resolveLegacyConfig(
 		fail("invalid-config", "target.yml: engine_writable requires a configured dual engine root");
 	}
 
-	const gameRoot =
-		mode === "dual" ? normalizeRoot(gameRaw as string, controlRoot) : normalizeRoot(controlRoot, controlRoot);
+	const controlNorm = normalizeRoot(controlRoot, controlRoot);
+	const gameRoot = mode === "dual" ? normalizeRoot(gameRaw as string, controlRoot) : controlNorm;
+	const engineRoot = engineRaw === null ? null : normalizeRoot(engineRaw, controlRoot);
+	// Mode gate first (v1 single/no-game declarations fail closed), then the
+	// value/shape/overlap validation against the FINAL (env-resolved) roots.
+	const declaredAdditional = "additional_write_roots" in raw;
+	if (declaredAdditional && mode !== "dual") {
+		fail(
+			"invalid-config",
+			`target.yml: field 'additional_write_roots' requires dual mode (resolved mode is '${mode}')`,
+		);
+	}
+	const additionalWriteRoots = parseAdditionalWriteRoots(
+		declaredAdditional ? raw.additional_write_roots : undefined,
+		controlRoot,
+		{ controlRoot: controlNorm, gameRoot, engineRoot },
+	);
 
 	return {
 		mode,
-		controlRoot: normalizeRoot(controlRoot, controlRoot),
+		controlRoot: controlNorm,
 		gameRoot,
-		engineRoot: engineRaw === null ? null : normalizeRoot(engineRaw, controlRoot),
+		engineRoot,
 		...(mode === "dual" ? { engineWritable: raw.engine_writable === true } : {}),
+		...(additionalWriteRoots === undefined ? {} : { additionalWriteRoots }),
 		parentRoot: null,
 		partitionRoot: null,
 		roots: null,
@@ -674,8 +799,10 @@ export function resolveWorkspaceConfig(controlRoot: string): WorkspaceConfig {
 
 	if (decision.mode === "single") {
 		// Row 5: mode blocks are parked (not parsed, not validated); the
-		// top-level whitelist still applies (AC-003(c)).
+		// top-level whitelist still applies (AC-003(c)). A top-level
+		// additional_write_roots is dual-only and fails closed here.
 		checkV2TopWhitelist(raw);
+		rejectUnscopedAdditionalWriteRoots(raw, "single");
 		return {
 			mode: "single",
 			controlRoot: controlNorm,
@@ -699,6 +826,14 @@ export function resolveWorkspaceConfig(controlRoot: string): WorkspaceConfig {
 		const block = v2Block(raw, "dual"); // row 4
 		checkV2TopWhitelist(raw);
 		checkBlockKeys(block, "dual", DUAL_BLOCK_KEYS);
+		const blockHasRoots = "additional_write_roots" in block;
+		const topHasRoots = "additional_write_roots" in raw;
+		if (blockHasRoots && topHasRoots) {
+			fail(
+				"invalid-config",
+				"target.yml: 'additional_write_roots' is declared twice (top level and 'dual' block); keep exactly one declaration",
+			);
+		}
 		const config = resolveLegacyConfig(
 			controlRoot,
 			{
@@ -711,6 +846,13 @@ export function resolveWorkspaceConfig(controlRoot: string): WorkspaceConfig {
 				toolchain: block.toolchain,
 				ignore: block.ignore,
 				contract: block.contract,
+				// Explicit pass-through (block first, then the v2 top-level read-side
+				// compatibility value). Presence-gated rather than `??`: a declared
+				// null in the block must reach the parser as null and fail closed
+				// instead of silently falling back to the top-level value.
+				...(blockHasRoots || topHasRoots
+					? { additional_write_roots: blockHasRoots ? block.additional_write_roots : raw.additional_write_roots }
+					: {}),
 			},
 			envGame,
 			envEngine,
@@ -723,6 +865,7 @@ export function resolveWorkspaceConfig(controlRoot: string): WorkspaceConfig {
 		// Row 7: fields from the partition block, EP overlay on top.
 		const block = v2Block(raw, "partition"); // row 4
 		checkV2TopWhitelist(raw);
+		rejectUnscopedAdditionalWriteRoots(raw, "partition");
 		checkBlockKeys(block, "partition", PARTITION_BLOCK_KEYS);
 		return loadPartitionConfig(controlRoot, controlNorm, block, envParent, envPartition, readRootsAst(controlRoot));
 	}

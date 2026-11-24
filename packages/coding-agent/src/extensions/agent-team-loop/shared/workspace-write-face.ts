@@ -14,7 +14,15 @@ export function workspaceWriteFaceOptions(
 	if (config.mode === "single") return options;
 	const roots =
 		config.mode === "dual"
-			? [config.controlRoot, config.gameRoot, config.engineRoot]
+			? [
+					config.controlRoot,
+					config.gameRoot,
+					config.engineRoot,
+					// Declared dual additional roots (mw-dual-additional-write-roots
+					// D-001/D-002): separate absolute roots appended after the three
+					// fixed ones; an undeclared or empty list contributes nothing.
+					...(config.additionalWriteRoots ?? []),
+				]
 			: [config.controlRoot, config.partitionRoot, config.parentRoot, ...Object.values(config.roots ?? {})];
 	const readOnly =
 		config.mode === "dual" && config.engineRoot !== null && config.engineWritable !== true

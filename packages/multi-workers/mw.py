@@ -8390,6 +8390,11 @@ def _print_target_summary(config: dict) -> None:
     print(f"[mw target] vcs: {config['vcs'] or '-'}  uproject: {config['uproject'] or '-'}")
     if config["toolchain"]:
         print(f"[mw target] toolchain commands: {', '.join(sorted(config['toolchain']))}")
+    # Conditionally appended (mw-dual-additional-write-roots AC-002): the
+    # undeclared golden stays at dual 6 lines / single 5 lines.
+    if config["mode"] == "dual":
+        for root_path in config.get("additional_write_roots") or []:
+            print(f"[mw target] additional write root: {root_path}")
 
 
 def _target_set(project_dir: pathlib.Path, args: argparse.Namespace) -> int:
@@ -8525,6 +8530,10 @@ def _target_clear(project_dir: pathlib.Path) -> int:
         print(f"[mw target clear] removed {yml} — queries resolve to single/default")
         _print_workspace_mode_guidance(project_dir)
         return 0
+    exact, promote_error = _promote_top_level_additional_roots(exact, raw)
+    if promote_error is not None:
+        print(f"[mw target clear] Error: {promote_error}", file=sys.stderr)
+        return 1
     if not isinstance(raw.get("dual"), dict):
         print("[mw target clear] no dual block — nothing to clear")
         return 0
@@ -8692,6 +8701,10 @@ def _target_off(project_dir: pathlib.Path) -> int:
     if raw.get("active") != "dual":
         print(f"[mw target off] dual mode is not active (active: {raw.get('active')}) — nothing to do")
         return 0
+    exact, promote_error = _promote_top_level_additional_roots(exact, raw)
+    if promote_error is not None:
+        print(f"[mw target off] Error: {promote_error}", file=sys.stderr)
+        return 1
     text = _apply_bootstrap_line(exact, "active", "single")
     try:
         _atomic_write_yml(yml, text)
@@ -10545,6 +10558,80 @@ def _apply_mode_block(
     return "".join(lines)
 
 
+def _additional_roots_layout_error(reason: str) -> str:
+    return (
+        f"top-level 'additional_write_roots' {reason}; the command must not leave an "
+        "unscoped dual declaration behind (it becomes invalid once active is not dual). "
+        "Convert it to a block list under 'dual.additional_write_roots:', add a block-style "
+        "'dual:' block, or remove the declaration — no file was written"
+    )
+
+
+def _promote_top_level_additional_roots(text: str, raw: dict) -> tuple[str, str | None]:
+    """Move a top-level `additional_write_roots` block list into the `dual:`
+    block before a command changes `active` away from dual
+    (mw-dual-additional-write-roots design D-003).
+
+    Exact-text: comments, line endings and every other line are preserved;
+    the entries are re-indented under the block. Fail-closed zero-write
+    shapes — both declarations, a missing/flow `dual:` block, a flow/inline
+    list or an entry-less section — return an error message for the caller to
+    print before touching the file. A v1 file has no block to promote into:
+    its declaration is legal until `_migrate_v1_text` moves it.
+
+    Returns (text, None) when there is nothing to promote.
+    """
+    lines = text.splitlines(keepends=True)
+    ending = _dominant_ending(text)
+    header_re = re.compile(r"^additional_write_roots\s*:$")
+    top_idx: int | None = None
+    for i, line in enumerate(lines):
+        if re.match(r"^additional_write_roots\s*:", line) is None:
+            continue
+        if header_re.match(line.rstrip("\r\n")) is None:
+            return text, _additional_roots_layout_error(
+                "is not a block-level list (flow/inline or scalar values are unsupported)"
+            )
+        top_idx = i
+        break
+    if top_idx is None:
+        return text, None
+    dual = raw.get("dual")
+    if not isinstance(dual, dict) or not _block_layout_ok(text, "dual"):
+        return text, _additional_roots_layout_error(
+            "requires a block-style 'dual:' block to move under"
+        )
+    if "additional_write_roots" in dual:
+        return text, _additional_roots_layout_error(
+            "is declared both at the top level and in the 'dual:' block"
+        )
+    top_end = _block_end(lines, top_idx)
+    body = lines[top_idx + 1 : top_end]
+    entries = [line for line in body if line.strip() and not line.lstrip().startswith("#")]
+    if not entries or any(re.match(r"^[ \t]+-\s*\S", line) is None for line in entries):
+        return text, _additional_roots_layout_error(
+            "must be a block list of '- <absolute path>' entries"
+        )
+    base_indent = min(len(line) - len(line.lstrip(" \t")) for line in body if line.strip())
+    section = [f"  additional_write_roots:{_line_ending(lines[top_idx]) or ending}"]
+    for line in body:
+        if line.strip() == "":
+            section.append(line)
+        else:
+            section.append("    " + line[base_indent:])
+    del lines[top_idx:top_end]
+    dual_idx = _find_block_header(lines, "dual")
+    if dual_idx is None:  # unreachable after _block_layout_ok, kept fail-closed
+        return text, _additional_roots_layout_error(
+            "requires a block-style 'dual:' block to move under"
+        )
+    dual_end = _block_end(lines, dual_idx)
+    if dual_end > dual_idx + 1 and not lines[dual_end - 1].endswith(("\n", "\r")):
+        lines[dual_end - 1] = lines[dual_end - 1] + ending
+    lines[dual_end:dual_end] = section
+    return "".join(lines), None
+
+
 def _migrate_v1_text(text: str) -> str:
     """One-shot v1 → v2 migration (design D-008): every v1 field — bootstrap
     scalars and the hand-maintained toolchain/ignore/contract profiles —
@@ -10564,7 +10651,18 @@ def _migrate_v1_text(text: str) -> str:
         )
     active = "dual" if raw.get("game") is not None else "single"
     dual: dict = {}
-    for key in ("game", "engine", "vcs", "uproject", "toolchain", "ignore", "contract"):
+    for key in (
+        "game",
+        "engine",
+        "vcs",
+        "uproject",
+        "toolchain",
+        "ignore",
+        "contract",
+        # mw-dual-additional-write-roots D-003: a v1 top-level declaration
+        # moves into the generated dual block instead of being dropped.
+        "additional_write_roots",
+    ):
         value = raw.get(key)
         if value is not None:
             dual[key] = value
@@ -10769,6 +10867,14 @@ def _partition_set(project_dir: pathlib.Path, args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
+        if shape == "v2":
+            # mw-dual-additional-write-roots D-003: the command moves active
+            # off dual, so a top-level declaration must become mode-scoped
+            # BEFORE any write (a post-write reload cannot repair the file).
+            exact, promote_error = _promote_top_level_additional_roots(exact, raw)
+            if promote_error is not None:
+                print(f"[mw partition set] Error: {promote_error}", file=sys.stderr)
+                return 1
         if shape == "v1":
             # (5a) one-shot v1 → v2 migration: the .bak is written from the
             # original bytes BEFORE the new content lands — a failure between
@@ -10923,6 +11029,15 @@ def _partition_clear(project_dir: pathlib.Path) -> int:
     if shape == "mixed":
         print(f"[mw partition clear] Error: {_MIXED_FORMAT_MSG}", file=sys.stderr)
         return 1
+    if shape == "v2":
+        # Every v2 rewrite in this command happens below; promote the
+        # top-level declaration first so a missing/flow dual block fails
+        # closed before the unlink/write (v1 flat declarations are legal and
+        # have no block to move into).
+        exact, promote_error = _promote_top_level_additional_roots(exact, raw)
+        if promote_error is not None:
+            print(f"[mw partition clear] Error: {promote_error}", file=sys.stderr)
+            return 1
     if shape != "v2" or not isinstance(raw.get("partition"), dict):
         # v1 flat file or a v2 without the block: nothing to remove
         print("[mw partition clear] no partition block — nothing to clear")
@@ -11016,6 +11131,10 @@ def _partition_on(project_dir: pathlib.Path) -> int:
         return 1
     if not _block_layout_ok(exact, "partition"):
         print(f"[mw partition on] Error: {_FLOW_LAYOUT_MSG.format(block='partition')}", file=sys.stderr)
+        return 1
+    exact, promote_error = _promote_top_level_additional_roots(exact, raw)
+    if promote_error is not None:
+        print(f"[mw partition on] Error: {promote_error}", file=sys.stderr)
         return 1
     text = _apply_bootstrap_line(exact, "active", "partition")
     try:
