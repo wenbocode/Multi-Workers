@@ -162,6 +162,15 @@ export function runAgenticScript(
 	if (scriptName === "advance_phase.py" && args[1]?.toLowerCase() === "tasks") {
 		const gate = inspectPlanGate(projectDir);
 		if (!gate.ok) return gate;
+		const mw = findMwPy();
+		if (!mw) return { ok: false, output: "MW scope review requires a runnable MW Python installation." };
+		const scope = spawnSync(
+			PYTHON_EXE,
+			["-X", "utf8", path.join(path.dirname(mw), "scope_review.py"), projectDir, args[0]!],
+			{ cwd: projectDir, encoding: "utf8", timeout: timeoutMs, windowsHide: true },
+		);
+		if (scope.status !== 0)
+			return { ok: false, output: (scope.stderr || scope.error?.message || "Scope review failed.").trim() };
 	}
 	// -X utf8: framework gate scripts print Chinese diagnostics; a Windows
 	// console default (cp936) read back as utf8 would turn them into '?'.

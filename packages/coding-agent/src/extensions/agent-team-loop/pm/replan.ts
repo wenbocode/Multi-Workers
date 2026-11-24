@@ -34,7 +34,14 @@ export function replanAdmission(
 	hasFailure: boolean,
 	supersedes?: string,
 ) {
-	if (!hasFailure && !fs.existsSync(path.join(project, ".agenticdoc", key, "evidence", "replan"))) return;
+	const keyDir = path.join(project, ".agenticdoc", key);
+	if (
+		!hasFailure &&
+		!fs.existsSync(path.join(keyDir, "spec.md")) &&
+		!fs.existsSync(path.join(keyDir, "scope-review.json")) &&
+		!fs.existsSync(path.join(keyDir, "evidence", "replan"))
+	)
+		return;
 	const result = requestReplan(project, { operation: "admission", key, task, card, card_hash: hash, supersedes });
 	return result.ok === true ? undefined : String(result.reason ?? "replan admission unavailable");
 }

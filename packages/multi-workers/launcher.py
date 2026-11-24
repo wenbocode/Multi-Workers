@@ -61,6 +61,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import mw_common
 import decision_prepare
 import replan_tasks
+import scope_review
 import review_observation
 import tree_watch
 import usage
@@ -2957,6 +2958,17 @@ def _spawn(
         check_rag_tear(entry, project_dir)
         task_path = pathlib.Path(entry["task_path"])
         task_envelope = task_path.read_text(encoding="utf-8", errors="replace")
+        loop = mw_common.read_task_header_scalar(task_envelope, "loop") or ""
+        owner = mw_common.worker_owner_key(entry)
+        if scope_review.KEY.fullmatch(owner) and not owner.endswith("."):
+            reason = replan_tasks.scope_dispatch_refusal(
+                project_dir.resolve() / ".agenticdoc" / owner,
+                mw_common.read_task_header_scalar(task_envelope, "card_path") or "",
+                mw_common.read_task_header_scalar(task_envelope, "card_sha256"),
+                allow_cardless=(entry.get("origin") == "conductor" and not loop.startswith("exec:")),
+            )
+            if reason:
+                raise ValueError(reason)
         prepare_profile = mw_common.read_task_header_scalar(task_envelope, "prepare_profile")
         if prepare_profile is not None:
             model_value = decision_prepare.spawn_model(project_dir, task_path, task_envelope)

@@ -3052,6 +3052,7 @@ function writeFaceRefusalText(taskKey: string, refusal: DispatchRefusal): string
 		return `Worker dispatch of '${taskKey}' is resource-limited: ${refusal.reason}`;
 	if (
 		refusal.code === "replan-required" ||
+		refusal.code === "scope-review" ||
 		refusal.code === "parent-cancel" ||
 		refusal.code === "worker-deadline" ||
 		refusal.code === "parent-run-unavailable" ||

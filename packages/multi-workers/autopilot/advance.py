@@ -32,6 +32,7 @@ import sys
 from datetime import datetime, timezone
 
 import decision_policy
+import scope_review
 
 
 class AdvanceError(Exception):
@@ -197,6 +198,8 @@ def inspect_plan(
         return None
     if not isinstance(result, list) or not all(isinstance(item, str) for item in result):
         raise AdvanceError("Unexpected native plan inspection result")
+    if not roster_only and (refusal := scope_review.plan_refusal(key_dir)):
+        result.append(refusal)
     return result
 
 
@@ -215,6 +218,9 @@ def advance(
         return 1, "", f"[advance] {exc}"
     if phase.lower() == "tasks" and not script.with_name("plan_closure.py").is_file():
         return 1, "", "[advance] AgenticTask PLAN → TASKS gate missing. Update the installed AgenticTask scripts."
+    if phase.lower() == "tasks":
+        if refusal := scope_review.plan_refusal(project_root.resolve() / ".agenticdoc" / key):
+            return 1, "", f"   - PLAN CLOSURE: {refusal}"
     cmd = [sys.executable, *_PYTHON_FLAGS, str(script), key, phase]
     if summary is not None:
         cmd += ["--summary", summary]

@@ -2355,11 +2355,12 @@ def dispatch(
         # write. Nothing inside this section may acquire a lock again (RQ-D3:
         # a nested acquire backs off for 14.6h and then raises).
         reason = replan_tasks.admission(project_root.resolve(), owner, task_key,
-                                        f"tasks/{stem}.md", attempt=attempt,
+                                        card_backed["path"] if card_backed else "", attempt=attempt,
                                         card_hash=card_backed["sha256"] if card_backed else None,
-                                        supersedes=card_backed.get("supersedes") if card_backed else None)
+                                        supersedes=card_backed.get("supersedes") if card_backed else None,
+                                        allow_cardless=not loop.startswith("exec:"))
         if reason:
-            return reject(reason, "inspect the replan issue and ready batch")
+            return reject(reason, reason if reason.startswith("scope-review:") else "inspect the replan issue and ready batch")
         refusal = _write_face_verdict(
             project_root, owner, task_key, content,
             card_backed=card_backed is not None, timeline=timeline,

@@ -12,7 +12,9 @@ import { createHarness, type Harness } from "./harness.ts";
 
 const specification =
 	"---\r\nversion: 1\r\n---\r\n\r\n# Old spec\r\n\r\n## Acceptance\r\n\r\n| AC-001 | Check the report. |\r\n";
-const goal = "Produce an Alpha report aligned with the project. Check the report against AC-001.";
+const goal =
+	"Goal ID: alpha/GOAL-01\n目标: Produce an Alpha report aligned with the project.\n" +
+	"范围边界: Report authoring only. Dashboards belong to a separate key.\n停止条件: Readers can verify the report.";
 const roots: string[] = [];
 const harnesses: Harness[] = [];
 
@@ -45,6 +47,8 @@ async function setup(spec = specification, claim = windowClaimId()) {
 	const generate = vi.fn(() => fauxAssistantMessage("Draft from the selected model."));
 	harness.setResponses([
 		(context) => {
+			expect(context.systemPrompt).toContain("Goal ID: <key>/GOAL-01");
+			expect(context.systemPrompt).toContain("停止条件:");
 			expect(context.tools ?? []).toHaveLength(0);
 			expect(context.messages).toHaveLength(1);
 			expect(context.messages[0]).toMatchObject({
@@ -69,9 +73,12 @@ it("uses the current model once and writes the edited and confirmed goal into a 
 	expect(confirm).toHaveBeenCalledWith("写入 alpha 的 spec_goal？", goal);
 	expect(harness.session.messages).toEqual([]);
 	const updated = fs.readFileSync(file, "utf8");
-	expect(updated.replace(`\r\n## §0 Goal Alignment\r\n\r\n### spec_goal\r\n\r\n${goal}\r\n\r\n`, "")).toBe(
-		specification,
-	);
+	expect(
+		updated.replace(
+			`\r\n## §0 Goal Alignment\r\n\r\n### spec_goal\r\n\r\n${goal.replace(/\n/g, "\r\n")}\r\n\r\n`,
+			"",
+		),
+	).toBe(specification);
 	expect(appendKeyGoal("", docs, "alpha")).toBe(`## [mw] Current key goal (alpha)\n\n${goal}`);
 	await harness.session.prompt("/mw-spec-goal");
 	expect(generate).toHaveBeenCalledTimes(1);

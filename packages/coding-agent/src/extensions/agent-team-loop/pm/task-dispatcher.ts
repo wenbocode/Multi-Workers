@@ -619,7 +619,10 @@ export async function dispatchTask(
 				),
 			readTaskHeaderScalar(prior, "supersedes") ?? undefined,
 		);
-		if (reason) return { ok: false, code: "replan-required", reason, detail: reason };
+		if (reason) {
+			const code = reason.startsWith("scope-review:") ? "scope-review" : "replan-required";
+			return { ok: false, code, reason, detail: reason };
+		}
 		const beforePublish = checkStop();
 		if (beforePublish) return beforePublish;
 		if (dispatchOptions.publishCard && fs.existsSync(path.dirname(entry.taskPath))) {
@@ -839,6 +842,7 @@ export async function dispatchTask(
 export type DispatchRefusalCode =
 	| "resource-limited"
 	| "replan-required"
+	| "scope-review"
 	| "user-stop"
 	| "parent-cancel"
 	| "worker-deadline"

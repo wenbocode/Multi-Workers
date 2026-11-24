@@ -17,6 +17,7 @@ import decision as decision_config
 import decision_lifecycle
 import decision_wire
 import mw_common
+import scope_review
 from autopilot import dispatch as cards
 from autopilot import state, write_face
 
@@ -477,7 +478,7 @@ def preview(project: Path, key_dir: Path, current: dict, plan: dict) -> dict:
     waiting = {s: sorted(graph[s]) for s in ordered}
     source_ref = current["facts"]["card"]
     if source_ref:
-        gate = admission(project, key_dir.name, current["facts"]["task"], source_ref)
+        gate = admission(project, key_dir.name, current["facts"]["task"], source_ref, check_scope=False)
         if gate and gate.startswith("replan-dependency-pending:"):
             inherited = gate.partition(":")[2].split(",")
             for stem in ordered:
@@ -498,6 +499,15 @@ def preview(project: Path, key_dir: Path, current: dict, plan: dict) -> dict:
     if proofs:
         version_fields.append(proofs)
     version = digest(version_fields)
+    scope = scope_review.Scope(key_dir)
+    if scope.reviews is not None:
+        scope.check_plan()
+        review = scope.review("replans", version)
+        if review["anchor"] not in current["coverage"]:
+            raise ValueError("scope-review: replan must retain an anchor from the original task")
+        for unit in units:
+            if not set(unit["covers"]).issubset(current["coverage"]):
+                raise ValueError(f"scope-review: {unit['id']} adds coverage outside the original task")
     return {"version": version, "basis_id": "replan-" + version[:24], "action": choice,
             "initial_batch": existing[:1] or [s for s in ordered if not waiting[s]],
             "ready_existing": existing, "waiting": waiting}
@@ -623,6 +633,12 @@ def execute(project: Path, req: dict) -> dict:
             remaining, stop = (req[name].strip() for name in ("remaining", "stop"))
             if not remaining or not stop or len(remaining) + len(stop) > 4000 or "[dp2-" in remaining + stop:
                 raise ValueError("name the remaining work and optional exploration to stop within 4000 characters")
+            scope = scope_review.Scope(key_dir)
+            if scope.reviews is not None:
+                scope.check_plan()
+                review = scope.review("replans", digest([current["snapshot"], remaining, stop, verification]))
+                if review["anchor"] not in current["coverage"]:
+                    raise ValueError("scope-review: running trim must retain an anchor from the original task")
             target = local(folder / "steer-dp2.md")
             if target.exists():
                 raise ValueError("this Worker already has a steer; preserve it and check delivery")
@@ -1014,11 +1030,37 @@ def deadline_authority_path(file: Path) -> Path:
     return Path(prefix + absolute)
 
 
+def scope_dispatch_refusal(key_dir: Path, ref: str, pin: str | None, *, allow_cardless: bool = False) -> str | None:
+    if not ref and allow_cardless:
+        return None
+    try:
+        scope = scope_review.Scope(key_dir)
+        if scope.reviews is None:
+            return None
+        scope.check_plan()
+        review = scope.check_card(ref, pin)
+        anchors = scope.task_anchors.get(Path(ref).stem.casefold().removeprefix("t-"), set())
+        if review["anchor"] in anchors:
+            return None
+        lineage = applied_lineage(records(key_dir), card_identity(ref))
+        if lineage:
+            record, unit = lineage[0]
+            scope.review("replans", record["version"])
+            if review["anchor"] in unit["covers"] and body(key_dir / ref) == card_text(record, unit):
+                return None
+        raise ValueError(f"{ref}: scope anchor must be assigned by the retained plan or an applied replan")
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return f"scope-review: {exc}"
+
+
 def admission(project: Path, owner: str, task: str, ref: str, *, attempt: int = 1,
-              card_hash: str | None = None, supersedes: str | None = None) -> str | None:
+              card_hash: str | None = None, supersedes: str | None = None,
+              allow_cardless: bool = False, check_scope: bool = True) -> str | None:
     """Called under workers.lock before any dispatch writes. No nested lock."""
-    ref = card_identity(ref)
     key_dir = local(project / ".agenticdoc" / identifier(owner))
+    if check_scope and (reason := scope_dispatch_refusal(key_dir, ref, card_hash, allow_cardless=allow_cardless)):
+        return reason
+    ref = card_identity(ref)
     rows = worker_rows(project, owner)
     previous_task = supersedes or (re.sub(r"-a\d+$", "", task) if attempt > 1 else task)
     for row in rows:

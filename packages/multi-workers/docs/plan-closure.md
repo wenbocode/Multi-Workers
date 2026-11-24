@@ -41,3 +41,44 @@ MW PM 在推进任务时，如果已经找到可行方向、正准备建议下�
 交互式 PM、autopilot 和命令行 `python <AgenticTask 脚本目录>/advance_phase.py <key> tasks` 共用 AgenticTask 原生门禁。Autopilot 收到原生闭环缺口后进入 L2 修复。通过后进入 `TASKS`，按保留任务拆卡。升级 MW 时同步更新 AgenticTask 脚本及项目安装副本。
 
 已经处于 `PLAN` 的旧计划可在推进前补齐这三节，并在已有功能流中补列必要路径。需要改变已经锁定的 AC 或 VC 时，沿用现有重开流程。
+
+## 复核范围和停止条件
+
+在 `spec.md` 的 `§0 Goal Alignment` 下确认 `### spec_goal`。常规 SPEC 和 `/mw-spec-goal` 使用同一格式。
+
+```text
+Goal ID: ueperf-t43/GOAL-01
+目标: 让 T25 通过版本化 JSON 合同只读复验固定帧 CSV 完成证据。
+范围边界: 交付复验产品包，公共 C++ API、真实采集和父 key 接收另有归属。
+停止条件: 消费者能独立复验，错哈希明确失败，当前 AC 全部通过。
+```
+
+PM 逐项判断省略工作会让哪个现有 AC 或必要 FLOW 在真实入口失败，以及恢复该结果的最小工作。针对错哈希被接受，复核应指向 `verify`、`AC-305` 和具名非零退出。针对公共 C++ API 提案，现有 JSON 复验路径仍成立，复核结论应拒绝。必要性无法确认也应退回。范围调整走规格确认，replan 只承接原任务的验收范围。
+
+在 key 目录用 `scope-review.json` 记录复核。计划、卡片和 replan 修改后，以更新后的内容重新复核。程序校验引用、复核结论和摘要。PM 负责核实理由与实际内容一致。
+
+```json
+{
+  "goal_sha256": "<门禁报告的目标摘要>",
+  "plan_sha256": "<门禁报告的计划摘要>",
+  "plan": {
+    "T-043-fix-hash": {
+      "verdict": "approve",
+      "anchor": "AC-305",
+      "entry": "tools/t43_qualification.py verify",
+      "failure": "错误的预期哈希被接受",
+      "minimum": "让现有 verify 返回具名非零，加入错哈希回归"
+    }
+  },
+  "cards": {},
+  "replans": {}
+}
+```
+
+- `plan` 按保留任务 ID 记录，`anchor` 要和闭环覆盖表中的任务归属一致。
+- `cards` 按 `tasks/<卡名>.md` 记录。使用同样的复核字段，另加门禁报告的 `sha256`。派发检查整卡摘要及保留计划或已应用 replan 的归属。
+- `replans` 按 preview 返回的版本摘要记录。preview 遇到缺少复核时会在错误中给出候选摘要。approve 后重试同一提案，apply 会用同一版本再次检查。生成的后继卡在派发前仍需整卡复核。
+
+交互式 PM 和 autopilot 会在 `PLAN → TASKS` 阻断范围问题。命令行使用 `python <MW 安装目录>/scope_review.py <项目根目录> <key> --advance` 经过同样的检查推进阶段。省略 `--advance` 只检查。直接运行外部 AgenticTask 原生脚本只执行原生闭环检查。
+
+已有 §0 的 key 要补齐四行目标和复核。没有 §0 和范围复核记录的旧 key、Codex-lite 与框架内部无卡调度沿用各自入口。

@@ -3703,6 +3703,13 @@ def _phase_writer_prompt(key: str, phase: str, nxt: str) -> str:
 
 
 def _plan_phase_instructions(phase: str) -> str:
+    if phase == "spec":
+        return (
+            "在 spec.md 的 §0 写 ### spec_goal，正文依次四行："
+            "Goal ID: <key>/GOAL-01、目标: …、范围边界: …、停止条件: …。"
+            "明示使用者能完成的动作、容易误纳入的相邻工作及可观察的收工条件。"
+            "从规格事实提取。缺少依据的字段标记 [NEEDS-CONFIRMATION]。\n"
+        )
     design_rule = (
         "在 design.md 的 Function Flow 中添加“### 必要功能路径”表，逐行写"
         " | FLOW-001 | 真实入口或触发 | 可观察结果 | 逗号分隔的 VC |。"
@@ -3718,10 +3725,14 @@ def _plan_phase_instructions(phase: str) -> str:
             "在“## 闭环覆盖”表为每个 AC 和 FLOW 写一行"
             " | AC-001 或 FLOW-001 | 逗号分隔的保留任务 ID，或 existing: evidence/文件 | 逗号分隔的 VC |。"
             "引用已有能力前执行最小验证，将命令和结果写入引用文件。"
-            "通过原生 PLAN → TASKS 门禁后再拆卡。\n"
+            "在 scope-review.json 记录逐项范围复核，引用真实 AC/FLOW，写明省略后会失败的入口及最小工作。"
+            "越界或必要性未确认的工作从保留任务移出。通过 PLAN → TASKS 门禁后再拆卡。\n"
         )
     if phase == "tasks":
-        return "按 plan.md 的“保留任务”表生成任务卡，逐项承接其覆盖的 AC、FLOW 和 VC。\n"
+        return (
+            "按 plan.md 的“保留任务”表生成任务卡，逐项承接其覆盖的 AC、FLOW 和 VC。"
+            "范围复核覆盖整张卡；在 scope-review.json 的 cards 中按卡路径记录复核和 SHA-256。\n"
+        )
     return ""
 
 
