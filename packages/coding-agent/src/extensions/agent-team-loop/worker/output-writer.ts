@@ -46,7 +46,7 @@ export interface WriteOutputOpts {
 	terminalGaps?: TerminalGaps;
 }
 
-/** The two judgeable gap classes at a run's terminal write (T-07).
+/** Recovery gaps and ledger warnings at a run's terminal write.
  *
  * `missingSections` — the AC-003 recovery contract: required `output.md`
  * sections with no alias hit. `unrecordedFiles` — the AC-004 change ledger:
@@ -69,7 +69,7 @@ export interface TerminalGaps {
 	 * framework-owned infrastructure (`_workers.parallel`, the index, the run
 	 * record / trace / product, `serve.meta`, `pm-state.md`). T-21 R-1 narrowed
 	 * this to FILE-level ownership: the conductor's `_autopilot/**` control
-	 * plane is judgeable and lands in `unrecordedFiles` (red) instead.
+	 * plane lands in `unrecordedFiles` instead.
 	 * WARN-ONLY, exactly like `malformedFiles`: surfaced in a `## Ledger Infra`
 	 * product section and a `[FLOW]` trace line, never part of `ok` and never a
 	 * gap — these are framework writes, not worker writes. */
@@ -90,7 +90,7 @@ export interface TerminalGaps {
 	 * and every hand-built `TerminalGaps` keeps compiling. Part of `ok` when
 	 * present. */
 	claimGaps?: string[];
-	/** True iff every gap list is empty. */
+	/** True iff required sections and claim coverage pass. */
 	ok: boolean;
 }
 
@@ -225,10 +225,12 @@ export function currentRecoveryMissing(opts: {
 	agenticdocRoot: string;
 	summary: string;
 	type: string | undefined;
+	/** Fresh trace-attested external report selected by the delivery check. */
+	productText?: string;
 }): string[] {
 	if (opts.type === undefined) return [];
 	const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
-	return checkRecovery(agentProductText(dir, opts.summary), opts.type).missing;
+	return checkRecovery(opts.productText ?? agentProductText(dir, opts.summary), opts.type).missing;
 }
 
 /** Idempotency marker of the framework's mechanical `## 上下文来源` append. */
@@ -366,13 +368,15 @@ function deliverableDir(taskDir: string): string {
  * (`diffLedger`) over the report + trace. A migration book (no `task.md`
  * header `type:`) is never judged (P-07/P-09). A trace with zero
  * `[WRITE_FILE]` events and a non-empty declaration is *unjudgeable*
- * (`unjudgeableFiles`, T-12/F-04) — never a clean pass.
+ * (`unjudgeableFiles`, T-12/F-04). Ledger findings are advisory.
  */
 export function readTerminalGaps(opts: {
 	taskKey: string;
 	agenticdocRoot: string;
 	summary: string;
 	type?: string;
+	/** Fresh trace-attested external report selected by the delivery check. */
+	productText?: string;
 	/** Root the T-17c existence probe (and the T-25 dotless arbitration)
 	 * resolves declared paths against. Defaults to `process.cwd()` — the
 	 * launcher starts every worker with `cwd` set to the project root, so the
@@ -405,7 +409,7 @@ export function readTerminalGaps(opts: {
 			unresolvableFiles: [],
 			ok: true,
 		};
-	const productText = agentProductText(dir, opts.summary);
+	const productText = opts.productText ?? agentProductText(dir, opts.summary);
 	const missingSections = opts.judgeRecovery === false ? [] : checkRecovery(productText, type).missing;
 	// T-04a: the claim-coverage judgement rides the same product text and the
 	// same single decision point as the recovery contract (design §2.2: inside
@@ -448,11 +452,7 @@ export function readTerminalGaps(opts: {
 		// T-17c: declared paths not on disk are named for visibility but never
 		// judged (a nonexistent file cannot be a write).
 		unresolvableFiles: ledger.unresolvable,
-		ok:
-			missingSections.length === 0 &&
-			ledger.extra.length === 0 &&
-			unjudgeableFiles.length === 0 &&
-			(claimGaps?.length ?? 0) === 0,
+		ok: missingSections.length === 0 && (claimGaps?.length ?? 0) === 0,
 	};
 	// Only present when the run actually has a claim contract: an absent field
 	// keeps the pre-claim verdict object byte-identical for legacy callers.
@@ -504,9 +504,7 @@ export function writeOutput(opts: WriteOutputOpts): void {
 	// `## Questions` (pm/ui-bridge.ts readTerminalDetail), so the missing section
 	// names have to ride that line — not a later paragraph the widget never reads.
 	const gapNote = gaps.missingSections.length > 0 ? `缺失段：${gaps.missingSections.join("、")}` : "";
-	// AC-004 (T-07 requirement 6): report-declared files the trace never recorded
-	// as written are a red verdict, named on the same readback line and in their
-	// own `## Ledger Gaps` section.
+	// Report-declared writes absent from the trace stay visible as warnings.
 	const ledgerNote = gaps.unrecordedFiles.length > 0 ? `未记录写入：${gaps.unrecordedFiles.join("、")}` : "";
 	// T-12/F-04: a zero-event trace with a declaration is unjudgeable — name it
 	// on the readback line so the PM sees why the ledger verdict is absent
@@ -555,14 +553,19 @@ export function writeOutput(opts: WriteOutputOpts): void {
 			`ledger-unresolvable count=${gaps.unresolvableFiles.length} samples=${gaps.unresolvableFiles.join(",")}`,
 		);
 	}
-	const terminalNote = [gapNote, ledgerNote, unjudgeableNote, claimGapNote(gaps.claimGaps)]
+	const ledgerWarning = [ledgerNote, unjudgeableNote].filter((note) => note !== "").join("；");
+	const terminalNote = [gapNote, claimGapNote(gaps.claimGaps), ledgerWarning && `账本警告：${ledgerWarning}`]
 		.filter((note) => note !== "")
 		.join("；");
 
 	const sections: string[] = [];
 	// TL;DR first section (D-005): single-line conclusion on every exit path,
 	// ahead of the verbatim ## Summary (readOutputSummary regex compatibility).
-	sections.push(`## TL;DR\n\n${headline(opts.summary)}`);
+	const title = headline(opts.summary);
+	const ledgerWarningCount = gaps.unrecordedFiles.length + gaps.unjudgeableFiles.length;
+	sections.push(
+		`## TL;DR\n\n${opts.exitCode === 0 && ledgerWarningCount > 0 ? truncLine(`账本警告（${ledgerWarningCount}） | ${title}`, 100) : title}`,
+	);
 	sections.push(`## Summary\n\n${opts.summary || "(no summary)"}`);
 
 	if (opts.exitCode === 0) {
@@ -602,10 +605,7 @@ export function writeOutput(opts: WriteOutputOpts): void {
 	} else if (opts.exitCode === 130) {
 		sections.push(`## Exit Reason\n\nTask was cancelled (exit 130).${terminalNote ? ` | ${terminalNote}` : ""}`);
 	}
-	// A `done` product that misses required sections / declares unrecorded
-	// writes must not read as a clean completion, and a `needs-clarification`
-	// run must still carry the `## Ledger Gaps` diff the PM has to chase — so the
-	// named gaps are product sections on EVERY exit path (T-07 requirements 1/6).
+	// Keep the full recovery and ledger diagnostics on every exit path.
 	if (gapNote) sections.push(`## Recovery Gaps\n\n${gapNote}`);
 	if (ledgerNote) sections.push(`## Ledger Gaps\n\n${ledgerNote}`);
 	if (unjudgeableNote) sections.push(`## Ledger Unjudgeable\n\n${unjudgeableNote}`);

@@ -1,5 +1,5 @@
 /**
- * shared/deliverable-evidence.ts — AC-006 three-channel deliverable predicate
+ * shared/deliverable-evidence.ts — AC-006 deliverable predicate
  * (contract C5).
  *
  * A read-only worker that settles without any product must not be recorded as
@@ -22,7 +22,8 @@
  *          is present, is at least as new as the run start) (`channel=output`);
  *        - `run.json.artifacts` carrying anything other than `output.md`
  *          (`channel=artifact`, forward-only: 0/30 in the historical corpus);
- *   3. otherwise `{delivered:false, channel:"none"}` ⇒ the caller folds
+ *   3. a current-run trace write to a fresh file in the owner key's evidence tree;
+ *   4. otherwise `{delivered:false, channel:"none"}` ⇒ the caller folds
  *      `exitCode=2` (needs-clarification) and records the `no-product` alarm.
  *
  * Corpus replay (30 real dirs in `.agenticdoc/mw-gate-verdict-hardening/workers`)
@@ -40,20 +41,23 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { parseWriteFileEvents } from "./change-ledger.ts";
 import { readRunState } from "./run-store.ts";
 // W1 (mw-worker-output-contract): the basename whitelist now lives in the
 // write-surface single source; importing it from worker-file-tool would pull the
 // tool module into the evidence reader.
-import { WORKER_FILE_NAME_RE } from "./write-surface.ts";
+import { deriveWriteSurfacePaths, WORKER_FILE_NAME_RE } from "./write-surface.ts";
 
 /** Delivery channel that made the verdict. */
-export type DeliverableChannel = "report" | "output" | "artifact" | "none";
+export type DeliverableChannel = "report" | "output" | "artifact" | "trace" | "none";
 
 export interface DeliverableEvidence {
 	delivered: boolean;
 	channel: DeliverableChannel;
 	/** Short machine-ish reason (goes into the NC `## Questions` body). */
 	detail: string;
+	/** External Markdown report for the existing recovery checks. */
+	traceReport?: { ref: string; text: string };
 }
 
 /**
@@ -181,13 +185,73 @@ export function nonOutputArtifacts(taskDir: string): string[] {
 	return artifacts.filter((name) => name !== "output.md");
 }
 
+function isRelativeChild(relative: string): boolean {
+	return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function findTraceEvidence(taskDir: string, projectRoot: string): DeliverableEvidence | undefined {
+	const { keyDir } = deriveWriteSurfacePaths(taskDir);
+	const run = readRunState(taskDir);
+	if (!keyDir || run?.task_key !== path.basename(taskDir) || run.owner_key !== path.basename(keyDir)) return;
+	const startedAt = Date.parse(run.started_at);
+	if (!Number.isFinite(startedAt) || !Number.isInteger(run.pid)) return;
+
+	// Model retries append to the same trace. Bind the latest process segment
+	// to the run record before considering the write events in it.
+	const trace = readTextFile(path.join(taskDir, "trace.log"));
+	const anchor = [...trace.matchAll(/^\[START\] pid=(\d+)\r?$/gm)].at(-1);
+	if (!anchor || Number(anchor[1]) !== run.pid) return;
+	const segment = trace.slice(anchor.index + anchor[0].length).split(/^\[END\] /m, 1)[0];
+	const start = /^\[START\] (\S+) task=(\S+) type=(\S+)/m.exec(segment);
+	if (!start || start[2] !== run.task_key || start[3] !== run.kind) return;
+	const traceStartedAt = Date.parse(start[1]);
+	if (!Number.isFinite(traceStartedAt) || traceStartedAt < startedAt) return;
+	if (run.ended_at && traceStartedAt > Date.parse(run.ended_at)) return;
+
+	const evidenceDir = path.join(keyDir, "evidence");
+	let realEvidenceDir: string;
+	try {
+		realEvidenceDir = path.join(fs.realpathSync(keyDir), "evidence");
+		if (path.relative(realEvidenceDir, fs.realpathSync(evidenceDir)) !== "") return;
+	} catch {
+		return;
+	}
+
+	let fallback: DeliverableEvidence | undefined;
+	for (const target of parseWriteFileEvents(segment).reverse()) {
+		const candidate = path.resolve(projectRoot, target);
+		const relative = path.relative(evidenceDir, candidate);
+		if (!isRelativeChild(relative)) continue;
+		try {
+			const real = fs.realpathSync(candidate);
+			if (!isRelativeChild(path.relative(realEvidenceDir, real))) continue;
+			const stat = fs.statSync(real);
+			if (!stat.isFile() || stat.size === 0 || stat.mtimeMs < startedAt) continue;
+			const detail = `evidence/${relative.split(path.sep).join("/")}`;
+			const evidence = { delivered: true, channel: "trace" as const, detail };
+			if (path.extname(real).toLowerCase() === ".md") {
+				const reportText = readTextFile(real);
+				if (reportText.trim() !== "") return { ...evidence, traceReport: { ref: detail, text: reportText } };
+			}
+			fallback ??= evidence;
+		} catch {
+			// A trace target may have been removed before settlement.
+		}
+	}
+	return fallback;
+}
+
 /**
  * The AC-006 verdict. `outputText` is the agent's final reply (what will become
  * the new `## Summary`); it is consulted only while `output.md` is still
  * empty/missing, so an existing placeholder-only product stays authoritative
  * (a crashed run is not rescued by a later chatty reply).
  */
-export function hasDeliverableEvidence(taskDir: string, outputText = ""): DeliverableEvidence {
+export function hasDeliverableEvidence(
+	taskDir: string,
+	outputText = "",
+	projectRoot = deriveWriteSurfacePaths(taskDir).projectRoot,
+): DeliverableEvidence {
 	// Channel 1 — a written report is the strongest possible evidence.
 	const report = findNonEmptyReport(taskDir);
 	if (report !== undefined) {
@@ -197,21 +261,32 @@ export function hasDeliverableEvidence(taskDir: string, outputText = ""): Delive
 	// Channel 2 — the product text (on-disk output.md wins over the reply).
 	const existing = readTextFile(path.join(taskDir, "output.md"));
 	const productText = existing.trim() !== "" ? existing : outputText;
-	if (productText.trim() === "") {
-		return { delivered: false, channel: "none", detail: "no report file and no output text" };
-	}
-	if (!hasNonPlaceholderProduct(productText)) {
-		return { delivered: false, channel: "none", detail: "output.md carries only placeholder sections" };
+	const productProblem =
+		productText.trim() === ""
+			? "no report file and no output text"
+			: !hasNonPlaceholderProduct(productText)
+				? "output.md carries only placeholder sections"
+				: undefined;
+	const traced = findTraceEvidence(taskDir, projectRoot);
+	if (productProblem === undefined) {
+		const machine = MACHINE_SIGNAL_RE.exec(productText)?.[0];
+		const referenced = machine === undefined ? findReferencedEvidence(taskDir, productText) : undefined;
+		const detail =
+			machine !== undefined
+				? `output.md machine line ${machine}`
+				: referenced !== undefined
+					? `references existing ${referenced}`
+					: undefined;
+		if (detail !== undefined) {
+			const output: DeliverableEvidence = { delivered: true, channel: "output", detail };
+			if (traced?.traceReport !== undefined) output.traceReport = traced.traceReport;
+			return output;
+		}
 	}
 
-	const machine = MACHINE_SIGNAL_RE.exec(productText)?.[0];
-	if (machine !== undefined) {
-		return { delivered: true, channel: "output", detail: `output.md machine line ${machine}` };
-	}
-	const referenced = findReferencedEvidence(taskDir, productText);
-	if (referenced !== undefined) {
-		return { delivered: true, channel: "output", detail: `references existing ${referenced}` };
-	}
+	if (traced !== undefined) return traced;
+	if (productProblem !== undefined) return { delivered: false, channel: "none", detail: productProblem };
+
 	const artifacts = nonOutputArtifacts(taskDir);
 	if (artifacts.length > 0) {
 		return { delivered: true, channel: "artifact", detail: `artifacts: ${artifacts.join(", ")}` };

@@ -487,7 +487,8 @@ describe("AC-009 replay (wjg-w12 shape vs zero landing)", () => {
 		const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
 		vi.useFakeTimers();
 		try {
-			const { worker, taskDir } = await startWorker(root, "t-wjg-w12", "type: review\ntimeout: 2\n\nreview\n");
+			vi.stubEnv("PI_WORKER_TIMEOUT_MS", "120000");
+			const { worker, taskDir } = await startWorker(root, "t-wjg-w12", "type: review\n\nreview\n");
 			// The historical instance: 3 appends to progress.md + one report, and the
 			// report is a real 37,149 B product on disk before the checkpoint.
 			const report = path.join(taskDir, "report-negative-space-audit-20261013.md").replaceAll("\\", "/");
@@ -524,7 +525,8 @@ describe("AC-009 replay (wjg-w12 shape vs zero landing)", () => {
 		const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
 		vi.useFakeTimers();
 		try {
-			const { worker, taskDir } = await startWorker(root, "t-no-land", "type: review\ntimeout: 2\n\nreview\n");
+			vi.stubEnv("PI_WORKER_TIMEOUT_MS", "120000");
+			const { worker, taskDir } = await startWorker(root, "t-no-land", "type: review\n\nreview\n");
 			trickleToAnchor(worker);
 
 			const line = checkpointTraceLine(taskDir);
@@ -631,7 +633,8 @@ describe("watchdog invariants with the writeless checkpoint (I3)", () => {
 		try {
 			// budget 3m: anchor = min(30m, 90s) = 90s. 7 x 15s = 105s crosses the
 			// anchor while activity every 15s keeps the 60s idle clock fresh.
-			const { worker, taskDir } = await startWorker(root, "t-i3-active", "type: research\ntimeout: 3\n\nresearch\n");
+			vi.stubEnv("PI_WORKER_TIMEOUT_MS", "180000");
+			const { worker, taskDir } = await startWorker(root, "t-i3-active", "type: research\n\nresearch\n");
 			for (let i = 0; i < 7; i++) {
 				vi.advanceTimersByTime(15_000);
 				worker.emit("message_update");
@@ -688,7 +691,8 @@ describe("watchdog invariants with the writeless checkpoint (I3)", () => {
 		vi.useFakeTimers();
 		try {
 			// budget 3m: anchor = min(30m, 90s) = 90s, steer at 135s, wall at 180s.
-			const { worker, taskDir } = await startWorker(root, "t-i3-tail", "type: research\ntimeout: 3\n\nresearch\n");
+			vi.stubEnv("PI_WORKER_TIMEOUT_MS", "180000");
+			const { worker, taskDir } = await startWorker(root, "t-i3-tail", "type: research\n\nresearch\n");
 			for (let t = 0; t < 12; t++) {
 				vi.advanceTimersByTime(15_000);
 				worker.emit("message_update");

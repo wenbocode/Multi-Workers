@@ -41,7 +41,7 @@ function writeEstablishedGoal(root: string): void {
 }
 
 /** Complete spec-side chain: spec.md >= 500 bytes with a §0 Goal Alignment
- * section naming 预期收益, a numbered AC, and one spec research note. */
+ * section naming 预期收益 and a numbered AC. */
 function writeSpecSide(root: string, key: string): void {
 	const keyDir = path.join(root, key);
 	fs.mkdirSync(keyDir, { recursive: true });
@@ -50,9 +50,6 @@ function writeSpecSide(root: string, key: string): void {
 		`# Spec\n${"x".repeat(600)}\n\n## §0 Goal Alignment\n- 预期收益: research workers run under their owner key at SPEC phase\n\n| AC-001 | in x, y returns z |\n`,
 		"utf8",
 	);
-	const research = path.join(keyDir, "evidence", "research");
-	fs.mkdirSync(research, { recursive: true });
-	fs.writeFileSync(path.join(research, "spec-topic-2026-01-01.md"), "# research\n", "utf8");
 }
 
 /** Write design.md with exactly `bytes` bytes; returns its path. */
@@ -64,14 +61,7 @@ function writeDesignDoc(root: string, key: string, bytes: number): string {
 	return designPath;
 }
 
-/** One design-side research note. */
-function writeDesignNote(root: string, key: string): void {
-	const research = path.join(root, key, "evidence", "research");
-	fs.mkdirSync(research, { recursive: true });
-	fs.writeFileSync(path.join(research, "design-topic-2026-01-01.md"), "# research\n", "utf8");
-}
-
-/** How many gaps name the design side (design.md / design-* evidence). */
+/** How many gaps name the design side. */
 function designGapCount(gaps: string[]): number {
 	return gaps.filter((g) => g.includes("design")).length;
 }
@@ -122,25 +112,21 @@ describe("gateTierOf normalization", () => {
 });
 
 describe("phaseDocGaps tiers", () => {
-	it("design tier keeps the exact pre-tiering six-gap order; omitted tier stays legacy", () => {
+	it("reports missing docs and spec requirements in gate order", () => {
 		const root = mkdtemp();
 		try {
 			writeEstablishedGoal(root);
 			fs.mkdirSync(path.join(root, "order-key"), { recursive: true });
 			const expected = [
 				"spec.md missing or under 500 bytes",
-				"evidence/research/spec-*.md missing (>= 1 research note; a zero-research declaration counts)",
 				"spec.md missing a non-empty §0 Goal Alignment section with 预期收益 (goal.md is established)",
 				"spec.md has no numbered acceptance criteria (AC-NNN)",
 				"design.md missing or under 500 bytes",
-				"evidence/research/design-*.md missing (>= 1 research note; a zero-research declaration counts)",
 			];
 			const status = readPhaseDocs(root, "order-key");
 			expect(phaseDocGaps(status, "design")).toEqual(expected);
-			// Legacy one-argument callers must behave exactly as before the tiering.
 			expect(phaseDocGaps(status)).toEqual(expected);
-			// Spec tier = the same four spec-side items, same order, nothing else.
-			expect(phaseDocGaps(status, "spec")).toEqual(expected.slice(0, 4));
+			expect(phaseDocGaps(status, "spec")).toEqual(expected.slice(0, 3));
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -153,12 +139,12 @@ describe("dispatchDocGaps phase tiering", () => {
 		try {
 			writeEstablishedGoal(root);
 			writeSpecSide(root, "vc1-key");
-			// design.md and design-* evidence deliberately absent.
+			// design.md and all research notes are deliberately absent.
 			const status = readPhaseDocs(root, "vc1-key");
 			expect(status.spec).toBe(true);
 			expect(status.specS0).toBe(true);
 			expect(status.specAC).toBe(true);
-			expect(status.specEvidence).toBe(1);
+			expect(status.specEvidence).toBe(0);
 			expect(status.design).toBe(false);
 
 			const gaps = dispatchDocGaps(root, "vc1-key", "SPEC");
@@ -175,8 +161,6 @@ describe("dispatchDocGaps phase tiering", () => {
 		try {
 			writeEstablishedGoal(root);
 			writeSpecSide(root, "vc2-key");
-			// design-* evidence present so the design.md gap is the ONLY one left.
-			writeDesignNote(root, "vc2-key");
 			const gaps = dispatchDocGaps(root, "vc2-key", "DESIGN");
 			expect(gaps).toHaveLength(1);
 			expect(gaps[0]).toBe("design.md missing or under 500 bytes");
@@ -191,19 +175,15 @@ describe("dispatchDocGaps phase tiering", () => {
 		}
 	});
 
-	it("VC-003: DESIGN phase with design.md present but zero design evidence reports one evidence gap", () => {
+	it("VC-003: later phases dispatch with the required docs and no research evidence", () => {
 		const root = mkdtemp();
 		try {
 			writeEstablishedGoal(root);
 			writeSpecSide(root, "vc3-key");
 			writeDesignDoc(root, "vc3-key", 600);
-			// No design-* research note exists.
-			const gaps = dispatchDocGaps(root, "vc3-key", "DESIGN");
-			expect(gaps).toHaveLength(1);
-			expect(gaps[0]).toBe(
-				"evidence/research/design-*.md missing (>= 1 research note; a zero-research declaration counts)",
-			);
-			process.stdout.write(`[VERIFY] VC-003: blocked=${gaps.length > 0} design_evidence_gap=${gaps.length}\n`);
+			for (const phase of ["DESIGN", "PLAN", "TASKS", "EXECUTE", "VERIFY"]) {
+				expect(dispatchDocGaps(root, "vc3-key", phase)).toEqual([]);
+			}
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -228,7 +208,7 @@ describe("dispatchDocGaps phase tiering", () => {
 			}
 			expect(designGaps).toBe(0);
 			// Negative control: the very same fixture IS held to the design tier.
-			expect(dispatchDocGaps(root, "vc4-key", "DESIGN")).toHaveLength(2);
+			expect(dispatchDocGaps(root, "vc4-key", "DESIGN")).toHaveLength(1);
 			process.stdout.write(
 				`[VERIFY] VC-004: tier=${tiers[0]} design_gaps=${designGaps} variants=${variants.length}\n`,
 			);
@@ -243,12 +223,11 @@ describe("dispatchDocGaps phase tiering", () => {
 			writeEstablishedGoal(root);
 			const keyDir = path.join(root, "vc5-key");
 			fs.mkdirSync(keyDir, { recursive: true });
-			// 499 bytes: no size, no §0, no AC; no spec evidence; no design side at all.
+			// 499 bytes, without goal alignment or a numbered AC.
 			fs.writeFileSync(path.join(keyDir, "spec.md"), "x".repeat(MIN_PHASE_DOC_BYTES - 1), "utf8");
 			const gaps = dispatchDocGaps(root, "vc5-key", "SPEC");
 			expect(gaps).toEqual([
 				"spec.md missing or under 500 bytes",
-				"evidence/research/spec-*.md missing (>= 1 research note; a zero-research declaration counts)",
 				"spec.md missing a non-empty §0 Goal Alignment section with 预期收益 (goal.md is established)",
 				"spec.md has no numbered acceptance criteria (AC-NNN)",
 			]);
@@ -282,7 +261,6 @@ describe("dispatchDocGaps phase tiering", () => {
 			writeEstablishedGoal(root);
 			writeSpecSide(root, "b1-key");
 			const designPath = writeDesignDoc(root, "b1-key", MIN_PHASE_DOC_BYTES);
-			writeDesignNote(root, "b1-key");
 			const size = fs.statSync(designPath).size;
 			expect(size).toBe(500);
 			const gaps = dispatchDocGaps(root, "b1-key", "DESIGN");
@@ -301,7 +279,7 @@ describe("dispatchDocGaps phase tiering", () => {
 			const byDefault = dispatchDocGaps(root, "d101b-key");
 			expect(byDefault).toEqual([]); // spec tier: design side not required
 			expect(byDefault).toEqual(dispatchDocGaps(root, "d101b-key", ""));
-			expect(dispatchDocGaps(root, "d101b-key", "DESIGN")).toHaveLength(2);
+			expect(dispatchDocGaps(root, "d101b-key", "DESIGN")).toHaveLength(1);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

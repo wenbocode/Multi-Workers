@@ -67,7 +67,11 @@ import { isContextPolicyFailure } from "../shared/context-controller.ts";
 import { consumeContextPolicyFailure, consumeNativeContextAbort } from "../shared/context-extension.ts";
 import { resolveDecidePolicy } from "../shared/decide-policy.ts";
 import { stopScopeForSignal } from "../shared/decision-handoff.ts";
-import { findNonEmptyReport, hasDeliverableEvidence } from "../shared/deliverable-evidence.ts";
+import {
+	type DeliverableEvidence,
+	findNonEmptyReport,
+	hasDeliverableEvidence,
+} from "../shared/deliverable-evidence.ts";
 import { type Claim, claimBudgetCaps, DISPATCH_TYPE_VOCABULARY, parseClaimsBlock } from "../shared/dispatch-card.ts";
 import { roleForTaskType } from "../shared/dispatch-models.ts";
 import { openFixedAllocation } from "../shared/fixed-child-budget.ts";
@@ -138,6 +142,7 @@ import {
 	currentRecoveryMissing,
 	formatMachineCheckpoint,
 	hasReportProduct,
+	judgedProductFile,
 	readTerminalGaps,
 	type WriteOutputOpts,
 	writeOutput,
@@ -458,8 +463,11 @@ const CHECKPOINT_REFRESH_MS = 10 * 60_000;
 const STEER_MIN_MS = 5 * 60_000;
 
 /** Wall budget: task.md `timeout:` (minutes) > PI_WORKER_TIMEOUT_MS > default. */
-export function resolveBudgetMs(timeoutMin: number | undefined, env: string | undefined): number {
-	if (timeoutMin !== undefined) return timeoutMin * 60_000;
+export function resolveBudgetMs(timeoutMin: number | undefined, env: string | undefined, taskType = "coding"): number {
+	if (timeoutMin !== undefined) {
+		const role = roleForTaskType(taskType);
+		return (role === "research" || role === "review" ? Math.max(timeoutMin, 30) : timeoutMin) * 60_000;
+	}
 	const envMs = Number(env);
 	if (Number.isFinite(envMs) && envMs > 0) return envMs;
 	return DEFAULT_BUDGET_MS;
@@ -3178,7 +3186,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	const boundedPreparation =
 		meta.type === DECIDE_PREPARE_TYPE && readTaskHeaderScalar(taskContent, "prepare_profile") === PREPARE_PROFILE;
 	const fixedAllocation = openFixedAllocation(taskDir, taskContent);
-	const configuredBudgetMs = resolveBudgetMs(meta.timeoutMin, process.env.PI_WORKER_TIMEOUT_MS);
+	const configuredBudgetMs = resolveBudgetMs(meta.timeoutMin, process.env.PI_WORKER_TIMEOUT_MS, meta.type);
 	const initialDeadline = Math.min(startedAt + configuredBudgetMs, fixedAllocation?.deadline ?? Infinity);
 	if (fixedAllocation?.alreadyStarted) {
 		writeWorkerLogLine("[worker] resource-limited: fixed child allocation already started");
@@ -4709,9 +4717,9 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	 * need worker-only inputs; used by the pre-settle self-check, which must name
 	 * the un-settled claims BEFORE the terminal write exists. `[]` for a
 	 * claims-free book (zero branches). */
-	function claimGapsHere(summary: string): string[] {
+	function claimGapsHere(productText: string): string[] {
 		if (meta.claims === undefined) return [];
-		const table = parseVerdictTable(agentProductText(taskDir, summary));
+		const table = parseVerdictTable(productText);
 		return [
 			...claimCoverage(meta.claims, table, { projectDir: process.cwd() }),
 			...claimSettlementGaps({
@@ -4742,8 +4750,23 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	const judgedTypeReading = readTaskType(taskContent);
 	const judgedType = judgedTypeReading.source === "header" ? judgedTypeReading.type : undefined;
 
+	function chooseTraceReport(evidence: DeliverableEvidence | undefined, summary: string) {
+		const report = evidence?.traceReport;
+		if (report === undefined || evidence?.channel === "trace") return report;
+		const missing = currentRecoveryMissing({
+			taskKey: meta.taskKey,
+			agenticdocRoot: meta.agenticdocRoot,
+			summary,
+			type: judgedType,
+		});
+		// Preserve a complete local report or one that only needs framework backfill.
+		if (missing.length === 0 || (missing.every(isMechanicalSection) && judgedProductFile(taskDir) !== undefined))
+			return undefined;
+		return report;
+	}
+
 	/** Is the AC-003 recovery contract applied to this run at all? A writeless
-	 * role's reply IS its deliverable, so it is always judged; a write role is
+	 * role is always judged; a write role is
 	 * judged once it produced a report product (`report.md` or
 	 * `report-<slug>.md`, AC-015) — otherwise the AC-006/C5 exemption stands (a
 	 * coding run's deliverable is the repository, and its terse settle summary is
@@ -5383,7 +5406,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	 * final assistant message to stdout (captured as worker.log), flush, and
 	 * exit with its own code. Exiting here was why worker.log stayed empty:
 	 * process.exit truncates the pending stdout flush. */
-	async function finishSuccess(): Promise<void> {
+	async function finishSuccess(checkedEvidence?: DeliverableEvidence): Promise<void> {
 		// AC-010②: a second settle in the same process is a no-op — without this the
 		// append-only writer (output-writer.ts D-117) adds a second harness block,
 		// a second `[END]` and (for an NC run) a second no-product alarm.
@@ -5400,17 +5423,17 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		// so the output.md marker, `## Questions`, run.json.status and `[END] exit=`
 		// all carry the same verdict. Write roles are exempt: a coding run's
 		// deliverable is the repository, not a file in its own task dir.
-		const evidence = isWritelessRole(meta.type)
-			? hasDeliverableEvidence(taskDir, lastAssistantText)
-			: { delivered: true, channel: "none" as const, detail: "write role" };
-		// AC-003/AC-004 terminal flip (T-07): the recovery contract and the change
-		// ledger are judged HERE, before the single write-out, and folded into the
-		// exit code — so the output.md marker, `## Questions`, run.json.status and
-		// `[END] exit=` all carry the same verdict. Migration: a task book without
-		// a header `type:` is never judged (P-07/P-09), and a trace with no
-		// `[WRITE_FILE]` event yields no ledger gap.
-		// Recovery scope: a writeless role's reply IS its deliverable, so it is
-		// always judged; a write role is judged once it produced a report product
+		const evidence: DeliverableEvidence =
+			checkedEvidence ??
+			(isWritelessRole(meta.type)
+				? hasDeliverableEvidence(taskDir, lastAssistantText, process.cwd())
+				: { delivered: true, channel: "none", detail: "write role" });
+		const summary = buildSummary();
+		const traceReport = chooseTraceReport(evidence, summary);
+		const externalReport = traceReport?.text;
+		// The recovery contract and claim coverage determine the terminal result.
+		// The change ledger is reported alongside it as an advisory diagnostic.
+		// A writeless role is always judged; a write role is judged once it produced a report
 		// (`report.md` or `report-<slug>.md`, AC-015) — otherwise the AC-006/C5
 		// exemption stands (a coding run's deliverable is the repository, and its
 		// terse settle summary is not a report). The change ledger below is judged
@@ -5420,11 +5443,12 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		// judgement is about to read — BEFORE `readTerminalGaps`, so the judged text
 		// and the landed product cannot diverge (invariant I1). Only the mechanical
 		// whitelist is ever filled (R2); every failure class stays fail-closed.
-		if (judgeRecovery) {
+		// Mechanical backfill is limited to the worker's local product files.
+		if (judgeRecovery && externalReport === undefined) {
 			const backfill = appendMechanicalContextSources({
 				taskKey: meta.taskKey,
 				agenticdocRoot: meta.agenticdocRoot,
-				summary: buildSummary(),
+				summary,
 				type: judgedType,
 			});
 			if (backfill.appended) {
@@ -5438,7 +5462,8 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		const gaps = readTerminalGaps({
 			taskKey: meta.taskKey,
 			agenticdocRoot: meta.agenticdocRoot,
-			summary: buildSummary(),
+			summary,
+			productText: externalReport,
 			judgeRecovery,
 			// T-04b/D-003: the card's claim set (from task.md) rides the SAME single
 			// decision point as the recovery contract and the change ledger. Absent
@@ -5452,9 +5477,11 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		// computed here and folded into the SAME `gaps` object. No second decision
 		// point and no reordering: the ONE terminal fold below (`delivered &&
 		// gaps.ok`) stays the only place an exit code is decided, and
-		// `worker/output-*.ts` stay frozen (T-04a owns the per-claim criteria).
+		// `worker/output-*.ts` owns the per-claim criteria.
 		const claimsTable =
-			meta.claims === undefined ? undefined : parseVerdictTable(agentProductText(taskDir, buildSummary()));
+			meta.claims === undefined
+				? undefined
+				: parseVerdictTable(externalReport ?? agentProductText(taskDir, summary));
 		if (meta.claims !== undefined && claimsTable !== undefined && judgeRecovery) {
 			const settlementGaps = claimSettlementGaps({
 				claims: meta.claims,
@@ -5475,14 +5502,6 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		// progress.md, and omits the section when nothing is left).
 		const effort = `writes=${writesLabel()}`;
 		const gapReason = gaps.missingSections.length > 0 ? `missing section(s): ${gaps.missingSections.join(", ")}` : "";
-		const ledgerReason =
-			gaps.unrecordedFiles.length > 0 ? `unrecorded write(s): ${gaps.unrecordedFiles.join(", ")}` : "";
-		// T-12/F-04: zero write events with a declaration is unjudgeable, not a
-		// pass — name it so the settle reason and the exit code agree.
-		const unjudgeableReason =
-			gaps.unjudgeableFiles.length > 0
-				? `unjudgeable write(s) (trace has no [WRITE_FILE] event): ${gaps.unjudgeableFiles.join(", ")}`
-				: "";
 		// T-04b: the claim half of the settle reason. `claimGaps` exists only when
 		// the run carries a claim contract, so a claims-free book keeps this list —
 		// and therefore `## Questions` / `## Exit Reason` — byte-identical.
@@ -5493,9 +5512,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				: (gaps.claimGaps?.length ?? 0) > 0
 					? `unsettled claims: ${(gaps.claimGaps ?? []).join(", ")}`
 					: "";
-		const gapsReason = [gapReason, ledgerReason, unjudgeableReason, claimReason]
-			.filter((part) => part !== "")
-			.join("; ");
+		const gapsReason = [gapReason, claimReason].filter((part) => part !== "").join("; ");
 		// The exact `## Questions` body this run would land. It is computed ONCE so
 		// the dp3 hook and the original human path read the same string: every
 		// degradation falls through with this value byte-identical (design Q4.1).
@@ -5515,12 +5532,15 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		taskDone = true;
 		clearWatchdogTimers();
 		clearInterval(heartbeat);
+		const deliverables = collectArtifacts(taskDir);
+		if (traceReport !== undefined) deliverables.push(traceReport.ref);
+		else if (evidence.channel === "trace") deliverables.push(evidence.detail);
 		writeOutputGuarded({
 			taskKey: meta.taskKey,
 			agenticdocRoot: meta.agenticdocRoot,
 			exitCode,
-			summary: buildSummary(),
-			changedFiles: collectArtifacts(taskDir),
+			summary,
+			changedFiles: deliverables,
 			verificationSteps: "See task output for details.",
 			exitReason: evidence.delivered
 				? gaps.ok
@@ -5572,9 +5592,8 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 	/** T-05/I1 (AC-004): the pre-settle self-check. On the final settle attempt
 	 * the worker gets ONE structured gap (the missing section names, or nothing
 	 * when `ok`) and is asked to fill it in its own product; the run then settles
-	 * again on its actual text. Only substantive gaps trigger the turn — a
-	 * mechanical-only gap is handled by the I2 backfill inside `finishSuccess`, so
-	 * burning an agent turn for it would be pure cost. One turn per process.
+	 * again on its actual text. Mechanical-only gaps in local reports are
+	 * handled by the I2 backfill inside `finishSuccess`. One turn per process.
 	 * T-13/D-015 (option C): the round is gated on DELIVERED, not on a product
 	 * file on disk — a writeless run whose reply IS its deliverable gets one
 	 * chance to fix a substantive gap; an undelivered (no-product) settle keeps
@@ -5599,19 +5618,24 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 			await finishSuccess();
 			return;
 		}
-		if (judgedType !== undefined && (isWritelessRole(meta.type) || hasReportProduct(taskDir))) {
+		const evidence = isWritelessRole(meta.type)
+			? hasDeliverableEvidence(taskDir, lastAssistantText, process.cwd())
+			: undefined;
+		if (judgedType !== undefined && (evidence !== undefined || hasReportProduct(taskDir))) {
 			const summary = buildSummary();
+			const externalReport = chooseTraceReport(evidence, summary)?.text;
 			const missing = currentRecoveryMissing({
 				taskKey: meta.taskKey,
 				agenticdocRoot: meta.agenticdocRoot,
 				summary,
 				type: judgedType,
+				productText: externalReport,
 			});
 			// T-04b: claim gaps are a SEPARATE list with a separate render, but they
 			// share this trigger and the one-shot `selfCheckSent` state (design §3.3:
 			// no second boolean — the I1 invariant is "one self-check turn per
 			// process", not "one per criterion family").
-			const claimGaps = claimGapsHere(summary);
+			const claimGaps = claimGapsHere(externalReport ?? agentProductText(taskDir, summary));
 			const claimIds = claimGapIds(claimGaps);
 			// Parseable machine record of the gap the worker is about to receive
 			// (AC-004): `[FLOW] <ts> recovery-gap missing=<a|b> selfcheck=<...>`.
@@ -5624,21 +5648,11 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 					selfCheckSent ? "sent" : "pending"
 				}${claimGaps.length > 0 ? ` claims=${claimIds.length > 0 ? claimIds.join("|") : "-"}` : ""}`,
 			);
-			const substantive = missing.filter((name) => !isMechanicalSection(name));
-			// T-13/D-015 (option C): the follow-up turn exists so the agent can fix
-			// the product the judgement will read. The gate is the SAME predicate
-			// finishSuccess uses for the deliverable verdict — for a writeless role
-			// that is `hasDeliverableEvidence(taskDir, lastAssistantText).delivered`
-			// (its reply IS its deliverable), for a write role the outer
-			// judgeRecoveryHere()/hasReportProduct guard already proves a product
-			// exists, so it is delivered by construction. A run that settled with
-			// no deliverable takes the AC-006/C5 no-product verdict instead —
-			// granting an extra turn would turn the no-product signal into an open
-			// loop. The parseable trace row above is still written for every judged
-			// settle.
-			const isDelivered = isWritelessRole(meta.type)
-				? hasDeliverableEvidence(taskDir, lastAssistantText).delivered
-				: true;
+			const substantive =
+				externalReport === undefined ? missing.filter((name) => !isMechanicalSection(name)) : missing;
+			// The follow-up can fix the product the terminal writer will judge.
+			// For write roles, the outer guard already found a report.
+			const isDelivered = evidence?.delivered ?? true;
 			if (!selfCheckSent && (substantive.length > 0 || claimGaps.length > 0) && isDelivered) {
 				selfCheckSent = true;
 				const recoveryText =
@@ -5667,7 +5681,7 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 				return;
 			}
 		}
-		await finishSuccess();
+		await finishSuccess(evidence);
 	}
 
 	function publishedPreparationRevision(): string | undefined {

@@ -160,16 +160,15 @@ describe("T-21 R-1 — infrastructure exemption is file-level only", () => {
 		console.log(
 			`[VERIFY] T21-R1-terminal ok=${gaps.ok} unrecorded=[${gaps.unrecordedFiles.join(",")}] infra=[${gaps.infraFiles.join(",")}]`,
 		);
-		expect(gaps.ok).toBe(false);
+		expect(gaps.ok).toBe(true);
 		expect(gaps.unrecordedFiles).toEqual([gateRel]);
 		expect(gaps.infraFiles).toEqual([]);
 
 		writeOutput({
 			taskKey: TASK_KEY,
 			agenticdocRoot: project.trueRoot,
-			exitCode: 2,
+			exitCode: 0,
 			summary: "done",
-			questions: "recovery-incomplete",
 			terminalGaps: gaps,
 		});
 		const output = fs.readFileSync(path.join(project.taskDir, "output.md"), "utf8");

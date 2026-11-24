@@ -112,7 +112,32 @@ def test_offline_recovery_parallel_apply_and_dispatch(fixture):
     assert send("two").ok
 
 
-def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None, *, legacy=False, with_budget=True):
+@pytest.mark.parametrize("action", ["split", "narrow", "direct-exec"])
+def test_pm_can_apply_without_decision_and_publish_provenance(fixture, action):
+    project, key, _, _ = fixture
+    units = [unit("one", "AC-001"), unit("two", "AC-002", ["one"])]
+    if action == "narrow":
+        units = [unit("one", "AC-001 AC-002")]
+        units[0]["covers"] = ["AC-001", "AC-002"]
+    if action == "direct-exec":
+        units = []
+    args, proposal = prepare(project, {"action": action, "reason": "Finish the observed remaining work", "units": units})
+    request = {**args, "version": proposal["version"]}
+
+    applied = tool(project, "apply", **request)
+    assert applied["state"] == "applied" and applied["source"] == "pm" and applied["decision_id"] is None
+    assert tool(project, "apply", **request, decision_id="")["source"] == "pm"
+    record = rp.records(key)[0]
+    assert record["source"]["task"] == "old" and record["decision_source"] == "pm"
+    assert record["applied_claim"] == "host:1"
+    assert all((key / f"tasks/{u['id']}.md").is_file() for u in units)
+    assert not decision_wire.production_lifecycle_sink(project).exists()
+    with pytest.raises(ValueError, match="decision_id differs"):
+        tool(project, "apply", **request, decision_id="unrelated")
+
+
+def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None, *, legacy=False, with_budget=True,
+                  with_decision=True):
     project, key, folder, _ = fixture
     put(key.parent / "_index.parallel", f"| demo | active | EXECUTE | {claim} | | | now |\n")
     run = json.loads(rp.body(folder / "run.json"))
@@ -158,12 +183,25 @@ def deadline_plan(fixture, claim="host:1", matter="stage", deadline=None, *, leg
     prepared = tool(project, "preview", **args, claim=claim,
                     plan={"action": "narrow", "reason": "Finish remaining verification from report.md",
                           "units": [recovery]})
-    decision_ref = answer(project, prepared, choice="narrow")
+    decision_ref = answer(project, prepared, choice="narrow") if with_decision else None
     tool(project, "apply", **args, version=prepared["version"], decision_id=decision_ref, claim=claim)
     if legacy:
         put(folder / "run.json", json.dumps({**run, "stop_kind": "worker-deadline"}))
     pin = dispatch.card_digest(key / "tasks/recover.md")
     return run["run_id"], pin
+
+
+def test_pm_deadline_successor_dispatch_uses_publication_claim(fixture):
+    project, key, _, _ = fixture
+    parent, pin = deadline_plan(fixture, with_budget=False, with_decision=False)
+    put(key.parent / "_index.parallel", "| demo | active | EXECUTE | host:foreign | | | now |\n")
+    with pytest.raises(ValueError, match="PM publication belongs to another claim"):
+        rp.deadline_successor(project, "demo", "recover", "tasks/recover.md", pin, parent)
+    put(key.parent / "_index.parallel", "| demo | active | EXECUTE | host:1 | | | now |\n")
+    expected = rp.deadline_successor(project, "demo", "recover", "tasks/recover.md", pin, parent)
+    assert expected["claim"] == "host:1" and expected["decision"] is None
+    result = dispatch.dispatch(project, "demo", "recover", "phase-writer", "check", loop="execute", attempt=1)
+    assert result.ok and result.row_verified
 
 
 def replan_unstarted(project, source, successor, parent, *, with_budget=True):
@@ -540,6 +578,9 @@ def test_schedule_independent_work_preserves_timeout(fixture):
 def test_takeover_and_escalation_need_actual_action(fixture, action):
     project, _, _, _ = fixture
     args, proposal = prepare(project, {"reason": "PM intervention", "action": action, "units": []})
+    if action == "escalate":
+        with pytest.raises(ValueError, match="escalate requires a matching dp-pm-steer decision_id"):
+            tool(project, "apply", **args, version=proposal["version"])
     ref = answer(project, proposal, choice=action)
     apply_args = {**args, "version": proposal["version"], "decision_id": ref, "action_evidence": "actual-action"}
     with pytest.raises(ValueError, match="executed decision_receipt"):
@@ -598,7 +639,7 @@ def test_reviewed_model_failure_on_successor_can_retry(fixture):
 
 
 @pytest.mark.parametrize("change", [
-    "none", "previewed", "escalate", "no receipt", "wrong receipt", "wrong basis",
+    "none", "PM evidence", "previewed", "escalate", "no receipt", "wrong receipt", "wrong basis",
     "missing settlement", "empty evidence", "remaining card", "missing coverage",
     "evidence drift", "source drift", "parent card drift",
 ])
@@ -643,14 +684,16 @@ def test_evidence_only_takeover_resolves_transitive_dispatch_dependency(fixture,
     proposal = tool(project, "preview", **args, plan={"action": action, "reason": "record review outcome",
         "units": [], "retained": retained})
     task = review["facts"]["task"]
-    ref = answer(project, proposal, choice=action, task=task)
-    cfg, error = decision.DecisionConfig.from_project(project)
-    assert not error
-    store = decision_lifecycle.LifecycleStore.production(project, redact=decision.known_secret_redactor(cfg))
-    meta = decision_lifecycle.DecisionMeta("demo", ref.split(":")[1], initiator_role="pm", task_key=task)
-    assert decision_lifecycle.record_executed(store, meta, action=action, dp="dp-pm-steer", decision_id=ref,
-                                              event_id="review-accepted").recorded
-    if change != "previewed":
+    if change == "PM evidence":
+        tool(project, "apply", **args, version=proposal["version"])
+    elif change != "previewed":
+        ref = answer(project, proposal, choice=action, task=task)
+        cfg, error = decision.DecisionConfig.from_project(project)
+        assert not error
+        store = decision_lifecycle.LifecycleStore.production(project, redact=decision.known_secret_redactor(cfg))
+        meta = decision_lifecycle.DecisionMeta("demo", ref.split(":")[1], initiator_role="pm", task_key=task)
+        assert decision_lifecycle.record_executed(store, meta, action=action, dp="dp-pm-steer", decision_id=ref,
+                                                  event_id="review-accepted").recorded
         tool(project, "apply", **args, version=proposal["version"], decision_id=ref,
              action_evidence="review-accepted")
 
@@ -684,7 +727,7 @@ def test_evidence_only_takeover_resolves_transitive_dispatch_dependency(fixture,
     statuses = {r["task_key"]: r["status"] for r in rp.worker_rows(project, "demo")}
     assert statuses[first_run.parent.name] == "needs-clarification"
     assert statuses[review_run.parent.name] == "failed"
-    if change == "none":
+    if change in {"none", "PM evidence", "no receipt", "wrong receipt", "wrong basis", "missing settlement"}:
         assert result.ok and result.row_verified
     else:
         assert not result.ok and result.reason == "replan-dependency-pending:one"

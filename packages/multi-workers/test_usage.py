@@ -576,6 +576,34 @@ def test_load_runs_missing_ledger(tmp_path, monkeypatch) -> None:
 # ── 10. build_report ─────────────────────────────────────────────────────────
 
 
+def test_delivery_status_counts_closed_workers_and_separates_missing_ids(tmp_path, monkeypatch):
+    target = tmp_path / "usage"
+    monkeypatch.setenv("MW_USAGE_DIR", str(target))
+    _write_ledger(target / "runs.jsonl", [
+        _start("product"),
+        _end("product", status="needs-clarification", status_source="run.json", worker_run_id="task@attempt"),
+        _start("exit"),
+        _end("exit", exit_code=2, status="needs-clarification", status_source="exit-code", worker_run_id=None),
+        _start("legacy"),
+        _end("legacy"),
+        _start("running"),
+        _start("pm", source="pm"),
+        _end("pm"),
+    ])
+
+    report = usage.build_report(now=NOW, since=SINCE, pi_root=tmp_path / "empty", claude_roots=[], limit=1)
+    assert len(report["runs"]) == 1
+    assert {row["name"]: row["runs"] for row in report["groups"]["status"]} == {
+        "needs-clarification": 1, "(no worker run id)": 2,
+    }
+    report = usage.build_report(now=NOW, since=SINCE, pi_root=tmp_path / "empty", claude_roots=[], limit=0)
+    rows = {row["run_id"]: row for row in report["runs"]}
+    assert rows["product"]["worker_run_id"] == "task@attempt"
+    assert rows["product"]["status_source"] == "run.json"
+    assert rows["exit"]["status_source"] == "exit-code"
+    assert rows["legacy"]["status_source"] is None
+
+
 def _rich_fixture(tmp_path, monkeypatch):
     """pi worker (2 models) + open run + claude worker + codex worker + PM window."""
     target = tmp_path / "usage"
@@ -947,6 +975,10 @@ def test_format_report_text_matches_fixture(tmp_path, monkeypatch) -> None:
             "  ProjA                    calls 2     in 1.2M   out 310k   cacheR 11.4M"
             "   cacheW 42k    wall p50 -      p90 -      n 1",
             "",
+            "by delivery status",
+            "  (no worker run id)       calls 2     in 1.2M   out 310k   cacheR 11.4M"
+            "   cacheW 42k    wall p50 -      p90 -      n 2  runs 2",
+            "",
             "coverage: pi 1 runs (exact) · codex 1 (未统计)",
     ]
     # First line now states the half-open window (R7); timestamps render in
@@ -1087,7 +1119,9 @@ def test_build_report_wall_kind_session_for_pm_only_and_text_marker(
         _pm_session(pi_root, f"01JPMWINDOW{index:04d}", span_s=3600.0)
 
     report = usage.build_report(NOW, SINCE, {})
-    for rows in report["groups"].values():
+    assert report["groups"]["status"] == []
+    for dimension in ("model", "type", "key", "project"):
+        rows = report["groups"][dimension]
         assert rows
         assert all(row["wall_kind"] == "session" for row in rows)
     row = report["groups"]["model"][0]

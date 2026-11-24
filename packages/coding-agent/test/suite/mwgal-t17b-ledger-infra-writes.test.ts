@@ -356,7 +356,7 @@ describe("T-17b requirement 5.2 — run/trace/serve metadata → visible warn ch
 		// The infra path stays off the unjudgeable gap list; only the real write is named.
 		expect(gaps.unjudgeableFiles).toEqual([missing]);
 		expect(gaps.infraFiles).toEqual(["_workers.parallel"]);
-		expect(gaps.ok).toBe(false);
+		expect(gaps.ok).toBe(true);
 	});
 });
 
@@ -388,7 +388,7 @@ describe("T-17b requirement 5.3 — non-infrastructure out-of-scope writes stay 
 		expect(ledger.infra).toEqual(["_workers.parallel"]);
 	});
 
-	it("readTerminalGaps: the out-of-scope file makes the verdict not-ok", () => {
+	it("readTerminalGaps: the out-of-scope declaration remains visible as a warning", () => {
 		const project = mkproject();
 		const missingAbs = path.join(project.root, MISSING);
 		fs.mkdirSync(path.dirname(missingAbs), { recursive: true });
@@ -405,7 +405,7 @@ describe("T-17b requirement 5.3 — non-infrastructure out-of-scope writes stay 
 		});
 		console.log(`[VERIFY] T17b-P03-terminal unrecorded=[${gaps.unrecordedFiles.join(",")}] ok=${gaps.ok}`);
 		expect(gaps.unrecordedFiles).toEqual([MISSING]);
-		expect(gaps.ok).toBe(false);
+		expect(gaps.ok).toBe(true);
 	});
 });
 

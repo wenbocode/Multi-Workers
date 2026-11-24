@@ -170,11 +170,8 @@ function makeTaskDir(root: string, key: string): string {
 	return dir;
 }
 
-/** Write a complete phase-doc set for a key: spec + design (>= 500 bytes),
- * a numbered AC, and one research note per phase — everything the docs gate
- * requires (no goal.md is written, so the §0 check is skipped like on a
- * project without an established goal). */
-function writePhaseDocs(root: string, key: string): void {
+/** Write the required phase docs and optionally include research notes. */
+function writePhaseDocs(root: string, key: string, includeResearch = true): void {
 	const keyDir = path.join(root, key);
 	fs.mkdirSync(keyDir, { recursive: true });
 	fs.writeFileSync(
@@ -183,6 +180,7 @@ function writePhaseDocs(root: string, key: string): void {
 		"utf8",
 	);
 	fs.writeFileSync(path.join(keyDir, "design.md"), `# Design\n${"x".repeat(600)}`, "utf8");
+	if (!includeResearch) return;
 	const research = path.join(keyDir, "evidence", "research");
 	fs.mkdirSync(research, { recursive: true });
 	fs.writeFileSync(path.join(research, "spec-topic-2026-01-01.md"), "# research\n", "utf8");
@@ -1735,15 +1733,15 @@ describe("dispatchNewTasks keyed workers scan", () => {
 		expect(store.readAll().filter((e) => e.taskKey === "task-u")).toHaveLength(0);
 		expect(gates).toHaveLength(1);
 		expect(gates[0]?.key).toBe("undoc-key");
-		// goal.md 不存在 → §0 跳过；相位分层后该 key 无 pm-state → spec 层 = spec.md + spec 证据 + AC = 3
-		expect(gates[0]?.gaps).toHaveLength(3);
+		// Without goal.md or pm-state, require a spec document and a numbered AC.
+		expect(gates[0]?.gaps).toHaveLength(2);
 
 		// Second scan: the same key is not reported again.
 		await dispatchNewTasks(store, root, opts);
 		expect(gates).toHaveLength(1);
 
 		// Once the docs exist, the queued task dispatches.
-		writePhaseDocs(root, "undoc-key");
+		writePhaseDocs(root, "undoc-key", false);
 		await dispatchNewTasks(store, root, opts);
 		expect(store.readAll().find((e) => e.taskKey === "task-u")?.status).toBe("pending");
 		fs.rmSync(root, { recursive: true, force: true });
@@ -1753,28 +1751,27 @@ describe("dispatchNewTasks keyed workers scan", () => {
 		const root = mkdtemp();
 		const keyDir = path.join(root, "k");
 		fs.mkdirSync(keyDir, { recursive: true });
-		// Empty key: all gate items missing except §0 (no goal.md → check skipped).
-		expect(phaseDocGaps(readPhaseDocs(root, "k"))).toHaveLength(5);
+		// Empty key: require spec, design and a numbered AC.
+		expect(phaseDocGaps(readPhaseDocs(root, "k"))).toHaveLength(3);
 
 		// Under-size spec still counts as missing.
 		fs.writeFileSync(path.join(keyDir, "spec.md"), "x".repeat(499), "utf8");
 		expect(phaseDocGaps(readPhaseDocs(root, "k"))[0]).toContain("spec.md");
 
-		// Full-size spec (with a numbered AC) + spec evidence note clear the spec half of the gate.
+		// The full-size spec and numbered AC clear the spec requirements.
 		fs.writeFileSync(path.join(keyDir, "spec.md"), `${"x".repeat(500)}\n\n| AC-001 | in x, y returns z |\n`, "utf8");
+		expect(phaseDocGaps(readPhaseDocs(root, "k"))).toEqual(["design.md missing or under 500 bytes"]);
 		const research = path.join(keyDir, "evidence", "research");
 		fs.mkdirSync(research, { recursive: true });
 		fs.writeFileSync(path.join(research, "spec-topic-2026-01-01.md"), "n", "utf8");
-		expect(phaseDocGaps(readPhaseDocs(root, "k"))).toHaveLength(2);
 
 		// Only spec-*/design-* note prefixes count as phase evidence.
 		fs.writeFileSync(path.join(research, "notes.md"), "n", "utf8");
-		expect(phaseDocGaps(readPhaseDocs(root, "k"))).toHaveLength(2);
+		expect(readPhaseDocs(root, "k")).toMatchObject({ specEvidence: 1, designEvidence: 0 });
 
 		// Full docs: no gaps; _scratch bypasses the dispatch gate entirely.
 		fs.writeFileSync(path.join(keyDir, "design.md"), "x".repeat(500), "utf8");
-		fs.writeFileSync(path.join(research, "design-topic-2026-01-01.md"), "n", "utf8");
-		expect(dispatchDocGaps(root, "k")).toHaveLength(0);
+		expect(dispatchDocGaps(root, "k", "EXECUTE")).toHaveLength(0);
 		expect(dispatchDocGaps(root, "_scratch")).toHaveLength(0);
 		fs.rmSync(root, { recursive: true, force: true });
 	});
@@ -2028,24 +2025,19 @@ describe("pm-state-guard", () => {
 			"# Project Goal\n\n## Goal\nBuild the agent team framework\n\n## Context\n\n## Key Constraints\n",
 			"utf8",
 		);
-		// Hand-bypassed key: pm-state at EXECUTE, spec without §0, misnamed research
-		// note, no tasks/ — and the index still says SPEC.
+		// Hand-bypassed key: pm-state at EXECUTE, spec without §0, no tasks/,
+		// and the index still says SPEC.
 		fs.writeFileSync(path.join(keyDir, "spec.md"), `${"x".repeat(500)}\n\n| AC-001 | y |\n`, "utf8");
-		fs.mkdirSync(path.join(keyDir, "evidence", "research"), { recursive: true });
-		fs.writeFileSync(path.join(keyDir, "evidence", "research", "forensics-2026-09-09.md"), "n", "utf8");
 		fs.writeFileSync(path.join(keyDir, "design.md"), "x".repeat(500), "utf8");
 		fs.writeFileSync(path.join(keyDir, "pm-state.md"), "- Phase: EXECUTE\n- Updated: 2026-09-09 16:20\n", "utf8");
 
 		const warnings = phaseAuditWarnings(root, "k", "SPEC");
 		expect(warnings.some((w) => w.includes("INDEX-DIVERGENCE"))).toBe(true);
 		expect(warnings.some((w) => w.includes("§0 Goal Alignment"))).toBe(true);
-		expect(warnings.some((w) => w.includes("spec-*.md"))).toBe(true);
-		expect(warnings.some((w) => w.includes("design-*.md"))).toBe(true);
+		expect(warnings.some((w) => w.includes("evidence/research"))).toBe(false);
 		expect(warnings.some((w) => w.includes("tasks/"))).toBe(true);
 
 		// Compliant key at the same phase → no warnings.
-		fs.writeFileSync(path.join(keyDir, "evidence", "research", "spec-init.md"), "n", "utf8");
-		fs.writeFileSync(path.join(keyDir, "evidence", "research", "design-arch.md"), "n", "utf8");
 		fs.writeFileSync(
 			path.join(keyDir, "spec.md"),
 			`${"x".repeat(500)}\n\n## §0 Goal Alignment\n- 预期收益: x\n\n| AC-001 | y |\n`,
@@ -3828,15 +3820,12 @@ describe("pm-key takeover claims", () => {
 		expect(watch.key).toBe("key-new");
 		expect(entries.at(-1)?.data).toEqual({ key: "key-new", claimed: true });
 		expect(c1.notifications.some((n) => n.includes("claimed key 'key-new'"))).toBe(true);
-		// Idempotent: already watching + our claim → no repeated takeover notify/entry
-		// (the missing-evidence warning below is independent of idempotency).
+		// The existing claim and watch make a repeated write silent.
 		const before = entries.length;
 		const c2 = fakeCmdCtx();
 		await autoTakeOverFromDoc(pi, is, watch, refresh, "key-new", "spec.md", root, c2.ctx);
 		expect(entries.length).toBe(before);
-		expect(c2.notifications.filter((n) => n.includes("claimed key"))).toHaveLength(0);
-		// spec.md written without research notes → symmetric evidence warning.
-		expect(c2.notifications.some((n) => n.includes("evidence/research/spec-*.md"))).toBe(true);
+		expect(c2.notifications).toHaveLength(0);
 
 		// Live foreign claim → watch-only, shared row untouched.
 		const live = await spawnLivePid();
@@ -3919,13 +3908,13 @@ describe("pm-key takeover claims", () => {
 		// Undocumented key: refused with actionable gaps; nothing is created.
 		const r1 = await tool.execute(
 			"id1",
-			{ task_key: "t1", description: "work", key: "undoc" },
+			{ task_key: "t1", card_path: writeCompliantCard(root, "undoc"), description: "work", key: "undoc" },
 			undefined,
 			undefined,
 			fakeCmdCtx().ctx,
 		);
 		expect(r1.content[0]?.text).toContain("Worker dispatch blocked");
-		expect(r1.content[0]?.text).toContain("evidence/research/spec-*.md");
+		expect(r1.content[0]?.text).toContain("spec.md missing or under 500 bytes");
 		expect(fs.existsSync(path.join(root, "undoc", "workers", "t1"))).toBe(false);
 		expect(ws.readAll()).toHaveLength(0);
 
@@ -3944,8 +3933,8 @@ describe("pm-key takeover claims", () => {
 		if (!scratchTask) throw new Error("t2 missing from queue");
 		await ws.upsert({ ...scratchTask, status: "done" });
 
-		// Fully documented key: dispatches.
-		writePhaseDocs(root, "doc-key");
+		// Required phase docs with no research notes still permit dispatch.
+		writePhaseDocs(root, "doc-key", false);
 		const r3 = await tool.execute(
 			"id3",
 			{ task_key: "t3", card_path: writeCompliantCard(root, "doc-key"), description: "work", key: "doc-key" },
@@ -3956,8 +3945,7 @@ describe("pm-key takeover claims", () => {
 		expect(r3.content[0]?.text).toContain("Dispatched worker 't3'");
 		expect(ws.findByKey("t3")?.status).toBe("pending");
 
-		// VC-010: explicit cli=claude still routes to claude (task.md gets the
-		// review type field, queue row keeps cli=claude, provider stays empty).
+		// VC-010: the explicit CLI chooses the route and the card chooses the task type.
 		const r4 = await tool.execute(
 			"id4",
 			{ task_key: "t4", card_path: scratchCard, description: "work", cli: "claude", key: "_scratch" },
@@ -3969,29 +3957,24 @@ describe("pm-key takeover claims", () => {
 		expect(ws.findByKey("t4")?.cli).toBe("claude");
 		expect(ws.findByKey("t4")?.provider).toBe("");
 		const t4md = fs.readFileSync(path.join(root, "_scratch", "workers", "t4", "task.md"), "utf8");
-		expect(t4md).toContain("type: review");
+		expect(t4md).toContain("type: coding");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
-	it("autoTakeOverFromDoc warns about missing phase evidence on design/plan writes", async () => {
+	it("autoTakeOverFromDoc warns about a missing design, while research is optional", async () => {
 		const root = mkdtemp();
 		const is = new IndexStore(root);
 		const { pi } = fakeCmdPi();
 		const watch: PmWatchState = { key: undefined };
 		const refresh = (_ctx: ExtensionContext): void => {};
 
-		// design.md write without spec evidence → warning (advance-to-design gate).
-		const c1 = fakeCmdCtx();
-		await autoTakeOverFromDoc(pi, is, watch, refresh, "key-d", "design.md", root, c1.ctx);
-		expect(c1.notifications.some((n) => n.includes("evidence/research/spec-*.md"))).toBe(true);
-
 		// plan.md write without design docs → warning (advance-to-plan gate).
 		const c2 = fakeCmdCtx();
 		await autoTakeOverFromDoc(pi, is, watch, refresh, "key-p", "plan.md", root, c2.ctx);
 		expect(c2.notifications.some((n) => n.includes("design.md missing"))).toBe(true);
 
-		// Fully documented key: no evidence warnings on design/plan writes.
-		writePhaseDocs(root, "key-ok");
+		// Neither a design nor a plan write asks for optional evidence.
+		writePhaseDocs(root, "key-ok", false);
 		const c3 = fakeCmdCtx();
 		await autoTakeOverFromDoc(pi, is, watch, refresh, "key-ok", "design.md", root, c3.ctx);
 		const c4 = fakeCmdCtx();
@@ -4949,18 +4932,21 @@ describe("pmActivate parallel protocol (mw-parallel-protocol)", () => {
 			const first = (await hooks[0]({ systemPrompt: "BASE" })) as { systemPrompt?: string } | undefined;
 			expect(first?.systemPrompt?.startsWith("BASE\n\n")).toBe(true);
 			expect(first?.systemPrompt?.endsWith(PARALLEL_PROTOCOL)).toBe(true);
-			expect(first?.systemPrompt).toContain("用构造最小验证后推进来代替建议");
-			expect(first?.systemPrompt).toContain("正准备建议下一步");
-			expect(first?.systemPrompt).toContain("当轮执行，并根据观察结果继续推进");
+			expect(first?.systemPrompt).toContain("先执行最小验证，按观察结果推进");
 			expect(first?.systemPrompt).toContain("PLAN → TASKS 门禁后按保留任务拆卡");
 
-			// AC-002: the four action classes are actually spelled out.
+			// The injected default fits one page and prompts an end-to-end path.
 			expect(first?.systemPrompt).toContain(PARALLEL_PROTOCOL_MARKER);
-			expect(first?.systemPrompt).toContain("先做并行性分析");
-			expect(first?.systemPrompt).toContain("RQ-1..N");
-			expect(first?.systemPrompt).toContain("evidence/research/<phase>-<rq-slug>-<date>.md");
+			expect(PARALLEL_PROTOCOL.length).toBeLessThanOrEqual(2500);
+			expect(first?.systemPrompt).toContain("先定一条能在目标环境走通的用户路径");
+			expect(first?.systemPrompt).toContain("不超过 5 条 AC");
+			expect(first?.systemPrompt).toContain("确需独立调研时用 type: research");
 			expect(first?.systemPrompt).toContain("同一文件同一时刻只允许一个 worker");
-			expect(first?.systemPrompt).toContain("相位文档");
+			expect(first?.systemPrompt).toContain("同一轮派出所有同时就绪的卡");
+			expect(first?.systemPrompt).toContain("type: vision");
+			for (const heading of ["必要功能路径", "保留任务", "闭环覆盖"]) {
+				expect(first?.systemPrompt).toContain(heading);
+			}
 
 			// AC-003: idempotent — re-feeding our own output must not append twice.
 			expect(await hooks[0]({ systemPrompt: first?.systemPrompt })).toBeUndefined();

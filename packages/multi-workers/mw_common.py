@@ -3219,17 +3219,18 @@ def worker_liveness(project_dir: pathlib.Path, stale_after_sec: int = 90) -> lis
 # terminal evidence (AC-012); the exit->status mapping itself lives in the
 # launcher (T-08).
 _END_LINE_RE = re.compile(r"^\[END\] (\S+) exit=(\d+) elapsed=(\d+)s tools=(\d+) phases=(\S+)$")
+_TRACE_START_RE = re.compile(r"^\[START\] (?:pid=\d+|\S+ task=\S+ type=\S+ phases=\S+)$")
+_TRACE_RETRY_RE = re.compile(r"^\[MODEL_(?:RETRY|FALLBACK)\] (\S+) .+\battempt=\d+$")
 _TRACE_TAIL_BYTES = 64 * 1024
 
 
 def parse_end_exit(task_dir: pathlib.Path) -> int | None:
-    """Exit code from the last [END] line of a worker task's trace.log.
+    """Exit code from the current attempt's [END] line, when present."""
+    return read_terminal_trace(task_dir)[0]
 
-    Reads only the file tail (64KB, design section 9: stat + tail-read so
-    polling stays cheap). Missing file or no [END] line -> None; the caller
-    decides what unverifiable means (T-08). Later [END] lines win, mirroring
-    the TS parse loop.
-    """
+
+def read_terminal_trace(task_dir: pathlib.Path) -> tuple[int | None, str | None]:
+    """Return the current attempt's exit code and latest retry timestamp from the last 64 KiB."""
     trace = pathlib.Path(task_dir) / "trace.log"
     try:
         with trace.open("rb") as fh:
@@ -3238,13 +3239,19 @@ def parse_end_exit(task_dir: pathlib.Path) -> int | None:
             fh.seek(max(0, size - _TRACE_TAIL_BYTES))
             tail = fh.read().decode("utf-8", errors="replace")
     except OSError:
-        return None
+        return None, None
     exit_code: int | None = None
+    retry_at: str | None = None
     for line in tail.splitlines():
-        m = _END_LINE_RE.match(line)
-        if m:
-            exit_code = int(m.group(2))
-    return exit_code
+        retry = _TRACE_RETRY_RE.match(line)
+        if retry:
+            retry_at = retry.group(1)
+            exit_code = None
+        elif _TRACE_START_RE.match(line):
+            exit_code = None
+        elif end := _END_LINE_RE.match(line):
+            exit_code = int(end.group(2))
+    return exit_code, retry_at
 
 
 # Launcher beat protocol (D-008): every poll overwrites

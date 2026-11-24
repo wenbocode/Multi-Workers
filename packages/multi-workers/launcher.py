@@ -191,9 +191,7 @@ def _record_reconcile(entry: dict[str, str], reason: str) -> None:
 # wrappers below additionally guard record construction, so no new exception
 # path can reach the poll loop.
 
-#: task_key -> {"run_id": str, "started": epoch} for runs still live in THIS
-#: launcher process. A module dict is the launcher's instance state (the
-#: launcher is a single process built from module functions, not a class).
+#: Ledger identity, spawn time and previous worker product for each live task.
 _USAGE_RUNS: dict[str, dict[str, object]] = {}
 
 #: Monotonic per-process counter behind run ids and pi session ids. Never
@@ -352,6 +350,8 @@ def _usage_end_record(
     exit_code: int | None,
     wall_s: float | None,
     status: str,
+    status_source: str | None,
+    worker_run_id: str | None,
     reconciled: bool = False,
 ) -> dict[str, object]:
     """Pure `end` event; `wall_s`/`exit` stay `None` when unknown (never 0)."""
@@ -362,6 +362,8 @@ def _usage_end_record(
         "exit": exit_code,
         "wall_s": wall_s,
         "status": status,
+        "status_source": status_source,
+        "worker_run_id": worker_run_id,
         "reconciled": reconciled,
     }
 
@@ -418,15 +420,17 @@ def _usage_start(
     model: str,
     model_source: str,
     session_id: str | None,
-    pid: int | None,
+    process: subprocess.Popen[bytes],
     cwd: str,
     project_dir: pathlib.Path | None,
+    previous_worker_run: dict,
 ) -> None:
     """Ledger `start` for one successful Popen + remember the run for its `end`."""
     try:
         task_key = entry.get("task_key", "")
         run_id = _usage_new_run_id(_usage_next_seq())
-        _USAGE_RUNS[task_key] = {"run_id": run_id, "started": time.time()}
+        _USAGE_RUNS[task_key] = {"run_id": run_id, "started": time.time(), "process": process,
+                                "previous_worker_run": previous_worker_run}
         _usage_append(
             _usage_start_record(
                 run_id=run_id,
@@ -435,7 +439,7 @@ def _usage_start(
                 session_id=session_id,
                 model=model,
                 model_source=model_source,
-                pid=pid,
+                pid=getattr(process, "pid", None),
                 cwd=cwd,
                 **_usage_common_fields(entry, project_dir),
             )
@@ -444,7 +448,9 @@ def _usage_start(
         _usage_warn("start", exc)
 
 
-def _usage_end(task_key: str, exit_code: int, status: str) -> None:
+def _usage_end(
+    task_key: str, exit_code: int, status: str, status_source: str, worker_run_id: str | None
+) -> None:
     """Ledger `end` for the run `_usage_start` opened for this task.
 
     Must run the moment the exit code is known — BEFORE the exit-3 re-dispatch
@@ -471,6 +477,8 @@ def _usage_end(task_key: str, exit_code: int, status: str) -> None:
                 exit_code=exit_code,
                 wall_s=wall_s,
                 status=status,
+                status_source=status_source,
+                worker_run_id=worker_run_id,
                 reconciled=False,
             )
         )
@@ -478,8 +486,8 @@ def _usage_end(task_key: str, exit_code: int, status: str) -> None:
         _usage_warn("end", exc)
 
 
-def _usage_open_run_id(task_key: str) -> str | None:
-    """`run_id` of an unclosed ledger run of this task, if any.
+def _usage_open_run_id(project_dir: pathlib.Path, task_key: str) -> str | None:
+    """`run_id` of an unclosed ledger run of this project's task, if any.
 
     A launcher restart loses `_USAGE_RUNS`, so the orphan reconcile path has to
     recover the pair from the ledger itself; without it the original run would
@@ -494,13 +502,19 @@ def _usage_open_run_id(task_key: str) -> str | None:
     except Exception as exc:  # noqa: BLE001 — ledger read is advisory only
         _usage_warn("open run lookup", exc)
         return None
+    project = project_dir.absolute()
     for run in reversed(runs):
-        if run.get("open_run") and run.get("task_key") == task_key:
+        run_project = run.get("project")
+        if (run.get("open_run") and run.get("task_key") == task_key
+                and isinstance(run_project, str) and run_project and pathlib.Path(run_project).absolute() == project):
             return str(run.get("run_id") or "") or None
     return None
 
 
-def _usage_reconcile_end(entry: dict[str, str], *, exit_code: int | None, status: str) -> None:
+def _usage_reconcile_end(
+    project_dir: pathlib.Path, entry: dict[str, str], *, exit_code: int | None, status: str,
+    status_source: str | None, worker_run_id: str | None,
+) -> None:
     """Ledger `end` for an orphaned row converged by `_reconcile_orphans`.
 
     `reconciled=true` marks that the launcher, not the worker process, decided
@@ -508,7 +522,7 @@ def _usage_reconcile_end(entry: dict[str, str], *, exit_code: int | None, status
     stays `null` otherwise (AC-004/AC-013: unverified is never 0).
     """
     try:
-        run_id = _usage_open_run_id(entry.get("task_key", "")) or _usage_new_run_id(
+        run_id = _usage_open_run_id(project_dir, entry.get("task_key", "")) or _usage_new_run_id(
             _usage_next_seq()
         )
         _usage_append(
@@ -518,6 +532,8 @@ def _usage_reconcile_end(entry: dict[str, str], *, exit_code: int | None, status
                 exit_code=exit_code,
                 wall_s=None,
                 status=status,
+                status_source=status_source,
+                worker_run_id=worker_run_id,
                 reconciled=True,
             )
         )
@@ -1025,9 +1041,22 @@ def _exit_to_status(exit_code: int) -> str:
     return "failed"
 
 
-def _reap_status(
-    task_dir: pathlib.Path | None, exit_code: int, task_key: str
-) -> str:
+def _read_worker_run(task_dir: pathlib.Path | None) -> dict:
+    if task_dir is None:
+        return {}
+    try:
+        data = json.loads((task_dir / "run.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _worker_run_id(run: dict) -> str | None:
+    value = run.get("run_id")
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _reap_status(run: dict, exit_code: int, task_key: str) -> tuple[str, str]:
     """Product-first terminal status for a reaped worker (AC-006 / DD-06).
 
     The worker-written ``run.json`` is the product, so a terminal ``status``
@@ -1043,15 +1072,12 @@ def _reap_status(
     (mw.py:334) -- with the task key, both values and the value actually
     used, so the PM can audit the decision after the fact. Never raises,
     never touches stdout (the ``mw doctor`` JSON contract) and never writes
-    ``run.json`` (the worker owns it; ``read_run_status`` is the single
-    reader shared with the T-20 stale reconcile).
+    ``run.json`` (the worker owns it).
     """
     from_exit = _exit_to_status(exit_code)
-    if task_dir is None:
-        return from_exit
-    run_status = mw_common.read_run_status(task_dir)
-    if run_status not in mw_common.RUN_TERMINAL_STATUSES:
-        return from_exit
+    run_status = run.get("status")
+    if not isinstance(run_status, str) or run_status not in mw_common.RUN_TERMINAL_STATUSES:
+        return from_exit, "exit-code"
     if run_status != from_exit:
         print(
             f"[launcher] {task_key}: reap status conflict "
@@ -1060,7 +1086,7 @@ def _reap_status(
             file=sys.stderr,
             flush=True,
         )
-    return run_status
+    return run_status, "run.json"
 
 
 def _reap_entries(project_dir: pathlib.Path) -> dict[str, dict[str, str]]:
@@ -1078,22 +1104,6 @@ def _reap_entries(project_dir: pathlib.Path) -> dict[str, dict[str, str]]:
         if key and key not in rows:
             rows[key] = entry
     return rows
-
-
-def _run_model_exhausted(task_dir: pathlib.Path | None) -> bool:
-    """True only when the worker-written run.json confirms exit 3 (design D6).
-
-    The exit code alone is the machine signal; the product field guards against
-    an unrelated process that happens to return 3. Missing/broken run.json is
-    no confirmation, so the row keeps the existing failed terminal path.
-    """
-    if task_dir is None:
-        return False
-    try:
-        data = json.loads((task_dir / "run.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    return isinstance(data, dict) and data.get("model_exhausted") is True
 
 
 def _model_fallback_history(entry: dict[str, str]) -> list[tuple[int, str]]:
@@ -1211,6 +1221,8 @@ def _try_model_redispatch(
     config: dict,
     running_procs: dict[str, subprocess.Popen[bytes]],
     log_handles: dict[str, object] | None,
+    *,
+    worker_run: dict | None = None,
 ) -> bool:
     """Re-spawn one model-exhausted task within its per-model budget.
 
@@ -1235,7 +1247,10 @@ def _try_model_redispatch(
     key = entry["task_key"]
     if entry.get("cli", "").lower() != "pi":
         return False
-    if not _run_model_exhausted(pathlib.Path(entry["task_path"]).parent):
+    if worker_run is None:
+        worker_run = _read_worker_run(pathlib.Path(entry["task_path"]).parent)
+    # Exit 3 needs corroboration from this attempt before it can trigger a retry.
+    if worker_run.get("model_exhausted") is not True:
         return False
     model_value, _source = _resolve_entry_model(entry, project_dir)
     try:
@@ -2379,22 +2394,39 @@ def _reconcile_orphans(
         if key in running_procs:
             continue  # own row: never touched by reconcile
         task_dir = pathlib.Path(entry["task_path"]).parent
-        end_exit = mw_common.parse_end_exit(task_dir)
-        run_status = mw_common.read_run_status(task_dir)
-        if end_exit is not None:
-            status = _exit_to_status(end_exit)
-            reason = f"reconcile: [END] exit={end_exit} (orphaned row)"
-        elif run_status in mw_common.RUN_TERMINAL_STATUSES:
+        end_exit, retry_stamp = mw_common.read_terminal_trace(task_dir)
+        retry_at = _parse_utc_ts(retry_stamp or "")
+        worker_run = _read_worker_run(task_dir)
+        start_stamp = worker_run.get("started_at")
+        started_at = _parse_utc_ts(start_stamp) if isinstance(start_stamp, str) else None
+        if retry_at is not None and (started_at is None or started_at < retry_at):
+            worker_run = {}  # The retry did not publish its own run.json yet.
+        run_status = worker_run.get("status")
+        output = task_dir / "output.md"
+        if retry_at is None:
+            has_output = output.exists()
+        else:
+            try:
+                has_output = bool(worker_run and started_at and output.stat().st_mtime >= started_at.timestamp())
+            except OSError:
+                has_output = False
+        status_source = None
+        if isinstance(run_status, str) and run_status in mw_common.RUN_TERMINAL_STATUSES:
             # The product already ended the run; the row only lagged (e.g. the
             # launcher died between the worker's terminal write and the reap).
             status = run_status
+            status_source = "run.json"
             reason = f"reconcile: run.json status={run_status} (orphaned row)"
+        elif end_exit is not None:
+            status = _exit_to_status(end_exit)
+            status_source = "exit-code"
+            reason = f"reconcile: [END] exit={end_exit} (orphaned row)"
         elif run_status in ("running", "pending"):
             # The run recorded itself as live and its process is gone: the
             # outcome is unverified. `output.md` proves the terminal write path
             # ran, so no silence window is needed there (its absence is what the
             # window protects against — a live run owned by another launcher).
-            if not (task_dir / "output.md").exists():
+            if not has_output:
                 last = _row_last_activity(entry, task_dir)
                 if last is None:
                     continue  # no parseable activity evidence — never guess
@@ -2412,7 +2444,7 @@ def _reconcile_orphans(
             mw_common.mark_run_lost(task_dir)
             status = "lost"
             reason = f"reconcile: run.json status={run_status}, process gone, outcome unverified (scene preserved)"
-        elif (task_dir / "output.md").exists():
+        elif has_output:
             status = "failed"
             reason = "reconcile: completed without END marker, status unverifiable — read output.md"
         else:
@@ -2432,7 +2464,8 @@ def _reconcile_orphans(
                 continue
             status = "failed"
             reason = f"reconcile: presumed dead (no activity for {int(age_min)}m)"
-        _usage_reconcile_end(entry, exit_code=end_exit, status=status)
+        _usage_reconcile_end(project_dir, entry, exit_code=end_exit, status=status, status_source=status_source,
+                             worker_run_id=_worker_run_id(worker_run))
         _record_reconcile(entry, reason)
         try:
             _update_status(project_dir, key, status)
@@ -2663,12 +2696,19 @@ def _poll_once(
         review = _running_reviews.pop(proc, None) if _running_reviews else None
         if review is not None:
             _review_relays[review.project].reap(review, proc.pid, code)
-        # mw-usage-monitor T-02: close this run's ledger row the moment the exit
-        # code is known. It must happen BEFORE the exit-3 re-dispatch below can
-        # start the next run of the same task, otherwise this `end` would carry
-        # the new run's id and the pair would cross. The ledger status is the
-        # process-exit status; the queue row keeps its product-first status.
-        _usage_end(key, code, _exit_to_status(code))
+        entry = reap_entries.get(key)
+        task_dir = pathlib.Path(entry["task_path"]).parent if entry is not None else None
+        worker_run = _read_worker_run(task_dir)
+        worker_run_id = _worker_run_id(worker_run)
+        live = _USAGE_RUNS.get(key, {})
+        previous = live.get("previous_worker_run") if live.get("process") is proc else None
+        if (isinstance(previous, dict) and (worker_run == previous
+                or (worker_run_id is not None and worker_run_id == _worker_run_id(previous)))):
+            worker_run = {}  # A retry may have exited before replacing its predecessor's run.json.
+            worker_run_id = None
+        status, status_source = _reap_status(worker_run, code, key)
+        # Close this attempt before exit 3 may spawn another with the same task key.
+        _usage_end(key, code, status, status_source, worker_run_id)
         # Close the per-task worker.log handle now the process has exited (and
         # before a possible re-dispatch reopens it for the new process).
         lh = log_handles.pop(key, None)
@@ -2677,7 +2717,6 @@ def _poll_once(
                 lh.close()  # type: ignore[attr-defined]
             except Exception:  # noqa: BLE001 — best-effort cleanup
                 pass
-        entry = reap_entries.get(key)
         # T-03 exit-3 interception (design D6): a model-exhausted exit does not
         # reap as a terminal failure while the fallback chain has an unused
         # model; the same task is re-dispatched on it instead. The row is left
@@ -2686,12 +2725,10 @@ def _poll_once(
         redispatched = (
             entry is not None
             and code == 3
-            and _try_model_redispatch(entry, project_dir, config, running_procs, log_handles)
+            and _try_model_redispatch(entry, project_dir, config, running_procs, log_handles, worker_run=worker_run)
         )
         if redispatched:
             continue
-        task_dir = pathlib.Path(entry["task_path"]).parent if entry is not None else None
-        status = _reap_status(task_dir, code, key)
         _update_status(project_dir, key, status)
         if entry is not None:
             replan_tasks.collect_terminal(project_dir, entry, status)
@@ -3076,6 +3113,7 @@ def _spawn(
             spawn_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
         if review is not None:
             spawn_kwargs["stdin"] = subprocess.DEVNULL
+        previous_worker_run = _read_worker_run(task_path.parent)
         proc = subprocess.Popen(cmd, **spawn_kwargs)  # noqa: S603
         if review is not None:
             review.channel.start(proc.pid)
@@ -3089,9 +3127,10 @@ def _spawn(
             model=model_value,
             model_source=model_source,
             session_id=session_id,
-            pid=getattr(proc, "pid", None),
+            process=proc,
             cwd=str(spawn_kwargs["cwd"]),
             project_dir=project_dir,
+            previous_worker_run=previous_worker_run,
         )
         running_procs[entry["task_key"]] = proc
         if log_file is not None:

@@ -3030,9 +3030,10 @@ export function registerAskDecisionTool(pi: ExtensionAPI, options: AskDecisionTo
 			"After the selection: act only inside your existing authority, then call decision_receipt with the " +
 				"action you really performed (executed) and, when this round is handled, settled. Never receipt what " +
 				"did not happen; dp-sign-key uses the sign CLI (the sign-off writer is the CLI).",
-			"dp-pm-steer handling: a narrow that changes the confirmed delivery goal still goes to the user; direct-exec " +
-				"first coordinates the live worker's write surface; escalate asks the user a CONCRETE risk/authority " +
-				"question. The model's choice alone never rewrites, terminates or splits a task.",
+			"Use replan_tasks apply directly for split, narrow and direct-exec within the PM's authority. Ask dp-pm-steer " +
+				"when steering advice is needed or before applying escalate, which requires a matching decision. A narrow that " +
+				"changes the confirmed goal goes to the user. Coordinate the live worker's write surface before direct-exec. " +
+				"For escalate, ask the user a concrete risk or authority question. Decisions alone never rewrite, terminate or split a task.",
 			"dp-sign-key branches: finalize is decided AND signed by the same `mw decide sign` call - the tool writes the sign-off file itself, so never ask the PM for a second approval or a second model call; continue and user-confirm write no sign-off and end with the concrete gaps to advance or the concrete items to confirm.",
 		],
 		parameters: ASK_DECISION_PARAMETERS,

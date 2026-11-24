@@ -26,7 +26,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import launcher
-from launcher import _parse_workers_file, _poll_once, _reap_status, _serialize_entry
+from launcher import _parse_workers_file, _poll_once, _read_worker_run, _reap_status, _serialize_entry
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -105,46 +105,46 @@ class TestReapStatusProductFirst:
     def test_a_run_needs_clarification_outranks_exit_zero(self, tmp_path, capsys) -> None:
         d = _make_task_dir(tmp_path, "t001")
         _write_run_json(d, "needs-clarification")
-        assert _reap_status(d, 0, "t001") == "needs-clarification"
+        assert _reap_status(_read_worker_run(d), 0, "t001") == ("needs-clarification", "run.json")
         assert "run.json=needs-clarification" in capsys.readouterr().err
 
     def test_b_run_done_with_exit_zero_is_done(self, tmp_path, capsys) -> None:
         d = _make_task_dir(tmp_path, "t001")
         _write_run_json(d, "done", artifacts=["report.md"])
-        assert _reap_status(d, 0, "t001") == "done"
+        assert _reap_status(_read_worker_run(d), 0, "t001") == ("done", "run.json")
         assert capsys.readouterr().err == ""  # agreeing values stay silent
 
     def test_c_missing_run_json_falls_back_to_exit_code(self, tmp_path, capsys) -> None:
         d = _make_task_dir(tmp_path, "t001")
-        assert _reap_status(d, 1, "t001") == "failed"  # verbatim pre-AC-006
+        assert _reap_status(_read_worker_run(d), 1, "t001") == ("failed", "exit-code")
         assert capsys.readouterr().err == ""
 
     def test_d_run_lost_is_preserved(self, tmp_path) -> None:
         d = _make_task_dir(tmp_path, "t001")
         _write_run_json(d, "lost")
-        assert _reap_status(d, 1, "t001") == "lost"
+        assert _reap_status(_read_worker_run(d), 1, "t001") == ("lost", "run.json")
 
     def test_non_terminal_running_still_falls_back(self, tmp_path, capsys) -> None:
         # A `running` run.json is not a product verdict: the exit code decides.
         d = _make_task_dir(tmp_path, "t001")
         _write_run_json(d, "running")
-        assert _reap_status(d, 0, "t001") == "done"
+        assert _reap_status(_read_worker_run(d), 0, "t001") == ("done", "exit-code")
         assert capsys.readouterr().err == ""
 
     def test_broken_run_json_falls_back(self, tmp_path) -> None:
         d = _make_task_dir(tmp_path, "t001")
         (d / "run.json").write_text("{ not json", encoding="utf-8")
-        assert _reap_status(d, 1, "t001") == "failed"
+        assert _reap_status(_read_worker_run(d), 1, "t001") == ("failed", "exit-code")
 
     def test_no_task_dir_falls_back(self) -> None:
-        assert _reap_status(None, 1, "t001") == "failed"
-        assert _reap_status(None, 0, "t002") == "done"
+        assert _reap_status(_read_worker_run(None), 1, "t001") == ("failed", "exit-code")
+        assert _reap_status(_read_worker_run(None), 0, "t002") == ("done", "exit-code")
 
     def test_reap_status_never_writes_run_json(self, tmp_path) -> None:
         d = _make_task_dir(tmp_path, "t001")
         path = _write_run_json(d, "needs-clarification")
         before = path.read_text(encoding="utf-8")
-        _reap_status(d, 0, "t001")
+        _reap_status(_read_worker_run(d), 0, "t001")
         assert path.read_text(encoding="utf-8") == before
 
 
@@ -238,11 +238,11 @@ def test_vc030_verify_line(tmp_path: pathlib.Path, capsys) -> None:
     lost = _make_task_dir(tmp_path, "t_lost")
     _write_run_json(lost, "lost")
 
-    nc_row = _reap_status(nc, 0, "t_nc")
+    nc_row, _ = _reap_status(_read_worker_run(nc), 0, "t_nc")
     conflict_err = capsys.readouterr().err
-    done_row = _reap_status(done, 0, "t_done")
-    missing_row = _reap_status(missing, 1, "t_missing")
-    lost_row = _reap_status(lost, 1, "t_lost")
+    done_row, _ = _reap_status(_read_worker_run(done), 0, "t_done")
+    missing_row, _ = _reap_status(_read_worker_run(missing), 1, "t_missing")
+    lost_row, _ = _reap_status(_read_worker_run(lost), 1, "t_lost")
 
     assert nc_row == "needs-clarification"
     assert done_row == "done"

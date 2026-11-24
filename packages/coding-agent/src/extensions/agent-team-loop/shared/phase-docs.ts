@@ -9,9 +9,9 @@ export const MIN_PHASE_DOC_BYTES = 500;
 export interface PhaseDocStatus {
 	spec: boolean;
 	design: boolean;
-	/** Count of evidence/research/spec-*.md notes (>= 1 required). */
+	/** Count of optional evidence/research/spec-*.md notes. */
 	specEvidence: number;
-	/** Count of evidence/research/design-*.md notes (>= 1 required). */
+	/** Count of optional evidence/research/design-*.md notes. */
 	designEvidence: number;
 	/** spec.md has a non-empty §0 Goal Alignment section naming 预期收益.
 	 * True by default when goal.md is NOT established (advance_phase.py skips
@@ -72,12 +72,8 @@ function readSpecContent(keyDir: string): string | undefined {
 	}
 }
 
-/** Phase-doc + research-evidence presence for an AgenticTask key. Mirrors
- * advance_phase.py's design/plan gates: spec.md and design.md must each be
- * >= 500 bytes, and each phase needs >= 1 evidence/research/ note (a
- * zero-research declaration note counts). The design gate also requires a
- * §0 Goal Alignment section (when goal.md is established) and >= 1 numbered
- * AC — the same machine checks audit_phase.py replays. */
+/** Read dispatch prerequisites and optional research counts for the widget.
+ * The spec gate requires goal alignment when established and a numbered AC. */
 export function readPhaseDocs(agenticdocRoot: string, key: string): PhaseDocStatus {
 	const keyDir = path.join(agenticdocRoot, key);
 	const specContent = readSpecContent(keyDir);
@@ -92,8 +88,7 @@ export function readPhaseDocs(agenticdocRoot: string, key: string): PhaseDocStat
 	};
 }
 
-/** Docs-gate layer for an owner key: "spec" checks only the four spec-side
- * items; "design" checks all six (spec + design side). */
+/** The design tier adds the design document to the spec requirements. */
 export type GateTier = "spec" | "design";
 
 /** Phases whose docs gate includes the design side. */
@@ -111,24 +106,14 @@ export function gateTierOf(phase: string): GateTier {
 	return DESIGN_TIER_PHASES.has(phase.trim().toUpperCase()) ? "design" : "spec";
 }
 
-/** Missing gate items in gate order; [] = fully documented. The `tier` picks
- * the gate layer: "spec" pushes only the four spec-side items (order
- * unchanged); "design" pushes all six items in the exact pre-tiering order.
- * An omitted tier keeps the legacy full (design-layer) check so existing
- * one-argument callers behave exactly as before. */
+/** Missing required documents or contents. Research counts are informational. */
 export function phaseDocGaps(status: PhaseDocStatus, tier: GateTier = "design"): string[] {
 	const gaps: string[] = [];
 	if (!status.spec) gaps.push("spec.md missing or under 500 bytes");
-	if (status.specEvidence < 1)
-		gaps.push("evidence/research/spec-*.md missing (>= 1 research note; a zero-research declaration counts)");
 	if (!status.specS0)
 		gaps.push("spec.md missing a non-empty §0 Goal Alignment section with 预期收益 (goal.md is established)");
 	if (!status.specAC) gaps.push("spec.md has no numbered acceptance criteria (AC-NNN)");
-	if (tier === "design") {
-		if (!status.design) gaps.push("design.md missing or under 500 bytes");
-		if (status.designEvidence < 1)
-			gaps.push("evidence/research/design-*.md missing (>= 1 research note; a zero-research declaration counts)");
-	}
+	if (tier === "design" && !status.design) gaps.push("design.md missing or under 500 bytes");
 	return gaps;
 }
 
@@ -140,22 +125,11 @@ export function formatDocsBadge(status: PhaseDocStatus): string {
 
 /** Actionable hint appended to every docs-gate refusal. */
 export const DOC_GATE_HINT =
-	"Generate them via the agentic-task requirements/system-design workflows " +
-	"(every key decision needs an evidence/research/ note; zero-research still needs a " +
-	"declaration note). For throwaway ad-hoc work, dispatch under '_scratch' instead.";
+	"Complete the missing requirements via the agentic-task requirements/system-design workflows. " +
+	"For throwaway ad-hoc work, dispatch under '_scratch'.";
 
-/** Whether a key may dispatch worker tasks: _scratch is the ad-hoc escape
- * hatch; real AgenticTask keys are gated by the phase-derived tier. From
- * DESIGN onward the full spec + design + research-evidence chain is required
- * (the advance_phase.py design/plan gates, checked mechanically here so
- * undocumented work cannot reach the worker queue); at SPEC (or any
- * placeholder/unknown phase) only the spec-side chain is required, so early
- * research workers can run under their owner key instead of _scratch.
- * `phase` is the owner key's current phase (its pm-state `- Phase:` value;
- * "" when unknown). Omitting `phase` defaults to the spec tier (D-101b) so
- * call sites that have not been wired to pass a phase yet keep compiling
- * and behave as the SPEC layer. Returns the gap list, empty when dispatch
- * is allowed. */
+/** Apply the owner key's docs tier from pm-state. _scratch bypasses this gate,
+ * and an omitted or unknown phase uses the spec tier. */
 export function dispatchDocGaps(agenticdocRoot: string, key: string, phase?: string): string[] {
 	if (key === SCRATCH_WORKERS_KEY) return [];
 	return phaseDocGaps(readPhaseDocs(agenticdocRoot, key), gateTierOf(phase ?? ""));

@@ -31,6 +31,8 @@ import * as path from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import { appendWriteFileEvent } from "../../src/extensions/agent-team-loop/shared/change-ledger.ts";
+import { hasDeliverableEvidence } from "../../src/extensions/agent-team-loop/shared/deliverable-evidence.ts";
 import { MW_RUN_DETACHED_TOOL } from "../../src/extensions/agent-team-loop/shared/run-detached.ts";
 import {
 	PROGRESS_STALE_MS,
@@ -44,6 +46,7 @@ import { WORKER_FILE_TOOL } from "../../src/extensions/agent-team-loop/worker/wo
 import {
 	activeToolsForType,
 	checkpointSteerText,
+	resolveBudgetMs,
 	toolsForType,
 	workerModeActivate,
 } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
@@ -205,7 +208,8 @@ describe("checkpoint machine line by role (VC-001/002/003)", () => {
 		const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
 		vi.useFakeTimers();
 		try {
-			const review = await startWorker(root, "t-review", "type: review\ntimeout: 2\n\nreview\n");
+			vi.stubEnv("PI_WORKER_TIMEOUT_MS", "120000");
+			const review = await startWorker(root, "t-review", "type: review\n\nreview\n");
 			trickleToAnchor(review.worker);
 			const content = progressOf(review.taskDir);
 			const lines = (content ?? "").split("\n").filter((l) => l !== "");
@@ -451,7 +455,8 @@ describe("run-scoped Worker progress", () => {
 		const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
 		vi.useFakeTimers();
 		try {
-			const { taskDir, worker } = await startWorker(root, "t-live", "type: review\ntimeout: 1\n\nreview\n");
+			vi.stubEnv("PI_WORKER_TIMEOUT_MS", "60000");
+			const { taskDir, worker } = await startWorker(root, "t-live", "type: review\n\nreview\n");
 			const runId = readRunState(taskDir)?.run_id ?? "";
 			worker.emit("tool_execution_start", { toolCallId: "held", toolName: "read", args: { path: "report.md" } });
 			await vi.advanceTimersByTimeAsync(10_000);
@@ -480,7 +485,111 @@ describe("run-scoped Worker progress", () => {
 	});
 });
 
+describe("explicit worker wall budgets", () => {
+	it.each([
+		["research", 10, 30],
+		["research", 45, 45],
+		["review", 10, 30],
+		["coding", 10, 10],
+	])("%s timeout %d minutes resolves to %d minutes", (role, card, expected) => {
+		expect(resolveBudgetMs(card, "90000", role)).toBe(expected * 60_000);
+	});
+});
+
 describe("worker_file trace evidence (VC-005/VC-006)", () => {
+	it.each([
+		["research", "检查完成。"],
+		["review", "VERDICT=PASS"],
+		["review", "详见 evidence/research/standalone-report.md"],
+	])("%s settles from its complete evidence report with reply %s", async (role, reply) => {
+		const root = path.join(mkdtemp(), ".agenticdoc");
+		const { harness, taskDir } = await createWorkerHarness(root, "t-evidence-delivery", role);
+		const report = [
+			"## 结论\n检查完成。",
+			"## 证据\n本次检查记录。",
+			"## 残留与未验证\n无。",
+			"## 上下文来源\n任务卡。",
+			"## 未覆盖面声明\n无。",
+		].join("\n\n");
+		const file = "evidence/research/standalone-report.md";
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall(WORKER_FILE_TOOL, { file, content: report, mode: "write" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage(reply),
+		]);
+
+		await harness.session.prompt("Write the findings to the evidence directory");
+
+		const results = workerFileResults(harness);
+		expect(
+			results.map((result) => result.isError),
+			results.map(resultText).join("\n"),
+		).toEqual([false]);
+		expect(readRunState(taskDir)).toMatchObject({ status: "done", exit: 0 });
+		expect(fs.readFileSync(path.join(taskDir, "output.md"), "utf8")).toContain(`## Deliverables\n\n${file}`);
+		expect(fs.readFileSync(path.join(root, "key-a", file), "utf8")).toBe(report);
+	});
+
+	it("keeps a complete local output ahead of an incomplete traced report", async () => {
+		const root = path.join(mkdtemp(), ".agenticdoc");
+		const { harness, taskDir } = await createWorkerHarness(root, "t-local-first", "research");
+		const reply = [
+			"## 结论\n检查完成。",
+			"## 证据\n[VERIFY] 本次检查记录。",
+			"## 残留与未验证\n无。",
+			"## 上下文来源\n任务卡。",
+		].join("\n\n");
+		harness.setResponses([
+			fauxAssistantMessage(
+				[fauxToolCall(WORKER_FILE_TOOL, { file: "evidence/research/partial.md", content: "## 结论\n草稿。" })],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage(reply),
+		]);
+
+		await harness.session.prompt("Record the findings");
+
+		expect(workerFileResults(harness).map((result) => result.isError)).toEqual([false]);
+		expect(readRunState(taskDir)).toMatchObject({ status: "done", exit: 0 });
+		expect(fs.readFileSync(path.join(taskDir, "output.md"), "utf8")).not.toContain("## Deliverables");
+	});
+
+	it("ignores trace evidence from a prior attempt and stale or escaping current targets", async () => {
+		const root = path.join(mkdtemp(), ".agenticdoc");
+		const { taskDir } = await startWorker(root, "t-trace-evidence-boundary", "type: review\n\nreview\n");
+		const tracePath = path.join(taskDir, "trace.log");
+		const currentTrace = fs.readFileSync(tracePath, "utf8");
+		const evidence = path.join(root, "key-a", "evidence");
+		const siblingEvidence = path.join(root, "other-key", "evidence");
+		fs.mkdirSync(evidence, { recursive: true });
+		fs.mkdirSync(siblingEvidence, { recursive: true });
+		const fresh = path.join(evidence, "fresh.md");
+		const stale = path.join(evidence, "stale.md");
+		const outside = path.join(siblingEvidence, "outside.md");
+		for (const file of [fresh, stale, outside]) fs.writeFileSync(file, "result");
+		fs.utimesSync(stale, new Date(0), new Date(0));
+		fs.writeFileSync(tracePath, `[START] pid=1\n[WRITE_FILE] path=${fresh}\n${currentTrace}`);
+		const targets = [stale, evidence, outside];
+		const junction = path.join(evidence, "outside");
+		try {
+			fs.symlinkSync(siblingEvidence, junction, process.platform === "win32" ? "junction" : "dir");
+			targets.push(path.join(junction, "outside.md"));
+		} catch (error) {
+			if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+		}
+		for (const target of targets) {
+			appendWriteFileEvent(tracePath, target);
+		}
+		expect(hasDeliverableEvidence(taskDir)).toMatchObject({ delivered: false, channel: "none" });
+		appendWriteFileEvent(tracePath, fresh);
+		expect(hasDeliverableEvidence(taskDir)).toMatchObject({
+			delivered: true,
+			channel: "trace",
+			detail: "evidence/fresh.md",
+		});
+	});
+
 	it("VC-005: a legal call appends to progress.md and lands [TOOL] worker_file in trace.log", async () => {
 		const root = mkdtemp();
 		const { harness, taskDir } = await createWorkerHarness(root, "t-trace-ok");

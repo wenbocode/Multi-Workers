@@ -302,9 +302,8 @@ export function nudgeGoalUnestablished(pi: ExtensionAPI, agenticdocRoot: string,
 /** Auto-takeover on phase-doc write: writing/editing {key}/spec.md, design.md,
  * or plan.md is this window saying "I am now executing key X" — claim it and
  * watch it, exactly like /pm-key switch. A live foreign claim blocks the claim
- * (watch-only) but never the watch itself. Writing design.md / plan.md also
- * runs the next-phase evidence gate (mirrors advance_phase.py): the previous
- * phase's research notes must exist, or the user is warned immediately. */
+ * (watch-only) but never the watch itself. Writing plan.md still warns about
+ * a missing or undersized design. */
 export async function autoTakeOverFromDoc(
 	pi: ExtensionAPI,
 	indexStore: IndexStore,
@@ -315,35 +314,11 @@ export async function autoTakeOverFromDoc(
 	agenticdocRoot: string,
 	ctx: ExtensionContext,
 ): Promise<void> {
-	// Next-phase evidence gate: writing design.md means the spec phase should be
-	// complete (its research notes exist); writing plan.md means design should be.
-	// Fires regardless of takeover idempotency — the missing evidence is the
-	// message, and it stays true until the notes are written.
-	const docs = readPhaseDocs(agenticdocRoot, key);
-	if (doc === "spec.md" && docs.specEvidence < 1) {
+	if (doc === "plan.md" && !readPhaseDocs(agenticdocRoot, key).design) {
 		ctx.ui.notify(
-			`[mw] ${key}: no evidence/research/spec-*.md found — write the research notes (or a zero-research declaration) alongside the spec; the advance-to-design gate checks them.`,
+			`[mw] ${key}: design.md missing or under 500 bytes — required before plan (run the system-design workflow).`,
 			"warning",
 		);
-	}
-	if (doc === "design.md" && docs.specEvidence < 1) {
-		ctx.ui.notify(
-			`[mw] ${key}: no evidence/research/spec-*.md found — the advance-to-design gate requires >= 1 research note (a zero-research declaration counts). Write it before advancing.`,
-			"warning",
-		);
-	}
-	if (doc === "plan.md") {
-		if (!docs.design) {
-			ctx.ui.notify(
-				`[mw] ${key}: design.md missing or under 500 bytes — required before plan (run the system-design workflow).`,
-				"warning",
-			);
-		} else if (docs.designEvidence < 1) {
-			ctx.ui.notify(
-				`[mw] ${key}: no evidence/research/design-*.md found — the advance-to-plan gate requires >= 1 research note (a zero-research declaration counts). Write it before advancing.`,
-				"warning",
-			);
-		}
 	}
 
 	const row = indexStore.findByKey(key);
@@ -1941,7 +1916,7 @@ export async function dispatchNewTasks(
  * explicit retry policy (AC-004/D-005): the Exit Reason in the readback body
  * distinguishes idle (true hang) from wall (healthy but out of budget). */
 const PM_CONTINUE_HINT =
-	"先看该任务的终态证据。仅在剩余计划确需改变、重派被 replan-required 拒绝或用户要求重规划时，对该任务调用 replan_tasks inspect；已有 issue/snapshot 且证据未变化时复用，不重复检查或遍历 key 全量目录。只有提出计划变更才 preview。收窄、拆卡、接手和上抛使用已有 dp-pm-steer，依据取 preview.basis_id。拆卡和收窄由 apply 在发布后记回执。接手和上抛先执行动作并用显式 event_id 记 executed 回执，再 apply。资源等待可先排独立工作。ack_worker_result 只确认已读。";
+	"先看该任务的终态证据。仅在剩余计划确需改变、重派被 replan-required 拒绝或用户要求重规划时，对该任务调用 replan_tasks inspect。已有 issue/snapshot 且证据未变化时复用。提出变更时 preview，再 apply。收窄、拆卡和接手可以由 PM 直接发布，接手完成时附验收证据。已有匹配裁决可随 apply 提交。上抛须用匹配的 dp-pm-steer 裁决，并向用户提出具体问题。凭裁决接手或上抛时先完成动作，再将 executed 回执的 event_id 作为 action_evidence 提交。资源等待可先排独立工作。ack_worker_result 只确认已读。";
 
 /** Runtime stats for terminal worker summaries (AC-013):
  * ` (6m-style coarse duration, ph i/n)`. Preference order: exact [START]→[END]
@@ -2007,12 +1982,9 @@ export function recordDroppedGateReminder(
 //
 // dp2's registry question and labels stay untouched, but the MACHINE never asks
 // dp2 and never acts on an answer. The checkpoint loop below only wakes the PM
-// (the generic watchdog alert); deciding to narrow / split / take over / ask a
-// human is the PM's own decision, taken through the受管 decision tool (T04)
-// within the PM's existing authority. `split`, `direct-exec` and `escalate`
-// change goals or widen authority, so they were never machine actions; the old
-// `narrow` shortcut (a `steer-dp2.md` written by the poll loop) is removed with
-// the automatic call.
+// (the generic watchdog alert). The PM can narrow, split or take over within
+// its authority. Escalation uses the managed decision tool and asks the user
+// about the specific boundary. The poll loop also leaves `steer-dp2.md` to the PM.
 //
 // {@link decideDp2Checkpoint} remains the request/normalisation seam a PM-
 // initiated dp2 call can use; it has no caller in the machine loop.
@@ -2472,34 +2444,19 @@ export function startWorkerPollLoop(
  * the text on every run). */
 export const PARALLEL_PROTOCOL_MARKER = "[mw] 并行优先协议";
 
-/** Static parallel-first rules appended to the PM window's system prompt once
- * per agent run (mw-parallel-protocol). Static on purpose: a constant suffix
- * keeps the system-prompt prefix cacheable, and `before_agent_start` costs no
- * session tokens (an injected message would accumulate one per run). The two
- * conflict surfaces are deliberately different: research/review workers are
- * read-only (worker-mode.ts TOOL_ALLOWLISTS), so research batches in the
- * spec/design phases parallelize freely and only need a unique note file per
- * research question; coding workers share files and must be split by
- * file/module boundary. PM-only by construction: pmActivate() runs only when
- * PI_WORKER_TASK is unset (index.ts). */
+/** A static suffix keeps the PM prompt prefix cacheable. before_agent_start
+ * keeps it out of session history, and worker mode never registers this hook. */
 export const PARALLEL_PROTOCOL = [
-	`${PARALLEL_PROTOCOL_MARKER}（PM 常驻规则）：`,
-	"用构造最小验证后推进来代替建议。推进任务时，如果已经找到可行方向、正准备建议下一步，就把建议转成足以判断方向的最小验证，当轮执行，并根据观察结果继续推进。结果支持当前方向时就落实下一步，结果推翻它时就据此调整方向。用户只要求讨论时按讨论范围回答。缺少执行授权或确需用户决策时，说明具体待决事项。",
-	"设计的 Function Flow 增加“### 必要功能路径”表，逐行列出 | FLOW-001 | 真实入口或触发 | 可观察结果 | 逗号分隔的 VC |，覆盖必要的正常和失败路径。",
-	"Plan 写完后对照 goal、AC 和设计，实际删除次要任务并合并重复项。plan.md 用“## 计划裁剪”写理由，用“## 保留任务”表列 | T-001-slug | 产出 |，用“## 闭环覆盖”表逐行列 | AC-001 或 FLOW-001 | 逗号分隔的保留任务 ID，或 existing: evidence/文件 | 逗号分隔的 VC |。逐条核对所有 AC 和 FLOW。引用已有能力前运行最小验证并留存命令与结果。通过 advance_phase 的 PLAN → TASKS 门禁后按保留任务拆卡。",
-	"规划 key 时写清可独立验收的结果、验收证据，以及下游实际依赖的接口或产物。可分别验收且能独立解锁下游或单独受阻的交付，拆成不同 key；端到端验收保留明确归属。",
-	`在 spec.md 的 §0 写 ### spec_goal。随 spec 确认后，replan 沿用原文。 ${SPEC_GOAL_GUIDANCE}`,
-	"范围复核是阻断条件。按 MW docs/plan-closure.md 写 scope-review.json。逐项检查省略后会失败的现有 AC/FLOW、真实入口和最小工作。越界、可选或无法判断的工作留在计划和派发之外。",
-	"在 spec 阶段为各 key 分配验收标准，design 阶段按接口、共享资源和集成验收复核边界。执行阶段 replan 保留已确认的目标和原 AC，跨 key 的交付调整回到原规划流程。",
-	"正常接续 key、worker 成功或继续派发现有任务时沿用 pm-state 和现有计划，不例行调用 replan_tasks。只有剩余计划确需改变、重派被 replan-required 拒绝或用户要求重划/优化并行度时才使用；优先 inspect 具体 task，已有检查且证据未变时复用 issue/snapshot，不遍历目录或分页读完全部历史。后继卡走原派发入口；卡片类型明确时由派发入口直接采用，需比较多种合理类型时才准备 dp-w-type。",
-	"任务卡在已有“要求”和“交付格式”中写明首个可验证结果、取得它的命令或操作，以及预期证据。一次修改和它的定点自验放在同一卡；需要独立执行者或独立验收的工作另行拆卡。",
-	"1. 拆解任何 phase（spec/design/plan/tasks）之前，先做并行性分析：可并行单元 / 共享资源与文件冲突面 / 必须串行的理由。",
-	"2. spec/design 的调研与证据收集默认全并行：把调研拆成互不重叠的研究问题 RQ-1..N，一次性派发 N 个 type: research worker",
-	"   （只读角色，彼此无文件冲突），每个 RQ 只写唯一的 evidence/research/<phase>-<rq-slug>-<date>.md；禁止两个 worker 写同一文件。",
-	"3. 编码按文件/模块边界并行：同一文件同一时刻只允许一个 worker。",
-	"4. 相位文档（spec.md / design.md）由 PM 自己串行写，不派 worker。",
-	"5. 派发前先看 widget 上的 running worker 数：能并行就不要串行等待；worker 终态回读后立刻补派下一批。",
-	"6. 引用图片/截图/mockup 的任务用 type: vision 派发（视觉角色，worker 读取图片文件并受 image 能力门禁约束）。",
+	`${PARALLEL_PROTOCOL_MARKER}（PM 常驻规则）`,
+	"一个 key 交付一个竖切。先定一条能在目标环境走通的用户路径，再在一页 spec 写可独立验收的结果、下游实际依赖的接口或产物和不超过 5 条 AC，然后写卡。预计超过 10 张卡就在 spec 阶段拆 key，并明确各自验收归属。",
+	`在 spec.md 的 §0 写 ### spec_goal，replan 沿用已确认的目标和 AC。${SPEC_GOAL_GUIDANCE}`,
+	"先执行最小验证，按观察结果推进。可直接读代码回答的问题由 PM 查证。确需独立调研时用 type: research，每卡写一份独立证据。用户仅要求讨论时按讨论范围回答，缺少授权时说明具体待决事项。",
+	"在 design.md 的 Function Flow 写“### 必要功能路径”表，列 | FLOW-001 | 真实入口或触发 | 可观察结果 | 逗号分隔的 VC |，覆盖必要的正常和失败路径。",
+	"在 plan.md 用“## 计划裁剪”说明取舍。用“## 保留任务”表列 | T-001-slug | 产出 |。用“## 闭环覆盖”表为每条 AC 和 FLOW 列 | AC-001 或 FLOW-001 | 逗号分隔的任务 ID 或 existing: evidence/文件 | 逗号分隔的 VC |。复用能力时先实测并保存证据。按 MW docs/plan-closure.md 写 scope-review.json。通过 PLAN → TASKS 门禁后按保留任务拆卡。",
+	"每张卡声明 type，写明首个可验证结果、取得它的命令或操作，以及真实入口、预期结果和命令退出码。write_face 覆盖所有编辑目标。research/review 卡的 timeout 至少 30 分钟。修改与自验放在同一卡，独立评审另派。图片或截图任务用 type: vision。",
+	"按文件与模块划分写入边界。同一文件同一时刻只允许一个 worker。检查依赖、写入冲突和槽位，在同一轮派出所有同时就绪的卡，收到终态后续派下一批。",
+	"只读任务有可核验的进展时，PM 可用 extend_worker_deadline 为本次运行续期一次。",
+	"正常接续 key、worker 成功或继续派发现有任务时沿用现有计划，不例行调用 replan_tasks。剩余计划确需变更时 inspect 具体任务，证据未变就复用 issue/snapshot。后继卡走原派发入口。",
 	PM_GATE_ROUTING_RULE,
 ].join("\n");
 

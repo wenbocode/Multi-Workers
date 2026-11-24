@@ -549,9 +549,9 @@ def decision(project: Path, key: str, source: dict, prepared: dict, ref: str):
 
 def receipt(project: Path, record: dict, claim: str) -> None:
     action = record["plan"]["action"]
-    if action == "schedule":
+    ref = record.get("decision_id")
+    if action == "schedule" or not ref:
         return
-    ref = record["decision_id"]
     prepared = {"action": action, "basis_id": "replan-" + record["version"][:24]}
     meta, events = decision(project, record["key"], record["source"], prepared, ref)
     stages = {e.get("lifecycle") for e in events if e["kind"] == "lifecycle"}
@@ -683,8 +683,12 @@ def execute(project: Path, req: dict) -> dict:
         target = local(key_dir / "evidence" / "replan" / (identifier(req["issue"]) + ".json"))
         record = json.loads(body(target))
         if record["state"] == "applied" and op == "apply" and req["version"] == record["version"]:
+            if (record["plan"]["action"] != "schedule" and req.get("decision_id")
+                    and req["decision_id"] != record.get("decision_id")):
+                raise ValueError("decision_id differs from the applied plan")
             receipt(project, record, req["claim"])
-            return {"state": "applied", "version": record["version"], "decision_id": record.get("decision_id")}
+            return {"state": "applied", "version": record["version"], "decision_id": record.get("decision_id"),
+                    "source": record.get("decision_source")}
         current = inspect(project, key_dir, record["source"]["task"])
         if current["issue"] != record["id"] or current["snapshot"] != req["snapshot"]:
             raise ValueError("source changed; inspect again")
@@ -710,7 +714,8 @@ def execute(project: Path, req: dict) -> dict:
             if record["state"] == "applied":
                 receipt(project, record, req["claim"])
                 record.setdefault("history", []).append({field: record.get(field) for field in
-                                                        ("plan", "version", "snapshot", "decision_id", "action_evidence")})
+                                                        ("plan", "version", "snapshot", "decision_id", "action_evidence",
+                                                         "decision_source", "applied_claim")})
             record.update(state="previewed", source=current["facts"], plan=plan, version=verdict["version"], snapshot=req["snapshot"])
             save(target, record)
             return {**verdict, "snapshot": current["snapshot"], "issue": record["id"],
@@ -720,17 +725,23 @@ def execute(project: Path, req: dict) -> dict:
         if plan["action"] != "schedule" and record["source"]["task"] in current["live_workers"]:
             raise ValueError("source worker is still in flight")
         action = plan["action"]
-        if action != "schedule":
-            _, events = decision(project, key, record["source"], verdict, req["decision_id"])
+        decision_id = req.get("decision_id") or None
+        if action == "escalate" and not decision_id:
+            raise ValueError("escalate requires a matching dp-pm-steer decision_id")
+        decision_source = "pm"
+        if action != "schedule" and decision_id:
+            _, events = decision(project, key, record["source"], verdict, decision_id)
             if action in {"direct-exec", "escalate"} and not any(
                     e.get("kind") == "lifecycle" and e.get("lifecycle") == "executed" and e.get("action") == action
                     and e.get("event_id") == req.get("action_evidence") for e in events):
                 raise ValueError("actual takeover or escalation needs its executed decision_receipt event_id")
+            decision_source = "dp-pm-steer"
         for unit in plan["units"]:
             path = source_card(key_dir, f"tasks/{unit['id']}.md")
             if path.exists() and (record["state"] != "publishing" or body(path) != card_text(record, unit)):
                 raise ValueError(f"card collision: {path.name}")
-        record.update(state="publishing", key=key, decision_id=req.get("decision_id"), action_evidence=req.get("action_evidence"))
+        record.update(state="publishing", key=key, decision_id=decision_id, decision_source=decision_source,
+                      applied_claim=req["claim"], action_evidence=req.get("action_evidence"))
         save(target, record)
         for unit in plan["units"]:
             path = source_card(key_dir, f"tasks/{unit['id']}.md")
@@ -739,7 +750,7 @@ def execute(project: Path, req: dict) -> dict:
         record["state"] = "applied"
         save(target, record)
         receipt(project, record, req["claim"])
-        return {"state": "applied", **verdict, "decision_id": record["decision_id"]}
+        return {"state": "applied", **verdict, "decision_id": decision_id, "source": decision_source}
 
 
 def evidence_takeover_complete(project: Path, key_dir: Path, record: dict, parent: tuple[dict, dict],
@@ -748,8 +759,7 @@ def evidence_takeover_complete(project: Path, key_dir: Path, record: dict, paren
     retained = plan.get("retained")
     if (plan["units"] or not isinstance(retained, dict) or not retained
             or not all(isinstance(ref, str) and ref.startswith("evidence/")
-            for ref in retained.values()) or record.get("key") != key_dir.name
-            or not record.get("decision_id") or not record.get("action_evidence")):
+            for ref in retained.values()) or record.get("key") != key_dir.name):
         return False
     source = record["source"]
     prior, unit = parent
@@ -772,15 +782,7 @@ def evidence_takeover_complete(project: Path, key_dir: Path, record: dict, paren
                 or set(current["coverage"]) != retained.keys()):
             return False
         proofs = retained_proof(project, key_dir, {**current, "facts": source}, retained)
-        version = digest([record["id"], current["snapshot"], plan, proofs])
-        if version != record["version"]:
-            return False
-        prepared = {"action": "direct-exec", "basis_id": "replan-" + version[:24]}
-        _, events = decision(project, key_dir.name, source, prepared, record["decision_id"])
-        lifecycle = [e for e in events if e["kind"] == "lifecycle"]
-        return (sum(e.get("lifecycle") == "executed" and e.get("action") == "direct-exec"
-                    and e.get("event_id") == record["action_evidence"] for e in lifecycle) == 1
-                and sum(e.get("lifecycle") == "settled" and e.get("outcome") == "ok" for e in lifecycle) == 1)
+        return digest([record["id"], current["snapshot"], plan, proofs]) == record["version"]
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):
         return False
 
@@ -886,7 +888,14 @@ def deadline_successor(project: Path, owner: str, task: str | None, card_ref: st
         version = digest(version_fields)
         if record["version"] != version:
             raise ValueError("deadline successor plan version changed")
-        decision_ref = record["decision_id"]
+        decision_ref = record.get("decision_id")
+        if not decision_ref:
+            applied_claim = record.get("applied_claim")
+            if (record.get("decision_source") != "pm" or not isinstance(applied_claim, str)
+                    or applied_claim in {"", "—", "-"} or (not verified and applied_claim != claim)):
+                raise ValueError("deadline successor PM publication belongs to another claim or is missing")
+            verified.append({"card": f"tasks/{unit['id']}.md", "decision": None, "version": version})
+            continue
         _, events = decision(project, owner, facts, {
             "action": record["plan"]["action"], "basis_id": "replan-" + version[:24]}, decision_ref)
         actors = []

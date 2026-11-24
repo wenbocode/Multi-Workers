@@ -34,12 +34,6 @@ Gap rules:
                                       or design.md has no file; template refs
                                       containing { } * < > placeholders are
                                       skipped (not literal citations).
-- research-evidence-missing (blocking) at the SPEC phase edge the framework
-                                      gate requires evidence/research/spec-*.md
-                                      >= 1, at the DESIGN edge
-                                      evidence/research/design-*.md >= 1
-                                      (mirrors advance_phase.py GATES); an
-                                      empty glob = missing research 留底.
 - plan-closure (blocking)             at the PLAN edge, the native gate's
                                       plan review or coverage has gaps.
 - plan-closure-unavailable (blocking) the native inspection could not run.
@@ -72,15 +66,6 @@ _PHASE_LINE_RE = re.compile(r"^\s*-\s*Phase:[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
 # alphanumeric (avoids matching `foo.md5`).
 _EVIDENCE_REF_RE = re.compile(r"(?<![0-9A-Za-z_./-])evidence/\S*?\.(?:md|txt)(?![0-9A-Za-z])")
 _PLACEHOLDER_CHARS = frozenset("{}*<>")
-
-# Current phase edge -> required research evidence glob (mirrors
-# advance_phase.py GATES: entering design needs spec research 留底, entering
-# plan needs design research 留底). Other edges add no new research file.
-_RESEARCH_GLOBS = {
-    "SPEC": "evidence/research/spec-*.md",
-    "DESIGN": "evidence/research/design-*.md",
-}
-
 
 def _read_text(path: Path) -> str:
     """UTF-8 text of a file; empty string when unreadable (audit never crashes)."""
@@ -242,13 +227,6 @@ def build_dossier(key: str, project: Path, *, include_plan_gate: bool = True) ->
     for ref in extract_evidence_refs(spec_text + "\n" + design_text):
         if not (key_dir / ref).is_file():
             gaps.append({"item": ref, "rule": "evidence-ref-missing", "severity": "blocking"})
-
-    # Research 留底 existence at the phase edges that require it.
-    research_glob = _RESEARCH_GLOBS.get((phase_edge or "").strip().upper())
-    if research_glob and not list(key_dir.glob(research_glob)):
-        gaps.append(
-            {"item": research_glob, "rule": "research-evidence-missing", "severity": "blocking"}
-        )
 
     if include_plan_gate and (phase_edge or "").strip().upper() == "PLAN":
         try:

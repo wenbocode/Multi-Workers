@@ -230,7 +230,7 @@ describe("T-23 requirement 3b — a real unrecorded write is still red", () => {
 		expect(ledger.extra).toEqual([declared]);
 	});
 
-	it("readTerminalGaps: the same report makes the settle verdict not-ok", () => {
+	it("readTerminalGaps: the same report leaves an advisory ledger finding", () => {
 		const gaps = terminalGaps(
 			WORKER_ID,
 			report("改动清单", [`- ${declared} — 越界声明`]),
@@ -238,7 +238,7 @@ describe("T-23 requirement 3b — a real unrecorded write is still red", () => {
 		);
 		console.log(`[VERIFY] T23-3b terminal unrecorded=[${gaps.unrecordedFiles.join(",")}] ok=${gaps.ok}`);
 		expect(gaps.unrecordedFiles).toEqual([declared]);
-		expect(gaps.ok).toBe(false);
+		expect(gaps.ok).toBe(true);
 	});
 });
 

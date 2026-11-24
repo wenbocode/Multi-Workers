@@ -282,9 +282,10 @@ describe("dispatch card injection (G-2)", () => {
 		);
 		expect(JSON.parse(inspection.content[0].text)).toMatchObject({
 			ok: true,
-			facts: {
-				category: "wall-timeout",
-				card: `tasks/${process.platform === "win32" ? CARD_NAME.toLowerCase() : CARD_NAME}`,
+			facts: { task: "first", status: "failed", category: "wall-timeout" },
+			evidence_refs: {
+				card: `.agenticdoc/_scratch/tasks/${process.platform === "win32" ? CARD_NAME.toLowerCase() : CARD_NAME}`,
+				"trace.log": ".agenticdoc/_scratch/workers/first/trace.log",
 			},
 			acceptance: ["AC-001"],
 		});

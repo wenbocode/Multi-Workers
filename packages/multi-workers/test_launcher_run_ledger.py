@@ -18,6 +18,7 @@ Covered (card T-02):
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sys
 import types
@@ -98,7 +99,7 @@ _START_FIELDS = {
     "pid",
     "cwd",
 }
-_END_FIELDS = {"event", "run_id", "ts", "exit", "wall_s", "status", "reconciled"}
+_END_FIELDS = {"event", "run_id", "ts", "exit", "wall_s", "status", "status_source", "worker_run_id", "reconciled"}
 
 
 class _FakeProc:
@@ -272,6 +273,7 @@ class TestSessionIdAllocation:
 
 
 class TestStartEndPairing:
+    @pytest.mark.parametrize("with_worker_product", [False, True])
     def test_spawn_then_reap_pairs_events_and_restores_wall(
         self,
         tmp_path: pathlib.Path,
@@ -280,6 +282,7 @@ class TestStartEndPairing:
         providers: dict,
         queue_file: pathlib.Path,
         monkeypatch: pytest.MonkeyPatch,
+        with_worker_product: bool,
     ) -> None:
         entry = _entry(task_file)
         _queue_row(queue_file, entry)
@@ -310,6 +313,10 @@ class TestStartEndPairing:
 
         # 12.5s later the worker exits 0 and the next poll reaps it.
         clock["now"] = 1012.5
+        if with_worker_product:
+            task_file.with_name("run.json").write_text(json.dumps({
+                "status": "needs-clarification", "run_id": "t001@attempt-one",
+            }), encoding="utf-8")
         proc.returncode = 0
         launcher._poll_once(tmp_path, providers, running, {}, [], None)
         ends = [event for event in _events(ledger_dir) if event["event"] == "end"]
@@ -318,7 +325,10 @@ class TestStartEndPairing:
         assert _END_FIELDS <= set(end)
         assert end["run_id"] == start["run_id"]
         assert end["exit"] == 0
-        assert end["status"] == "done"
+        assert end["status"] == ("needs-clarification" if with_worker_product else "done")
+        assert end["status_source"] == ("run.json" if with_worker_product else "exit-code")
+        assert end["worker_run_id"] == ("t001@attempt-one" if with_worker_product else None)
+        assert launcher._parse_workers_file(queue_file)[0]["status"] == end["status"]
         assert end["reconciled"] is False
         assert end["wall_s"] == pytest.approx(12.5)
 
@@ -330,6 +340,8 @@ class TestStartEndPairing:
         assert run["session_id"] == start["session_id"]
         assert run["wall_s"] == pytest.approx(12.5)
         assert run["exit"] == 0
+        assert run["status"] == end["status"] and run["status_source"] == end["status_source"]
+        assert run["worker_run_id"] == end["worker_run_id"]
         assert run["open_run"] is False and run["spawned"] is True
 
     def test_record_builders_are_pure_and_field_complete(self) -> None:
@@ -369,7 +381,8 @@ class TestStartEndPairing:
         assert codex["attribution"] == "unknown_cli"
 
         end = launcher._usage_end_record(
-            run_id="r1", ts="t2", exit_code=None, wall_s=None, status="lost", reconciled=True
+            run_id="r1", ts="t2", exit_code=None, wall_s=None, status="lost", status_source=None,
+            worker_run_id=None, reconciled=True,
         )
         assert set(end) == _END_FIELDS
         assert end["exit"] is None and end["wall_s"] is None and end["reconciled"] is True
@@ -379,6 +392,7 @@ class TestStartEndPairing:
 
 
 class TestExit3Redispatch:
+    @pytest.mark.parametrize("write_second_run", [True, False])
     def test_end_is_written_before_the_next_start(
         self,
         tmp_path: pathlib.Path,
@@ -387,22 +401,21 @@ class TestExit3Redispatch:
         providers: dict,
         queue_file: pathlib.Path,
         monkeypatch: pytest.MonkeyPatch,
+        write_second_run: bool,
     ) -> None:
         entry = _entry(task_file)
         _queue_row(queue_file, entry)
         first = _FakeProc(pid=5001)
         second = _FakeProc(pid=5002)
         captured = _fake_popen(monkeypatch, [first, second])
+        monkeypatch.setenv("PI_WORKER_MODEL_ERR_MAX", "2")
 
         running: dict = {}
         launcher._spawn(entry, tmp_path, providers, running)
 
-        def _redispatch(entry, project_dir, config, running_procs, log_handles) -> bool:
-            launcher._spawn(entry, project_dir, config, running_procs, log_handles)
-            return entry["task_key"] in running_procs
-
-        monkeypatch.setattr(launcher, "_try_model_redispatch", _redispatch)
-
+        run_file = task_file.with_name("run.json")
+        run_file.write_text(json.dumps({"status": "failed", "model_exhausted": True,
+                                        "run_id": "t001@attempt-one"}), encoding="utf-8")
         first.returncode = 3
         launcher._poll_once(tmp_path, providers, running, {}, [], None)
 
@@ -411,6 +424,7 @@ class TestExit3Redispatch:
         assert events[0]["run_id"] == events[1]["run_id"]
         assert events[2]["run_id"] != events[1]["run_id"]
         assert events[1]["exit"] == 3
+        assert events[1]["worker_run_id"] == "t001@attempt-one"
         assert events[1]["reconciled"] is False
         assert len(captured["cmds"]) == 2  # the task really was re-dispatched
 
@@ -420,6 +434,18 @@ class TestExit3Redispatch:
         assert by_id[events[1]["run_id"]]["open_run"] is False
         assert by_id[events[1]["run_id"]]["exit"] == 3
         assert by_id[events[2]["run_id"]]["open_run"] is True
+
+        if write_second_run:
+            run_file.write_text(json.dumps({"status": "done", "run_id": "t001@attempt-two"}), encoding="utf-8")
+        second.returncode = 0 if write_second_run else 3
+        launcher._poll_once(tmp_path, providers, running, {}, [], None)
+
+        events = _events(ledger_dir)
+        assert [event["event"] for event in events] == ["start", "end", "start", "end"]
+        assert events[3]["run_id"] == events[2]["run_id"]
+        assert events[3]["worker_run_id"] == ("t001@attempt-two" if write_second_run else None)
+        assert events[3]["status_source"] == ("run.json" if write_second_run else "exit-code")
+        assert running == {}
 
 
 # ── 4. spawn failure ─────────────────────────────────────────────────────────
@@ -509,6 +535,8 @@ class TestReconcileEnd:
         _fake_popen(monkeypatch, [_FakeProc(pid=7001)])
         launcher._spawn(entry, tmp_path, providers, {})
         start = _events(ledger_dir)[0]
+        # The machine ledger may contain the same task key from another project.
+        assert usage.append_event({**start, "project": str(tmp_path / "other"), "run_id": "foreign-run"})
 
         # A launcher restart: the in-memory run state is gone, the row is still
         # `running`, and the worker already wrote its [END] line.
@@ -526,10 +554,63 @@ class TestReconcileEnd:
         assert ends[0]["exit"] == 0
 
         runs, meta = usage.load_runs(launcher._USAGE_EPOCH)
-        assert meta["open_runs"] == 0
-        assert runs[0]["open_run"] is False
-        assert runs[0]["reconciled"] is True
-        assert runs[0]["exit"] == 0
+        assert meta["open_runs"] == 1
+        by_id = {run["run_id"]: run for run in runs}
+        assert by_id["foreign-run"]["open_run"] is True
+        assert by_id[start["run_id"]]["open_run"] is False
+        assert by_id[start["run_id"]]["reconciled"] is True
+        assert by_id[start["run_id"]]["exit"] == 0
+
+    @pytest.mark.parametrize("after_retry", [False, True])
+    def test_terminal_worker_product_wins_during_restart(
+        self, tmp_path, ledger_dir, task_file, queue_file, after_retry,
+    ) -> None:
+        _queue_row(queue_file, _entry(task_file, status="running"))
+        trace = [_end_marker(3 if after_retry else 0)]
+        if after_retry:
+            trace.extend([
+                "[MODEL_RETRY] 2026-10-19T09:01:00+00:00 model=timi/test attempt=1",
+                "[START] 2026-10-19T09:01:01Z task=t001 type=coding phases=-",
+            ])
+        task_file.with_name("trace.log").write_text("\n".join(trace) + "\n", encoding="utf-8")
+        task_file.with_name("run.json").write_text(json.dumps({
+            "status": "needs-clarification", "run_id": "t001@current", "started_at": "2026-10-19T09:01:01Z",
+        }), encoding="utf-8")
+
+        launcher._reconcile_orphans(tmp_path, {})
+
+        assert launcher._parse_workers_file(queue_file)[0]["status"] == "needs-clarification"
+        end = _events(ledger_dir)[0]
+        assert (end["status"], end["status_source"], end["worker_run_id"]) == (
+            "needs-clarification", "run.json", "t001@current",
+        )
+        assert end["exit"] == (None if after_retry else 0)
+
+    @pytest.mark.parametrize("with_current_product", [False, True])
+    def test_restart_ignores_previous_retry_artifacts_while_current_run_is_fresh(
+        self, tmp_path, ledger_dir, task_file, queue_file, with_current_product,
+    ) -> None:
+        _queue_row(queue_file, _entry(task_file, status="running"))
+        task_file.with_name("trace.log").write_text(
+            _end_marker(3) + "\n"
+            "[MODEL_FALLBACK] 2026-10-19T09:01:00+00:00 from=timi/a to=timi/b attempt=1\n",
+            encoding="utf-8",
+        )
+        run_json = {
+            "status": "running" if with_current_product else "failed",
+            "run_id": "t001@current" if with_current_product else "t001@previous",
+            "started_at": "2026-10-19T09:01:01Z" if with_current_product else "2026-10-19T08:59:00Z",
+        }
+        task_file.with_name("run.json").write_text(json.dumps(run_json), encoding="utf-8")
+        output = task_file.with_name("output.md")
+        output.write_text("previous attempt", encoding="utf-8")
+        previous_end = launcher._parse_utc_ts("2026-10-19T09:00:00Z").timestamp()
+        os.utime(output, (previous_end, previous_end))
+
+        launcher._reconcile_orphans(tmp_path, {})
+
+        assert launcher._parse_workers_file(queue_file)[0]["status"] == "running"
+        assert _events(ledger_dir) == []
 
     def test_end_without_end_marker_keeps_exit_null(
         self,

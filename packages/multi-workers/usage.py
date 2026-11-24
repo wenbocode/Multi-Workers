@@ -98,6 +98,7 @@ _GROUP_TITLES = (
     ("type", "by type"),
     ("key", "by key"),
     ("project", "by project"),
+    ("status", "by delivery status"),
 )
 
 #: Group-row ``wall_kind`` values (design 5): ledger spawn -> reap samples
@@ -142,6 +143,8 @@ DETAIL_FIELDS = (
     "wall_s",
     "wall_kind",
     "status",
+    "status_source",
+    "worker_run_id",
     "attribution",
     "session_id",
     "open_run",
@@ -933,6 +936,7 @@ def load_runs(
     ``None`` (never 0, AC-004/AC-013). Bad lines are skipped and counted.
     ``spawn_failed`` events are kept as ``spawned=False`` entries so failed
     spawns stay visible in ``ledger.events`` without being counted as runs.
+    Reaped runs include the status source and worker run identity when known.
 
     The window is half-open ``[since, until)``: a run is kept when any of its
     event stamps is ``>= since`` and any is ``< until`` (an unstamped event
@@ -1042,6 +1046,8 @@ def load_runs(
             "exit": end.get("exit") if end else None,
             "wall_s": wall_s,
             "status": status,
+            "status_source": end.get("status_source"),
+            "worker_run_id": end.get("worker_run_id"),
             "reconciled": bool(end.get("reconciled")),
             "open_run": spawned and not end,
             "spawned": spawned,
@@ -1370,9 +1376,9 @@ def _run_detail_row(
 
     An open run keeps ``wall_s=None`` / ``wall_kind="none"``: the ledger has
     no reap yet and the session span must never be used to fill it in
-    (T-06 / AC-016). A run whose claims were measured (``[CLAIMS]`` line /
-    ``claims`` subobject) grows an extra ``claims`` key; a run without one
-    keeps the R9 key set byte-for-byte, so old reports are unchanged.
+    (T-06 / AC-016). The terminal status carries its provenance and worker ID
+    when the ledger recorded them. A run with measured claims also includes
+    the ``claims`` key.
 
     ``project`` (R18) is the same raw value the ``by project`` grouping joins
     (``build_report`` line that builds a unit): ledger ``start.project`` first,
@@ -1399,6 +1405,8 @@ def _run_detail_row(
         "wall_s": wall_s,
         "wall_kind": "run" if wall_s is not None else "none",
         "status": run.get("status"),
+        "status_source": run.get("status_source"),
+        "worker_run_id": run.get("worker_run_id"),
         "attribution": _run_attribution(run, claude_exact),
         "session_id": run.get("session_id"),
         "open_run": open_run,
@@ -1437,6 +1445,8 @@ def _pm_detail_row(unit: Mapping[str, Any]) -> dict[str, Any]:
         "wall_s": span,
         "wall_kind": "session" if span is not None else "none",
         "status": None,
+        "status_source": None,
+        "worker_run_id": None,
         "attribution": "exact",
         "session_id": unit.get("session_id"),
         "open_run": False,
@@ -1495,8 +1505,9 @@ def build_report(
     labels its wall source with ``wall_kind`` (``run`` / ``session`` / ``none``):
     a group that has ledger run walls never mixes in session spans, because a
     PM window can span days while a run lasts seconds (T-06).
-    ``unknown_cli`` runs (codex, missing claude log) appear in ``coverage``
-    only, never in a token group.
+    Model, type, key and project groups require attributable session tokens.
+    Delivery status counts all closed worker attempts, including those
+    without a session log, and lists attempts without a worker ID separately.
 
     Window is half-open ``[since, until)`` with ``until`` defaulting to ``now``
     (R7). ``runs``/``runs_total`` are the run-level detail (R8-R10): the list is
@@ -1675,6 +1686,23 @@ def build_report(
 
     # -- run-level detail (R8-R10) ----------------------------------------
     detail_rows = _detail_rows(spawned_runs, units, by_session, claude_exact)
+    # Count completed worker attempts even when their session has no token data.
+    closed_worker_ids = {run["run_id"] for run in spawned_runs
+                         if run["source"] == "worker" and not run["open_run"]}
+    delivery_status: dict[str, dict[str, Any]] = {}
+    for row in detail_rows:
+        if row["run_id"] not in closed_worker_ids:
+            continue
+        name = (_norm(row["status"]) or UNKNOWN_LABEL) if row["worker_run_id"] else "(no worker run id)"
+        if name not in delivery_status:
+            delivery_status[name] = _new_group_entry(name)
+        entry = delivery_status[name]
+        entry["runs"] += 1
+        entry["calls"] += row["calls"] or 0
+        _add_tokens(entry["tokens"], row["tokens"])
+        if row["wall_s"] is not None:
+            entry["_walls"].append(row["wall_s"])
+    buckets["status"] = delivery_status
     runs_total = len(detail_rows)
     if limit is None:
         shown_runs = detail_rows
@@ -1886,7 +1914,8 @@ def format_report_text(report: Mapping[str, Any], detail: bool = False) -> str:
             for row in rows:
                 if row.get("wall_kind") == "session":
                     marked = True
-                lines.append(_format_row(row))
+                count = f"  runs {row['runs']}" if dim == "status" else ""
+                lines.append(_format_row(row) + count)
 
     detail_marked = False
     if detail:

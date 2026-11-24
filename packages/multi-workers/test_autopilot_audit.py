@@ -170,11 +170,10 @@ def test_audit_complete_sample_exit0_three_keys(tmp_path, capsys):
     _emit_verify(capsys, "[VERIFY] VC-009: audit_complete=0")
 
 
-# ── VC-009: missing research 留底 sample — exit 1 + gaps non-empty ────────────
+# ── VC-009: actual evidence references must resolve ─────────────────────────
 
 
-def test_audit_missing_research_sample_exit1_gaps_nonempty(tmp_path, capsys):
-    """Missing research 留底 (no evidence/ dir): exit 1 with a non-empty gap list."""
+def test_audit_dangling_evidence_references_block(tmp_path, capsys):
     _make_key(tmp_path, "sample-missing", with_evidence=False)
     result = _run_audit(tmp_path, "sample-missing")
     assert result.returncode == 1
@@ -182,17 +181,25 @@ def test_audit_missing_research_sample_exit1_gaps_nonempty(tmp_path, capsys):
     gaps = dossier["gaps"]
     assert gaps, "gaps must be non-empty for the missing-research sample"
     rules = {gap["rule"] for gap in gaps}
-    assert "research-evidence-missing" in rules  # DESIGN edge, no design-*.md
     assert "evidence-ref-missing" in rules  # dangling spec/design citations
     assert "decision-without-evidence" in rules
     for gap in gaps:
         assert gap["item"]
         assert gap["severity"] in ("blocking", "non-blocking")
     assert any(
-        gap["rule"] == "research-evidence-missing" and gap["severity"] == "blocking"
+        gap["rule"] == "evidence-ref-missing" and gap["severity"] == "blocking"
         for gap in gaps
     )
     _emit_verify(capsys, "[VERIFY] VC-009: audit_missing=1 gaps_nonempty=true")
+
+
+def test_audit_passes_without_research_or_dangling_references(tmp_path):
+    key_dir = _make_key(tmp_path, "sample-no-research", with_evidence=False)
+    (key_dir / "spec.md").write_text("# Spec\n\n| AC-001 | User flow works |\n", encoding="utf-8")
+    (key_dir / "design.md").write_text("# Design\n\nUse the existing entry point.\n", encoding="utf-8")
+    result = _run_audit(tmp_path, key_dir.name)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["gaps"] == []
 
 
 # ── VC-009: spec AC table extraction (locked errata format) ──────────────────

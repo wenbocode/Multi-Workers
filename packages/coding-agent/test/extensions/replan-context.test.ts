@@ -28,6 +28,8 @@ describe("replan context and triggers", () => {
 		);
 		const tool = tools[0];
 		if (!tool) throw new Error("replan tool missing");
+		expect(tool.description).toContain("Apply split, narrow and direct-exec directly as the PM");
+		expect(tool.description).toContain("Escalate requires a matching dp-pm-steer decision_id");
 		const base = { operation: "inspect", key: "demo" };
 		expect(Check(tool.parameters, base)).toBe(true);
 		expect(Check(tool.parameters, { ...base, section: "cards", offset: 20, limit: 50 })).toBe(true);
@@ -84,6 +86,8 @@ describe("replan context and triggers", () => {
 				expect(message.content).toContain("key=demo, task=task-1");
 				expect(message.content).toContain("重派被 replan-required 拒绝");
 				expect(message.content).toContain("证据未变化时复用");
+				expect(message.content).toContain("收窄、拆卡和接手可以由 PM 直接发布");
+				expect(message.content).toContain("上抛须用匹配的 dp-pm-steer 裁决");
 			}
 		},
 	);

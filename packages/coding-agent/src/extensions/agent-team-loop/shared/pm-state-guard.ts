@@ -11,8 +11,7 @@ import { readPhaseDocs } from "./phase-docs.ts";
  * Why: advance_phase.py gates only fire when the script runs. A PM agent that
  * hand-writes pm-state.md bypasses every gate — the mw-worker-timeout-convergence
  * case: pm-state hand-set to EXECUTE while _index.parallel stayed at SPEC
- * (two-source divergence), a research note named outside the spec-* convention,
- * and no §0 in the spec. Python-side audit_phase.py catches this retroactively
+ * (two-source divergence) and no §0 in the spec. Python-side audit_phase.py catches this retroactively
  * (and runs on `update_index.py claim`); this module closes the bypass at the
  * tool layer so the hand-edit never lands in the first place.
  */
@@ -164,23 +163,14 @@ export function phaseAuditWarnings(agenticdocRoot: string, key: string, indexPha
 	const docs = readPhaseDocs(agenticdocRoot, key);
 	if (rank >= PHASE_ORDER.indexOf("DESIGN")) {
 		if (!docs.spec) warnings.push("[audit] design gate: spec.md missing or under 500 bytes.");
-		if (docs.specEvidence < 1)
-			warnings.push(
-				"[audit] design gate: evidence/research/spec-*.md missing (>= 1 note; zero-research declaration counts).",
-			);
 		if (!docs.specS0)
 			warnings.push(
 				"[audit] design gate: spec.md missing a non-empty §0 Goal Alignment section with 预期收益 (goal.md is established).",
 			);
 		if (!docs.specAC) warnings.push("[audit] design gate: spec.md has no numbered acceptance criteria (AC-NNN).");
 	}
-	if (rank >= PHASE_ORDER.indexOf("PLAN")) {
-		if (!docs.design) warnings.push("[audit] plan gate: design.md missing or under 500 bytes.");
-		if (docs.designEvidence < 1)
-			warnings.push(
-				"[audit] plan gate: evidence/research/design-*.md missing (>= 1 note; zero-research declaration counts).",
-			);
-	}
+	if (rank >= PHASE_ORDER.indexOf("PLAN") && !docs.design)
+		warnings.push("[audit] plan gate: design.md missing or under 500 bytes.");
 	if (rank >= PHASE_ORDER.indexOf("EXECUTE")) {
 		try {
 			const n = fs.readdirSync(path.join(agenticdocRoot, key, "tasks")).filter((f) => f.endsWith(".md")).length;

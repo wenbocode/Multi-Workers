@@ -15,8 +15,8 @@
  *      `unknown-type`; a genuinely unknown value still is; the tool layer's
  *      accepted set and the worker runtime's registered set are locked to the
  *      single-source vocabulary.
- *   4. AC-004 change ledger: a report-declared file the trace never recorded
- *      flips the run and lands in `## Ledger Gaps`; a trace with no
+ *   4. Change ledger: a report-declared file the trace never recorded
+ *      leaves an advisory in `## Ledger Gaps`; a trace with no
  *      `[WRITE_FILE]` event but a non-empty declaration is `unjudgeable`
  *      (T-12/F-04), and a successful bash write is recorded like write/edit.
  *
@@ -321,13 +321,13 @@ describe("P-08 type vocabulary (T-07 requirement 3)", () => {
 	});
 });
 
-// ── 4. AC-004 change ledger folded into the terminal verdict ─────────────────
+// ── 4. Change ledger warnings ───────────────────────────────────────────────
 
 describe("AC-004 ledger gaps (T-07 requirement 6)", () => {
 	const COMPLETE_WITH_LEDGER = `${COMPLETE_RESEARCH}\n## 改动清单\n- src/a.ts\n- src/z.ts\n`;
 	const BASH_LEDGER_REPORT = `${COMPLETE_RESEARCH}\n## 改动清单\n- src/a.ts\n`;
 
-	it("a declared-but-unrecorded file flips the run and lands in ## Ledger Gaps", async () => {
+	it("a declared-but-unrecorded file leaves a warning in ## Ledger Gaps", async () => {
 		const fx = makeFixture("research");
 		// T-17c: the declared-but-unrecorded `src/z.ts` must exist on disk to be a
 		// real (off-ledger) write; a nonexistent path is warn-only now.
@@ -342,16 +342,15 @@ describe("AC-004 ledger gaps (T-07 requirement 6)", () => {
 
 		const run = readRun(fx);
 		console.log(`[VC-T07-4] ledger exit=${run.exit} status=${run.status}`);
-		expect(run.status).toBe("needs-clarification");
-		expect(run.exit).toBe(2);
+		expect(run.status).toBe("done");
+		expect(run.exit).toBe(0);
 		const output = fs.readFileSync(path.join(fx.taskDir, "output.md"), "utf8");
 		expect(output).toContain("## Ledger Gaps");
 		expect(output).toContain("src/z.ts");
-		const detail = readTerminalDetail(fx.taskDir, "needs-clarification");
-		expect(detail).toContain("未记录写入：src/z.ts");
+		expect(readTerminalDetail(fx.taskDir, "done")).toContain("账本警告（1）");
 	});
 
-	it("T-12/F-04: a trace with no [WRITE_FILE] event and a declaration is unjudgeable, not green", async () => {
+	it("T-12/F-04: a trace with a declaration and no write event leaves an unjudgeable warning", async () => {
 		const fx = makeFixture("research");
 		// T-17c: both declared files must exist for the empty trace to be
 		// unjudgeable; an off-disk declaration has no write to reconcile.
@@ -366,15 +365,12 @@ describe("AC-004 ledger gaps (T-07 requirement 6)", () => {
 
 		const run = readRun(fx);
 		console.log(`[VC-T12-F04] unjudgeable exit=${run.exit} status=${run.status}`);
-		// The declaration cannot be confirmed or refuted without events: the run
-		// is not a clean pass, and the reason is named on the readback line.
-		expect(run.status).toBe("needs-clarification");
-		expect(run.exit).toBe(2);
+		expect(run.status).toBe("done");
+		expect(run.exit).toBe(0);
 		const output = fs.readFileSync(path.join(fx.taskDir, "output.md"), "utf8");
 		expect(output).toContain("## Ledger Unjudgeable");
 		expect(output).toContain("未记录写入（不可判）：src/a.ts、src/z.ts");
-		const detail = readTerminalDetail(fx.taskDir, "needs-clarification");
-		expect(detail).toContain("未记录写入（不可判）");
+		expect(readTerminalDetail(fx.taskDir, "done")).toContain("账本警告（2）");
 	});
 
 	it("migration: no [WRITE_FILE] event and no declaration is not judged", async () => {
@@ -446,6 +442,6 @@ describe("AC-004 ledger gaps (T-07 requirement 6)", () => {
 		expect(gaps.judged).toBe(true);
 		expect(gaps.missingSections).toEqual([]);
 		expect(gaps.unrecordedFiles).toEqual(["src/z.ts"]);
-		expect(gaps.ok).toBe(false);
+		expect(gaps.ok).toBe(true);
 	});
 });
