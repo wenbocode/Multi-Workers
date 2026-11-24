@@ -9,6 +9,7 @@ import {
 	restrictedPrepareEnvelope,
 } from "./pm/prepare-tool.ts";
 import { ProductionRuntimeHost, registerProductionRuntimeEvents } from "./pm/runtime-host-adapter.ts";
+import { registerSpecGoalCommand } from "./pm/spec-goal-command.ts";
 import { registerLocalCodex } from "./shared/codex-local.ts";
 import { registerContextPolicy } from "./shared/context-extension.ts";
 import { configureDeepSeek } from "./shared/deepseek-provider.ts";
@@ -142,6 +143,7 @@ async function compose(pi: ExtensionAPI): Promise<AgentTeamLoopComposition> {
 			runtimeHost: host.adapterHooks(),
 		});
 		pmActivate(pi, projectDir, host, submitHandle);
+		registerSpecGoalCommand(pi, projectDir);
 		// PM branch: the SAME entry, with the structural `pm` role. The PM is the
 		// only initiator of dp2 (主动 checkpoint) and of the dp25 sign-off material
 		// (design D003/§4.4); a worker window is refused with zero spawn. The PM
