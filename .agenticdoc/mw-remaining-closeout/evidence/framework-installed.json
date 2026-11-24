@@ -1,0 +1,89 @@
+{
+  "commit": "84bbc2788c9555b350821056f206a698dc6db375",
+  "review_commit": "dd0e6f36cb3d5183b672b0c35aa46592c3700ca7",
+  "identical_remote_tree": true,
+  "source": "E:\\gitlite\\Multi-Workers\\.mw\\agentictask-signoff-review",
+  "projects": [
+    {
+      "project": "E:\\gitlite\\Multi-Workers",
+      "skill_commit": "84bbc2788c9555b350821056f206a698dc6db375",
+      "claude_commit": "84bbc27",
+      "skill_files_checked": 112,
+      "claude_files_checked": 45,
+      "claude_advance_sha256": "11bb162923d67c5d16381fb788df832e6b3c41d8d9eccc13a491aa7848e7894f",
+      "backup": "E:\\gitlite\\Multi-Workers\\.mw\\agentictask-signoff-rollout-20261124",
+      "verified": true
+    },
+    {
+      "project": "E:\\gitlite\\Bearing",
+      "skill_commit": "84bbc2788c9555b350821056f206a698dc6db375",
+      "claude_commit": "84bbc27",
+      "skill_files_checked": 112,
+      "claude_files_checked": 45,
+      "claude_advance_sha256": "11bb162923d67c5d16381fb788df832e6b3c41d8d9eccc13a491aa7848e7894f",
+      "backup": "E:\\gitlite\\Bearing\\.mw\\agentictask-signoff-rollout-20261124",
+      "verified": true
+    },
+    {
+      "project": "E:\\gitlite\\Overcode",
+      "skill_commit": "84bbc2788c9555b350821056f206a698dc6db375",
+      "claude_commit": "84bbc27",
+      "skill_files_checked": 112,
+      "claude_files_checked": 45,
+      "claude_advance_sha256": "11bb162923d67c5d16381fb788df832e6b3c41d8d9eccc13a491aa7848e7894f",
+      "backup": "E:\\gitlite\\Overcode\\.mw\\agentictask-signoff-rollout-20261124",
+      "verified": true
+    },
+    {
+      "project": "E:\\MWWS\\AssetsGate",
+      "skill_commit": "84bbc2788c9555b350821056f206a698dc6db375",
+      "claude_commit": "84bbc27",
+      "skill_files_checked": 112,
+      "claude_files_checked": 45,
+      "claude_advance_sha256": "11bb162923d67c5d16381fb788df832e6b3c41d8d9eccc13a491aa7848e7894f",
+      "backup": "E:\\MWWS\\AssetsGate\\.mw\\agentictask-signoff-rollout-20261124",
+      "verified": true
+    },
+    {
+      "project": "E:\\MWWS\\Gaze",
+      "skill_commit": "84bbc2788c9555b350821056f206a698dc6db375",
+      "claude_commit": "84bbc27",
+      "skill_files_checked": 112,
+      "claude_files_checked": 45,
+      "claude_advance_sha256": "11bb162923d67c5d16381fb788df832e6b3c41d8d9eccc13a491aa7848e7894f",
+      "backup": "E:\\MWWS\\Gaze\\.mw\\agentictask-signoff-rollout-20261124",
+      "verified": true
+    },
+    {
+      "project": "E:\\MWWS\\RenderPerformance",
+      "skill_commit": "84bbc2788c9555b350821056f206a698dc6db375",
+      "claude_commit": "84bbc27",
+      "skill_files_checked": 112,
+      "claude_files_checked": 45,
+      "claude_advance_sha256": "11bb162923d67c5d16381fb788df832e6b3c41d8d9eccc13a491aa7848e7894f",
+      "backup": "E:\\MWWS\\RenderPerformance\\.mw\\agentictask-signoff-rollout-20261124",
+      "verified": true
+    },
+    {
+      "project": "E:\\MWWS\\SceneProfiler",
+      "skill_commit": "84bbc2788c9555b350821056f206a698dc6db375",
+      "claude_commit": "84bbc27",
+      "skill_files_checked": 112,
+      "claude_files_checked": 45,
+      "claude_advance_sha256": "11bb162923d67c5d16381fb788df832e6b3c41d8d9eccc13a491aa7848e7894f",
+      "backup": "E:\\MWWS\\SceneProfiler\\.mw\\agentictask-signoff-rollout-20261124",
+      "verified": true
+    },
+    {
+      "project": "E:\\MWWS\\UEPerformanceFlow",
+      "skill_commit": "84bbc2788c9555b350821056f206a698dc6db375",
+      "claude_commit": "84bbc27",
+      "skill_files_checked": 112,
+      "claude_files_checked": 45,
+      "claude_advance_sha256": "11bb162923d67c5d16381fb788df832e6b3c41d8d9eccc13a491aa7848e7894f",
+      "backup": "E:\\MWWS\\UEPerformanceFlow\\.mw\\agentictask-signoff-rollout-20261124",
+      "verified": true
+    }
+  ],
+  "development_preserved": true
+}

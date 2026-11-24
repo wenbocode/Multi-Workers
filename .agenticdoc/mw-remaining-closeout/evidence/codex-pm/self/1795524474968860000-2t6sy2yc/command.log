@@ -1,0 +1,35 @@
+{
+  "source_commit": "61e40b19882b3676b8baae9cbb2cb02eb1a491a7",
+  "source_files": 125,
+  "regression_tests": 1513,
+  "framework_commit": "84bbc2788c9555b350821056f206a698dc6db375",
+  "projects_verified": 8,
+  "development_preserved": true,
+  "global": {
+    "entry": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\bin\\mw.cmd",
+    "path": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-remaining-closeout-20261124\\packages\\multi-workers\\mw.py",
+    "root": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-remaining-closeout-20261124",
+    "release": "mw-remaining-closeout-20261124",
+    "commit": "61e40b19882b3676b8baae9cbb2cb02eb1a491a7",
+    "base_commit": "4bcdbccd5957031e7b12aa5d18765ee3d7a2fdbd"
+  },
+  "global_extension": {
+    "path": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-remaining-closeout-20261124\\packages\\multi-workers\\mw.py",
+    "root": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-remaining-closeout-20261124",
+    "release": "mw-remaining-closeout-20261124",
+    "commit": "61e40b19882b3676b8baae9cbb2cb02eb1a491a7",
+    "base_commit": "4bcdbccd5957031e7b12aa5d18765ee3d7a2fdbd",
+    "uses_global_default": true
+  },
+  "backend": {
+    "pid": 71188,
+    "path": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-remaining-closeout-20261124\\packages\\multi-workers\\mw.py",
+    "root": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-remaining-closeout-20261124",
+    "release": "mw-remaining-closeout-20261124",
+    "commit": "61e40b19882b3676b8baae9cbb2cb02eb1a491a7",
+    "base_commit": "4bcdbccd5957031e7b12aa5d18765ee3d7a2fdbd",
+    "observed": true,
+    "uses_global_default": true
+  },
+  "self_verification_only": true
+}

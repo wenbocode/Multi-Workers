@@ -1,0 +1,16 @@
+
+test_commented_ue_registration_is_not_a_test (test_template.TemplateTests.test_commented_ue_registration_is_not_a_test) ... ok
+test_config_change_invalidates_gate_approvals (test_template.TemplateTests.test_config_change_invalidates_gate_approvals) ... ok
+test_implementation_change_invalidates_approval (test_template.TemplateTests.test_implementation_change_invalidates_approval) ... ok
+test_independent_module_minimal_execution (test_template.TemplateTests.test_independent_module_minimal_execution) ... ok
+test_install_is_local_and_non_destructive (test_template.TemplateTests.test_install_is_local_and_non_destructive) ... ok
+test_invalid_generated_graph_rolls_back (test_template.TemplateTests.test_invalid_generated_graph_rolls_back) ... ok
+test_missing_source_root_is_refused (test_template.TemplateTests.test_missing_source_root_is_refused) ... ok
+test_real_registration_generates_proposed_testcase (test_template.TemplateTests.test_real_registration_generates_proposed_testcase) ... ok
+test_removal_requires_opt_in_and_new_review (test_template.TemplateTests.test_removal_requires_opt_in_and_new_review) ... ok
+test_source_fact_failure_preserves_catalogs (test_template.TemplateTests.test_source_fact_failure_preserves_catalogs) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 9.690s
+
+OK

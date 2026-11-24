@@ -1,5 +1,7 @@
 # MW 精简批 0/1 Review List
 
+2026-11-24 后续收尾已提交并安装 MW `61e40b198`，八项目 AgenticTask 已更新为 `84bbc27`。下文保留精简批首次交付的历史基线；当前版本、逐文件 key 归属和复验证据见[剩余开发收尾清单](mw-remaining-review-list-20261124.md)。
+
 复核基线为 Multi-Workers `606ee4014`、AgenticTask `df8ecf6` 和已安装的用户级版本 `mw-lean-2395dd1af7`。AgenticTask 的 `origin/master` 已核对指向 `df8ecf6`。设计中的 RenderPerformance 试点另行验收。 [设计](mw-lean-design-plan-20261124.md) [源码结案](../.agenticdoc/mw-lean-execution/achieved.md) [发布结案](../.agenticdoc/mw-lean-global-release/achieved.md)
 
 ## 功能与边界

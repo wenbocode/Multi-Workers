@@ -1,0 +1,26 @@
+{
+  "key": "mw-remaining-closeout",
+  "task": null,
+  "criteria": [
+    "AC-001",
+    "AC-002",
+    "AC-003"
+  ],
+  "argv": [
+    "python",
+    "-X",
+    "utf8",
+    "-B",
+    ".tmp/remaining_acceptance.py"
+  ],
+  "cwd": "E:\\gitlite\\Multi-Workers",
+  "basis": {
+    "contract_sha256": "4bda8b262d699f92a62ffe0873d7aae63f18457a8723c25a2c855c8483199354",
+    "source_sha256": "758343d99aee329b66e777dce1f628f335def4dd5f39fe07f18dcdb880a19b30"
+  },
+  "started": "2026-11-24T12:47:54.969891+00:00",
+  "verdict": "passed",
+  "exit_code": 0,
+  "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-remaining-closeout\\evidence\\codex-pm\\self\\1795524474968860000-2t6sy2yc\\command.log",
+  "finished": "2026-11-24T12:48:15.556212+00:00"
+}

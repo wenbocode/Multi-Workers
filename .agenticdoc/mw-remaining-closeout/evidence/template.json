@@ -1,0 +1,19 @@
+{
+  "command": [
+    "C:\\Program Files\\Python312\\python.exe",
+    "-X",
+    "utf8",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "packages/multi-workers/templates/ue-continue-develop-frame/tests",
+    "-v"
+  ],
+  "cwd": "E:\\gitlite\\Multi-Workers",
+  "rc": 0,
+  "seconds": 9.77,
+  "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-remaining-closeout\\evidence\\template.log",
+  "at": "2026-11-24T12:33:52.554122+00:00"
+}

@@ -1,0 +1,13 @@
+{
+  "command": [
+    "node",
+    "--experimental-strip-types",
+    "--test",
+    "packages/multi-workers/test_duty_followup.ts"
+  ],
+  "cwd": "E:\\gitlite\\Multi-Workers",
+  "rc": 0,
+  "seconds": 1.48,
+  "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-remaining-closeout\\evidence\\duty.log",
+  "at": "2026-11-24T12:35:02.175510+00:00"
+}

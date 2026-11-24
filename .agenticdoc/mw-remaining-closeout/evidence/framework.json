@@ -1,0 +1,19 @@
+{
+  "command": [
+    "C:\\Program Files\\Python312\\python.exe",
+    "-X",
+    "utf8",
+    "-B",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "scripts/test_advance_phase.py"
+  ],
+  "cwd": "E:\\gitlite\\Multi-Workers\\packages\\multi-workers\\.tmp\\agentic-task",
+  "rc": 0,
+  "seconds": 5.97,
+  "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-remaining-closeout\\evidence\\framework.log",
+  "at": "2026-11-24T12:26:37.277896+00:00"
+}

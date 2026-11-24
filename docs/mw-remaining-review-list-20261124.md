@@ -17,9 +17,10 @@
 ## 验证与运行版本
 
 - 当前根检查和定向回归的完整结果位于 `.agenticdoc/mw-remaining-closeout/evidence/`；以最终日志和命令退出码为准，早期红测保留。
-- 冻结候选：`mw-remaining-closeout-20261124`；MW 扩展自检与 pi 编译通过。最终提交、激活及入口核对结果补记在本 key 的 `achieved.md`。
+- 源码已提交 `61e40b198`（126 个文件），冻结版 `mw-remaining-closeout-20261124` 已全局安装。MW 扩展自检、pi 编译和新进程入口核对通过，pi 为 0.83.0。
 - 本轮为 Codex 自验；不将自验称为新的独立复核，也不将旧 SDD key 的阶段直接手改为 DONE。真实 UE/UBT、带费用模型请求及 RenderPerformance 试点不属于本次离线收尾。
-- AgenticTask 新版本远端发布及八项目再次升级，遵守用户此前“发布前再确认”的约定；准备好的版本与当前已安装 df8ecf6 分开记录。
+- 用户已确认发布并升级八项目。远端先出现 `84bbc27`，其整棵源码树与本轮 `dd0e6f3` 完全相同；独立审查克隆据此快进，未强推或制造重复提交。八项目的实际 skill HEAD 与 Claude 适配器均已核对为 `84bbc27`。
+- Multi-Workers 的 `.agents/skills/agentic-task` 现为干净安装克隆。旧 junction 保存在 `.mw/agentictask-signoff-rollout-20261124/skill-before`；它指向的开发克隆仍为 df8ecf6，原 HEAD、索引、全部已跟踪文件字节及 diff 均核对未变。其他七项目的旧 skill 和四组 Claude 目录也完整保存在各自同名备份目录。
 
 ## 精确文件归属
 

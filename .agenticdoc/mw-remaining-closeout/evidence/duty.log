@@ -1,0 +1,38 @@
+✔ changed original PM session refuses a send before any request is created (31.9202ms)
+✔ transport receipts and working activity never count as engineering progress (29.1619ms)
+✔ stable idle emits one stop and an unchanged stop is deduplicated (15.5355ms)
+✔ a busy emitter retains the persisted pending notice and later emits it once (27.6597ms)
+✔ stable-ID sends are idempotent; changed bodies and arbitrary IDs are refused (30.2009ms)
+✔ owner change refuses the original stable stop without creating a request (13.9801ms)
+✔ binding change refuses the original stable stop without creating a request (13.8988ms)
+✔ session change refuses the original stable stop without creating a request (14.2204ms)
+✔ offline receiver refuses the original stable stop without creating a request (16.354ms)
+✔ DONE phase refuses the original stable stop without creating a request (14.2972ms)
+✔ DONE emits one bounded suspended diagnosis and keeps sends refused (25.2965ms)
+✔ restart reconciles the exact ID and receipt; a later session switch closes send authority (64.3242ms)
+✔ one no-progress notice follows an unchanged idle without an automatic resend (35.0398ms)
+✔ evidence candidates are observation only; heartbeat, receipts and controller files do not rearm (34.7487ms)
+✔ an uncertain transport keeps the same stable ID and stays uncertain until a real receipt (29.2849ms)
+✔ MW/pi source is closed, persisted and included in ID conflict comparison (14.5402ms)
+✔ malformed ledger and unreadable target queue fail closed without sending (31.5457ms)
+✔ mature keys use a bounded partial inventory without losing authoritative PM state (350.0548ms)
+✔ ordinary non-candidate saturation caps directory work while PM anchors remain observed (237.1021ms)
+✔ a busy pending stop is invalidated before emission after working (14.3237ms)
+✔ first send revalidates an already emitted stop after working (13.3712ms)
+✔ a busy pending stop is invalidated before emission after evidence (14.6741ms)
+✔ first send revalidates an already emitted stop after evidence (13.2489ms)
+✔ legitimate key, task and evidence names containing controller labels stay observable (9.9606ms)
+✔ uncertain write then restart and new evidence cannot allocate a successor stop or request (39.4416ms)
+✔ reserved crash before request publication blocks successors until a real receipt (52.5271ms)
+✔ reserved crash after request publication blocks successors until a real receipt (50.6416ms)
+✔ busy pending stop survives offline suspension and restart exactly once (22.1789ms)
+✔ busy pending stop survives unreadable suspension and restart exactly once (20.6466ms)
+✔ real receiver labels MW/pi follow-up and rejects a forged source+duty envelope (13.396ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1423.96
