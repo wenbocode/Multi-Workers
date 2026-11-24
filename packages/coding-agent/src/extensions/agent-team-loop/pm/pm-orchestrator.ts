@@ -2453,7 +2453,7 @@ export const PARALLEL_PROTOCOL = [
 	"先执行最小验证，按观察结果推进。可直接读代码回答的问题由 PM 查证。确需独立调研时用 type: research，每卡写一份独立证据。用户仅要求讨论时按讨论范围回答，缺少授权时说明具体待决事项。",
 	"在 design.md 的 Function Flow 写“### 必要功能路径”表，列 | FLOW-001 | 真实入口或触发 | 可观察结果 | 逗号分隔的 VC |，覆盖必要的正常和失败路径。",
 	"在 plan.md 用“## 计划裁剪”说明取舍。用“## 保留任务”表列 | T-001-slug | 产出 |。用“## 闭环覆盖”表为每条 AC 和 FLOW 列 | AC-001 或 FLOW-001 | 逗号分隔的任务 ID 或 existing: evidence/文件 | 逗号分隔的 VC |。复用能力时先实测并保存证据。按 MW docs/plan-closure.md 写 scope-review.json。通过 PLAN → TASKS 门禁后按保留任务拆卡。",
-	"每张卡声明 type，写明首个可验证结果、取得它的命令或操作，以及真实入口、预期结果和命令退出码。write_face 覆盖所有编辑目标。research/review 卡的 timeout 至少 30 分钟。修改与自验放在同一卡，独立评审另派。图片或截图任务用 type: vision。",
+	"每张卡声明 type，写明首个可验证结果、取得它的命令或操作，以及真实入口、预期结果和命令退出码。中间 coding 卡只验编译通过、最小正例与破坏性负例（中途取消、失效解绑、归属重验、底层不可用禁报 ready），防伪留证走宿主工具，非 spec_goal 产品禁止要求自写证据一致性对账脚本；PM 先复核实际 diff 的生命周期与状态诚实性不变量（复杂改动另派独立评审），通过后在竖切收口跑一次重型真机留证。write_face 覆盖所有编辑目标。research/review 卡的 timeout 至少 30 分钟。修改与自验放在同一卡，图片或截图任务用 type: vision。",
 	"按文件与模块划分写入边界。同一文件同一时刻只允许一个 worker。检查依赖、写入冲突和槽位，在同一轮派出所有同时就绪的卡，收到终态后续派下一批。",
 	"只读任务有可核验的进展时，PM 可用 extend_worker_deadline 为本次运行续期一次。",
 	"正常接续 key、worker 成功或继续派发现有任务时沿用现有计划，不例行调用 replan_tasks。剩余计划确需变更时 inspect 具体任务，证据未变就复用 issue/snapshot。后继卡走原派发入口。",

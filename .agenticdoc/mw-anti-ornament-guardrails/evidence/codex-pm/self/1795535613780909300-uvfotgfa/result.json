@@ -1,0 +1,28 @@
+{
+  "key": "mw-anti-ornament-guardrails",
+  "task": null,
+  "criteria": [
+    "AC-001",
+    "AC-003"
+  ],
+  "argv": [
+    "python",
+    "-B",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "packages/multi-workers/test_init_agents_guide.py"
+  ],
+  "cwd": "E:\\gitlite\\Multi-Workers",
+  "basis": {
+    "contract_sha256": "f3da4949bef6efc9c3b7f9cd2597bf55f6be5cd608c981e357bd42844ab97b69",
+    "source_sha256": "73d6cd2344ca933f521171ad79aa7af43ff3be65915b1be01059d6ff05ea3753"
+  },
+  "started": "2026-11-24T15:53:33.781420+00:00",
+  "verdict": "passed",
+  "exit_code": 0,
+  "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-anti-ornament-guardrails\\evidence\\codex-pm\\self\\1795535613780909300-uvfotgfa\\command.log",
+  "finished": "2026-11-24T15:53:57.541817+00:00"
+}

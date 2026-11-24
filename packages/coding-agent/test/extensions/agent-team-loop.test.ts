@@ -134,6 +134,8 @@ import {
 import { goalMtime, writePhaseFile } from "../../src/extensions/agent-team-loop/worker/phase-runner.ts";
 import {
 	activeToolsForType,
+	CODING_INVARIANT_GUARDRAIL,
+	CODING_INVARIANT_GUARDRAIL_MARKER,
 	checkpointAnchorMs,
 	computeRisk,
 	DEFAULT_BUDGET_MS,
@@ -4943,6 +4945,10 @@ describe("pmActivate parallel protocol (mw-parallel-protocol)", () => {
 			expect(first?.systemPrompt).toContain("确需独立调研时用 type: research");
 			expect(first?.systemPrompt).toContain("同一文件同一时刻只允许一个 worker");
 			expect(first?.systemPrompt).toContain("同一轮派出所有同时就绪的卡");
+			expect(first?.systemPrompt).toContain("中间 coding 卡只验编译通过、最小正例与破坏性负例");
+			expect(first?.systemPrompt).toContain("禁止要求自写证据一致性对账脚本");
+			expect(first?.systemPrompt).toContain("先复核实际 diff 的生命周期与状态诚实性不变量");
+			expect(first?.systemPrompt).toContain("竖切收口跑一次重型真机留证");
 			expect(first?.systemPrompt).toContain("type: vision");
 			for (const heading of ["必要功能路径", "保留任务", "闭环覆盖"]) {
 				expect(first?.systemPrompt).toContain(heading);
@@ -4981,6 +4987,62 @@ describe("pmActivate parallel protocol (mw-parallel-protocol)", () => {
 			delete process.env.PI_WORKER_TASK;
 			delete process.env.PI_WORKER_IDLE_MS;
 			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("injects CODING_INVARIANT_GUARDRAIL idempotently for coding/repair only", async () => {
+		expect(CODING_INVARIANT_GUARDRAIL.length).toBeLessThanOrEqual(360);
+		expect(CODING_INVARIANT_GUARDRAIL).toContain("禁止自写证据一致性或哈希对账脚本");
+		expect(CODING_INVARIANT_GUARDRAIL).toContain("撤销绑定不得提前释放仍在读取的句柄或缓冲");
+		expect(CODING_INVARIANT_GUARDRAIL).toContain("delegate/track 须成对撤销");
+		expect(CODING_INVARIANT_GUARDRAIL).toContain("须复核窗口或会话归属");
+		expect(CODING_INVARIANT_GUARDRAIL).toContain("严禁报 ready");
+
+		const runChain = async (
+			hooks: Array<(event?: unknown, ctx?: unknown) => Promise<unknown> | unknown>,
+			initial: string | undefined,
+		) => {
+			let current = initial;
+			let mutated = false;
+			for (const hook of hooks) {
+				const out = (await hook(current === undefined ? {} : { systemPrompt: current })) as
+					| { systemPrompt?: string }
+					| undefined;
+				if (out?.systemPrompt !== undefined) {
+					current = out.systemPrompt;
+					mutated = true;
+				}
+			}
+			return { current: current ?? "", mutated };
+		};
+
+		for (const role of ["coding", "repair", "research", "review", "decide_prepare"] as const) {
+			const root = mkdtemp();
+			const taskDir = path.join(root, "key-a", "workers", `w-${role}`);
+			fs.mkdirSync(taskDir, { recursive: true });
+			fs.writeFileSync(path.join(taskDir, "task.md"), `type: ${role}\n\nwork\n`, "utf8");
+			const { pi, handlers } = fakePi();
+			process.env.PI_WORKER_TASK = path.join(taskDir, "task.md");
+			process.env.PI_WORKER_IDLE_MS = "60000";
+			try {
+				await workerModeActivate(pi);
+				const hooks = handlers.get("before_agent_start") ?? [];
+				const first = await runChain(hooks, "BASE");
+				if (role === "coding" || role === "repair") {
+					expect(first.current).toContain(CODING_INVARIANT_GUARDRAIL_MARKER);
+					expect(first.current.endsWith(CODING_INVARIANT_GUARDRAIL)).toBe(true);
+					const second = await runChain(hooks, first.current);
+					expect(second.mutated).toBe(false);
+					const fromEmpty = await runChain(hooks, undefined);
+					expect(fromEmpty.current).toBe(CODING_INVARIANT_GUARDRAIL);
+				} else {
+					expect(first.current).not.toContain(CODING_INVARIANT_GUARDRAIL_MARKER);
+				}
+			} finally {
+				delete process.env.PI_WORKER_TASK;
+				delete process.env.PI_WORKER_IDLE_MS;
+				fs.rmSync(root, { recursive: true, force: true });
+			}
 		}
 	});
 });

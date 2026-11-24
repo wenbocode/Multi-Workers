@@ -1,0 +1,22 @@
+{
+  "key": "mw-anti-ornament-guardrails",
+  "task": null,
+  "criteria": [
+    "AC-004"
+  ],
+  "argv": [
+    "npm.cmd",
+    "run",
+    "check"
+  ],
+  "cwd": "E:\\gitlite\\Multi-Workers",
+  "basis": {
+    "contract_sha256": "f3da4949bef6efc9c3b7f9cd2597bf55f6be5cd608c981e357bd42844ab97b69",
+    "source_sha256": "73d6cd2344ca933f521171ad79aa7af43ff3be65915b1be01059d6ff05ea3753"
+  },
+  "started": "2026-11-24T15:56:00.041089+00:00",
+  "verdict": "failed",
+  "exit_code": 3221225477,
+  "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\mw-anti-ornament-guardrails\\evidence\\codex-pm\\self\\1795535760038569900-p_7zsba7\\command.log",
+  "finished": "2026-11-24T15:56:11.767739+00:00"
+}

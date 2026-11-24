@@ -3828,6 +3828,14 @@ export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeO
 		if (systemPrompt !== base) return { systemPrompt };
 	});
 
+	if (meta.type === "coding" || meta.type === "repair") {
+		pi.on("before_agent_start", (event) => {
+			const base = event?.systemPrompt ?? "";
+			if (base.includes(CODING_INVARIANT_GUARDRAIL_MARKER)) return undefined;
+			return { systemPrompt: base ? `${base}\n\n${CODING_INVARIANT_GUARDRAIL}` : CODING_INVARIANT_GUARDRAIL };
+		});
+	}
+
 	// Read-scope interceptor (D-106): read/ls/find/grep share one containment
 	// gate. ls/find/grep default to the cwd (= project root) when their path
 	// is omitted — that implicit target goes through the same containment as
@@ -7080,3 +7088,15 @@ export function formatDp3TraceLine(input: {
 		` nc_raw=${input.ncRaw} nc_human=${input.ncHuman}`
 	);
 }
+
+/** Marker opening the persistent coding/repair invariant guardrail. */
+export const CODING_INVARIANT_GUARDRAIL_MARKER = "[mw coding worker] 代码不变量与反粉饰护栏";
+
+/** Static suffix injected for code-authoring worker roles (`coding`, `repair`). */
+export const CODING_INVARIANT_GUARDRAIL = [
+	CODING_INVARIANT_GUARDRAIL_MARKER,
+	"1. 非 task.md 或 spec_goal 明确要求的交付物，禁止自写证据一致性或哈希对账脚本；预算用于业务实现与正反例验证，直接运行验收命令。",
+	"2. 异步任务未完成或未排空前，撤销绑定不得提前释放仍在读取的句柄或缓冲。",
+	"3. 失效或析构路径不得解引用旧视图/对象，delegate/track 须成对撤销；锚点复用不得仅按裸地址匹配，须复核窗口或会话归属。",
+	"4. 底层原始数据（如 raw）不可用、为空或部分失败时，summary、计数与日志严禁报 ready。",
+].join("\n");

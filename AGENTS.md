@@ -183,7 +183,7 @@ If the user's instructions conflict with any rule in this document, ask for expl
 
 - 一个 key 只交付一个能在目标环境走通的用户竖切。Spec 控制在一页，最多 5 条 AC 和 10 张卡。超过任一数量时，PM 在 spec 阶段拆 key 后再推进。
 - `research` 和 `review` 卡片的 `timeout:` 至少 30 分钟。
-- 每张卡写明一条真实使用路径、它的可观察结果和验收命令的预期退出码。卡片的 `write_face` 覆盖正文点名的每个编辑目标。
+- 每张卡写明可观察结果和验收命令的预期退出码；中间 `coding` 卡验编译通过、最小正例与破坏性负例（中途取消、失效解绑、归属重验、底层不可用禁报 ready），PM 先复核实际 diff 的生命周期与状态诚实性不变量，竖切收口跑一次真实入口留证。防伪走宿主工具，非 `spec_goal` 产品不自写证据一致性脚本。卡片的 `write_face` 覆盖正文点名的每个编辑目标。
 
 ### 每个 key 选择一个 PM
 
