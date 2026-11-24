@@ -41,6 +41,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { isSameOrUnder } from "../worker/read-scope.ts";
 import { parseWriteFileEvents } from "./change-ledger.ts";
 import { readRunState } from "./run-store.ts";
 // W1 (mw-worker-output-contract): the basename whitelist now lives in the
@@ -211,8 +212,8 @@ function findTraceEvidence(taskDir: string, projectRoot: string): DeliverableEvi
 	const evidenceDir = path.join(keyDir, "evidence");
 	let realEvidenceDir: string;
 	try {
-		realEvidenceDir = path.join(fs.realpathSync(keyDir), "evidence");
-		if (path.relative(realEvidenceDir, fs.realpathSync(evidenceDir)) !== "") return;
+		realEvidenceDir = path.join(fs.realpathSync.native(keyDir), "evidence");
+		if (path.relative(realEvidenceDir, fs.realpathSync.native(evidenceDir)) !== "") return;
 	} catch {
 		return;
 	}
@@ -220,11 +221,12 @@ function findTraceEvidence(taskDir: string, projectRoot: string): DeliverableEvi
 	let fallback: DeliverableEvidence | undefined;
 	for (const target of parseWriteFileEvents(segment).reverse()) {
 		const candidate = path.resolve(projectRoot, target);
-		const relative = path.relative(evidenceDir, candidate);
-		if (!isRelativeChild(relative)) continue;
 		try {
-			const real = fs.realpathSync(candidate);
-			if (!isRelativeChild(path.relative(realEvidenceDir, real))) continue;
+			const realParent = fs.realpathSync.native(path.dirname(candidate));
+			if (!isSameOrUnder(realEvidenceDir, realParent)) continue;
+			const real = fs.realpathSync.native(candidate);
+			const relative = path.relative(realEvidenceDir, real);
+			if (!isRelativeChild(relative)) continue;
 			const stat = fs.statSync(real);
 			if (!stat.isFile() || stat.size === 0 || stat.mtimeMs < startedAt) continue;
 			const detail = `evidence/${relative.split(path.sep).join("/")}`;

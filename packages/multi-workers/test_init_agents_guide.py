@@ -46,6 +46,7 @@ def test_new_project_uses_shipped_guide(project):
     assert codex.read_text(encoding="utf-8") == (PACKAGE / "templates" / "codex_doc.md").read_text(encoding="utf-8")
     assert "仅供 Codex PM 使用" in codex.read_text(encoding="utf-8")
     assert "Workflow: codex-lite" in installed and "PM mode: mw" in installed
+    assert "### Key 和任务卡规模" in installed and "最多 5 条 AC 和 10 张卡" in installed
     assert "spec → design → plan → tasks → execute → verify → done" in installed
     assert "- Workflow: codex-lite" in codex.read_text(encoding="utf-8")
     assert "- Claim-Id: codex" in codex.read_text(encoding="utf-8")

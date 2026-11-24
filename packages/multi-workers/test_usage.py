@@ -594,7 +594,9 @@ def test_delivery_status_counts_closed_workers_and_separates_missing_ids(tmp_pat
     report = usage.build_report(now=NOW, since=SINCE, pi_root=tmp_path / "empty", claude_roots=[], limit=1)
     assert len(report["runs"]) == 1
     assert {row["name"]: row["runs"] for row in report["groups"]["status"]} == {
-        "needs-clarification": 1, "(no worker run id)": 2,
+        "needs-clarification": 1,
+        "needs-clarification (no worker run id)": 1,
+        "done (no worker run id)": 1,
     }
     report = usage.build_report(now=NOW, since=SINCE, pi_root=tmp_path / "empty", claude_roots=[], limit=0)
     rows = {row["run_id"]: row for row in report["runs"]}
@@ -976,7 +978,7 @@ def test_format_report_text_matches_fixture(tmp_path, monkeypatch) -> None:
             "   cacheW 42k    wall p50 -      p90 -      n 1",
             "",
             "by delivery status",
-            "  (no worker run id)       calls 2     in 1.2M   out 310k   cacheR 11.4M"
+            "  done (no worker run id)  calls 2     in 1.2M   out 310k   cacheR 11.4M"
             "   cacheW 42k    wall p50 -      p90 -      n 2  runs 2",
             "",
             "coverage: pi 1 runs (exact) · codex 1 (未统计)",

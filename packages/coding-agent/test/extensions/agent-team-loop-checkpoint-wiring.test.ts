@@ -588,6 +588,15 @@ describe("worker_file trace evidence (VC-005/VC-006)", () => {
 			channel: "trace",
 			detail: "evidence/fresh.md",
 		});
+		// Mixed canonical/alias spellings (e.g. Windows 8.3 short taskDir vs
+		// realpathSync.native trace target) must resolve to the same evidence file.
+		const canonicalFresh = fs.realpathSync.native(fresh);
+		appendWriteFileEvent(tracePath, canonicalFresh);
+		expect(hasDeliverableEvidence(taskDir)).toMatchObject({
+			delivered: true,
+			channel: "trace",
+			detail: "evidence/fresh.md",
+		});
 	});
 
 	it("VC-005: a legal call appends to progress.md and lands [TOOL] worker_file in trace.log", async () => {

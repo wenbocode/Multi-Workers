@@ -4,6 +4,12 @@
 
 先阅读项目已有的 `CLAUDE.md` 或 `CLAUDE.MD`，以及控制工作区的 `.agenticdoc/goal.md`。MW PM 使用已安装的 `agentic-task` skill；Codex PM 按下面的轻量入口工作。讨论和只读调查可以直接进行，实施前必须有已认领的 key。
 
+### Key 和任务卡规模
+
+- 一个 key 只交付一个能在目标环境走通的用户竖切。Spec 控制在一页，最多 5 条 AC 和 10 张卡。超过任一数量时，PM 在 spec 阶段拆 key 后再推进。
+- `research` 和 `review` 卡片的 `timeout:` 至少 30 分钟。
+- 每张卡写明一条真实使用路径、它的可观察结果和验收命令的预期退出码。卡片的 `write_face` 覆盖正文点名的每个编辑目标。
+
 ### 每个 key 选择一个 PM
 
 | PM 与流程记录 | 计划、执行和验收方式 |

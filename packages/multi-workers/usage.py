@@ -1693,7 +1693,8 @@ def build_report(
     for row in detail_rows:
         if row["run_id"] not in closed_worker_ids:
             continue
-        name = (_norm(row["status"]) or UNKNOWN_LABEL) if row["worker_run_id"] else "(no worker run id)"
+        status_label = _norm(row["status"]) or UNKNOWN_LABEL
+        name = status_label if row["worker_run_id"] else f"{status_label} (no worker run id)"
         if name not in delivery_status:
             delivery_status[name] = _new_group_entry(name)
         entry = delivery_status[name]

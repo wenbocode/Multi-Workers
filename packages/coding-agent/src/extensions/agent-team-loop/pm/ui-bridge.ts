@@ -1564,7 +1564,7 @@ export function makeScopedDocGateNotifier(
 		displaySummary(
 			pi,
 			`[mw] skipped dispatch for '${key}' — missing phase docs: ${gaps.join("; ")}. ` +
-				"Generate spec/design + evidence/research notes (agentic-task workflows), or move ad-hoc work under _scratch.",
+				"Complete the missing requirements via the agentic-task requirements/system-design workflows, or move ad-hoc work under _scratch.",
 		);
 		return true;
 	};
