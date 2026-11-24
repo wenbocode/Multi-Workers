@@ -1,0 +1,59 @@
+{
+  "key": "agentictask-df8ecf6-rollout",
+  "summary": "\u516b\u9879\u76ee\u5b89\u88c5 AgenticTask df8ecf6 \u5e76\u6838\u5bf9 skill \u4e0e Claude \u7248\u672c\uff0c\u5f00\u53d1\u4fee\u6539\u5b8c\u6574\u4fdd\u7559",
+  "checks": [
+    {
+      "key": "agentictask-df8ecf6-rollout",
+      "task": null,
+      "criteria": [
+        "AC-001",
+        "AC-002",
+        "AC-003"
+      ],
+      "argv": [
+        "python",
+        "-B",
+        ".mw/tmp/agentictask-df8ecf6-rollout.py",
+        "verify"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "basis": {
+        "contract_sha256": "134cd747014ff016176a100aeee007caa027da1bc1b67a3fe5364baa7a55a69b",
+        "source_sha256": "1e2cc741e26ef9337d22a67234584e7938fe476be9d541bdadd6f3ddcaf1081b"
+      },
+      "started": "2026-11-24T11:46:06.471176+00:00",
+      "verdict": "failed",
+      "exit_code": 1,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\agentictask-df8ecf6-rollout\\evidence\\codex-pm\\self\\1795520766469413000-rep8l77p\\command.log",
+      "finished": "2026-11-24T11:46:17.970974+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\agentictask-df8ecf6-rollout\\evidence\\codex-pm\\self\\1795520766469413000-rep8l77p\\result.json"
+    },
+    {
+      "key": "agentictask-df8ecf6-rollout",
+      "task": null,
+      "criteria": [
+        "AC-001",
+        "AC-002",
+        "AC-003"
+      ],
+      "argv": [
+        "python",
+        "-B",
+        ".mw/tmp/agentictask-df8ecf6-rollout.py",
+        "verify"
+      ],
+      "cwd": "E:\\gitlite\\Multi-Workers",
+      "basis": {
+        "contract_sha256": "134cd747014ff016176a100aeee007caa027da1bc1b67a3fe5364baa7a55a69b",
+        "source_sha256": "d2ece2c92f482c703cc68f7a6aa04903970ba8021c05eebd34087ea5dec57fff"
+      },
+      "started": "2026-11-24T11:46:45.259598+00:00",
+      "verdict": "passed",
+      "exit_code": 0,
+      "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\agentictask-df8ecf6-rollout\\evidence\\codex-pm\\self\\1795520805258569200-_ywdght1\\command.log",
+      "finished": "2026-11-24T11:46:52.579515+00:00",
+      "evidence": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\agentictask-df8ecf6-rollout\\evidence\\codex-pm\\self\\1795520805258569200-_ywdght1\\result.json"
+    }
+  ],
+  "verified_at": "2026-11-24T11:47:23.369115+00:00"
+}

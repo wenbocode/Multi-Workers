@@ -1,0 +1,120 @@
+{
+  "commit": "df8ecf6eab53b65056f823522a0ece3fbba96195",
+  "source": "E:\\gitlite\\Multi-Workers\\.mw\\agentictask-df8ecf6",
+  "development_preserved": true,
+  "projects": [
+    {
+      "project": "E:\\gitlite\\Multi-Workers",
+      "skill_commit": "df8ecf6eab53b65056f823522a0ece3fbba96195",
+      "skill_file_count": 112,
+      "skill_sha256": "841526f9c34e4156e6d492f6ab75d3b7ee242c8fbcc341da58bf991ea7a39923",
+      "preserved_development_differences": [
+        "claude/scripts/advance_phase.py",
+        "claude/scripts/plan_closure.py",
+        "claude/scripts/test_advance_phase.py",
+        "core/scripts/advance_phase.py",
+        "core/scripts/plan_closure.py",
+        "core/scripts/test_advance_phase.py",
+        "scripts/advance_phase.py",
+        "scripts/plan_closure.py",
+        "scripts/test_advance_phase.py"
+      ],
+      "preserved_content_differences": [
+        "claude/scripts/advance_phase.py",
+        "claude/scripts/test_advance_phase.py",
+        "core/scripts/advance_phase.py",
+        "core/scripts/test_advance_phase.py",
+        "scripts/advance_phase.py",
+        "scripts/test_advance_phase.py"
+      ],
+      "claude_commit": "df8ecf6",
+      "claude_advance_sha256": "599e4fd49e1a89d6f658f50007868d36f1c1f8bda9ff07a00506d28e99f4e851",
+      "backup": "E:\\gitlite\\Multi-Workers\\.mw\\agentictask-df8ecf6-rollout",
+      "verified": true
+    },
+    {
+      "project": "E:\\gitlite\\Bearing",
+      "skill_commit": "df8ecf6eab53b65056f823522a0ece3fbba96195",
+      "skill_file_count": 112,
+      "skill_sha256": "841526f9c34e4156e6d492f6ab75d3b7ee242c8fbcc341da58bf991ea7a39923",
+      "preserved_development_differences": [],
+      "preserved_content_differences": [],
+      "claude_commit": "df8ecf6",
+      "claude_advance_sha256": "599e4fd49e1a89d6f658f50007868d36f1c1f8bda9ff07a00506d28e99f4e851",
+      "backup": "E:\\gitlite\\Bearing\\.mw\\agentictask-df8ecf6-rollout",
+      "verified": true
+    },
+    {
+      "project": "E:\\gitlite\\Overcode",
+      "skill_commit": "df8ecf6eab53b65056f823522a0ece3fbba96195",
+      "skill_file_count": 112,
+      "skill_sha256": "841526f9c34e4156e6d492f6ab75d3b7ee242c8fbcc341da58bf991ea7a39923",
+      "preserved_development_differences": [],
+      "preserved_content_differences": [],
+      "claude_commit": "df8ecf6",
+      "claude_advance_sha256": "599e4fd49e1a89d6f658f50007868d36f1c1f8bda9ff07a00506d28e99f4e851",
+      "backup": "E:\\gitlite\\Overcode\\.mw\\agentictask-df8ecf6-rollout",
+      "verified": true
+    },
+    {
+      "project": "E:\\MWWS\\AssetsGate",
+      "skill_commit": "df8ecf6eab53b65056f823522a0ece3fbba96195",
+      "skill_file_count": 112,
+      "skill_sha256": "841526f9c34e4156e6d492f6ab75d3b7ee242c8fbcc341da58bf991ea7a39923",
+      "preserved_development_differences": [],
+      "preserved_content_differences": [],
+      "claude_commit": "df8ecf6",
+      "claude_advance_sha256": "599e4fd49e1a89d6f658f50007868d36f1c1f8bda9ff07a00506d28e99f4e851",
+      "backup": "E:\\MWWS\\AssetsGate\\.mw\\agentictask-df8ecf6-rollout",
+      "verified": true
+    },
+    {
+      "project": "E:\\MWWS\\Gaze",
+      "skill_commit": "df8ecf6eab53b65056f823522a0ece3fbba96195",
+      "skill_file_count": 112,
+      "skill_sha256": "841526f9c34e4156e6d492f6ab75d3b7ee242c8fbcc341da58bf991ea7a39923",
+      "preserved_development_differences": [],
+      "preserved_content_differences": [],
+      "claude_commit": "df8ecf6",
+      "claude_advance_sha256": "599e4fd49e1a89d6f658f50007868d36f1c1f8bda9ff07a00506d28e99f4e851",
+      "backup": "E:\\MWWS\\Gaze\\.mw\\agentictask-df8ecf6-rollout",
+      "verified": true
+    },
+    {
+      "project": "E:\\MWWS\\RenderPerformance",
+      "skill_commit": "df8ecf6eab53b65056f823522a0ece3fbba96195",
+      "skill_file_count": 112,
+      "skill_sha256": "841526f9c34e4156e6d492f6ab75d3b7ee242c8fbcc341da58bf991ea7a39923",
+      "preserved_development_differences": [],
+      "preserved_content_differences": [],
+      "claude_commit": "df8ecf6",
+      "claude_advance_sha256": "599e4fd49e1a89d6f658f50007868d36f1c1f8bda9ff07a00506d28e99f4e851",
+      "backup": "E:\\MWWS\\RenderPerformance\\.mw\\agentictask-df8ecf6-rollout",
+      "verified": true
+    },
+    {
+      "project": "E:\\MWWS\\SceneProfiler",
+      "skill_commit": "df8ecf6eab53b65056f823522a0ece3fbba96195",
+      "skill_file_count": 112,
+      "skill_sha256": "841526f9c34e4156e6d492f6ab75d3b7ee242c8fbcc341da58bf991ea7a39923",
+      "preserved_development_differences": [],
+      "preserved_content_differences": [],
+      "claude_commit": "df8ecf6",
+      "claude_advance_sha256": "599e4fd49e1a89d6f658f50007868d36f1c1f8bda9ff07a00506d28e99f4e851",
+      "backup": "E:\\MWWS\\SceneProfiler\\.mw\\agentictask-df8ecf6-rollout",
+      "verified": true
+    },
+    {
+      "project": "E:\\MWWS\\UEPerformanceFlow",
+      "skill_commit": "df8ecf6eab53b65056f823522a0ece3fbba96195",
+      "skill_file_count": 112,
+      "skill_sha256": "841526f9c34e4156e6d492f6ab75d3b7ee242c8fbcc341da58bf991ea7a39923",
+      "preserved_development_differences": [],
+      "preserved_content_differences": [],
+      "claude_commit": "df8ecf6",
+      "claude_advance_sha256": "599e4fd49e1a89d6f658f50007868d36f1c1f8bda9ff07a00506d28e99f4e851",
+      "backup": "E:\\MWWS\\UEPerformanceFlow\\.mw\\agentictask-df8ecf6-rollout",
+      "verified": true
+    }
+  ]
+}

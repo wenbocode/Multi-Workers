@@ -1,0 +1,16 @@
+fatal: cannot change to 'E:\gitlite\Multi-Workers\.agents\skills\agentic-task': Permission denied
+Traceback (most recent call last):
+  File "E:\gitlite\Multi-Workers\.mw\tmp\agentictask-df8ecf6-rollout.py", line 178, in <module>
+    {"prepare": prepare, "install": install, "verify": verify}[sys.argv[1]]()
+  File "E:\gitlite\Multi-Workers\.mw\tmp\agentictask-df8ecf6-rollout.py", line 151, in verify
+    assert git(skill, "rev-parse", "HEAD").decode().strip() == COMMIT
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\gitlite\Multi-Workers\.mw\tmp\agentictask-df8ecf6-rollout.py", line 24, in git
+    return subprocess.check_output(["git", "-c", f"safe.directory={repo.resolve().as_posix()}", "-C", str(repo), *args])
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\Python312\Lib\subprocess.py", line 466, in check_output
+    return run(*popenargs, stdout=PIPE, timeout=timeout, check=True,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\Python312\Lib\subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=E:/gitlite/Multi-Workers/packages/multi-workers/.tmp/agentic-task', '-C', 'E:\\gitlite\\Multi-Workers\\.agents\\skills\\agentic-task', 'rev-parse', 'HEAD']' returned non-zero exit status 128.

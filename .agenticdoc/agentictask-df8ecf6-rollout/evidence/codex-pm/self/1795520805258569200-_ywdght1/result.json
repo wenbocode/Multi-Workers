@@ -1,0 +1,25 @@
+{
+  "key": "agentictask-df8ecf6-rollout",
+  "task": null,
+  "criteria": [
+    "AC-001",
+    "AC-002",
+    "AC-003"
+  ],
+  "argv": [
+    "python",
+    "-B",
+    ".mw/tmp/agentictask-df8ecf6-rollout.py",
+    "verify"
+  ],
+  "cwd": "E:\\gitlite\\Multi-Workers",
+  "basis": {
+    "contract_sha256": "134cd747014ff016176a100aeee007caa027da1bc1b67a3fe5364baa7a55a69b",
+    "source_sha256": "d2ece2c92f482c703cc68f7a6aa04903970ba8021c05eebd34087ea5dec57fff"
+  },
+  "started": "2026-11-24T11:46:45.259598+00:00",
+  "verdict": "passed",
+  "exit_code": 0,
+  "log": "E:\\gitlite\\Multi-Workers\\.agenticdoc\\agentictask-df8ecf6-rollout\\evidence\\codex-pm\\self\\1795520805258569200-_ywdght1\\command.log",
+  "finished": "2026-11-24T11:46:52.579515+00:00"
+}
