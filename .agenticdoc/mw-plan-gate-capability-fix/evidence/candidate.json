@@ -1,0 +1,31 @@
+{
+  "release_id": "mw-plan-gate-capability-20261124",
+  "phase": "candidate-verified",
+  "commit": "18a2f5b9c5ba7ec5be9a0f5d1c70aba71866e871",
+  "base_commit": "dfc29b360b7b8d702c86f97dd9135d90d4241a7b",
+  "parent_release": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-remaining-closeout-20261124",
+  "included_keys": [
+    "mw-lean-execution",
+    "mw-dual-additional-write-roots",
+    "mw-remaining-closeout",
+    "mw-signoff-freeze-metadata",
+    "ue-frame-install-generate",
+    "mw-runtime-version",
+    "mw-pi-version",
+    "mw-zai-glm54",
+    "mw-duty-followup",
+    "mw-plan-gate-capability-fix"
+  ],
+  "agentic_task_commit": "84bbc2788c9555b350821056f206a698dc6db375",
+  "source_overlay": {
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/agentic-scripts.ts": "60a99ce1df4dfc8bbf686a032d52aacf30a738284be5e493fb1f4e819f16def9",
+    "packages/coding-agent/test/extensions/agentic-scripts-plan-gate.test.ts": "b094599de728dd705087de5adfa1d0d8ccfa8247ddddcf89137ffa523f4539b4"
+  },
+  "pi_version": "0.83.0",
+  "artifacts": {
+    "packages/multi-workers/mw.py": "905e002568303f3e47a2bcbff265a04ae811f59d9399a6c679c23d2af36aea27",
+    "packages/coding-agent/dist/cli.js": "71cad79c13de14f1eea0d122356ce7b9fa562d4ebc9faff8a04ad1e950cde84f",
+    "packages/multi-workers/dist/extensions/agent-team-loop.js": "98255f43e4c000ec30e036d96dc7f134b143a3875c3bef7660046ef911cb723f",
+    "packages/coding-agent/dist/extensions/agent-team-loop/shared/agentic-scripts.js": "c352a8c84e88017eb63dda5c35a25999351826aa234c3af2c8b54be565b2767a"
+  }
+}

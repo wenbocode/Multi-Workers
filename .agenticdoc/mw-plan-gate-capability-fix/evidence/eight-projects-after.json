@@ -1,0 +1,45 @@
+{
+  "module": "E:/gitlite/Multi-Workers/packages/coding-agent/src/extensions/agent-team-loop/shared/agentic-scripts.ts",
+  "projects": [
+    {
+      "project": "E:\\gitlite\\Multi-Workers",
+      "ok": true,
+      "output": "E:\\gitlite\\Multi-Workers\\.claude\\scripts\\advance_phase.py"
+    },
+    {
+      "project": "E:\\gitlite\\Bearing",
+      "ok": true,
+      "output": "E:\\gitlite\\Bearing\\.claude\\scripts\\advance_phase.py"
+    },
+    {
+      "project": "E:\\gitlite\\Overcode",
+      "ok": true,
+      "output": "E:\\gitlite\\Overcode\\.claude\\scripts\\advance_phase.py"
+    },
+    {
+      "project": "E:\\MWWS\\AssetsGate",
+      "ok": true,
+      "output": "E:\\MWWS\\AssetsGate\\.claude\\scripts\\advance_phase.py"
+    },
+    {
+      "project": "E:\\MWWS\\Gaze",
+      "ok": true,
+      "output": "E:\\MWWS\\Gaze\\.claude\\scripts\\advance_phase.py"
+    },
+    {
+      "project": "E:\\MWWS\\RenderPerformance",
+      "ok": true,
+      "output": "E:\\MWWS\\RenderPerformance\\.claude\\scripts\\advance_phase.py"
+    },
+    {
+      "project": "E:\\MWWS\\SceneProfiler",
+      "ok": true,
+      "output": "E:\\MWWS\\SceneProfiler\\.claude\\scripts\\advance_phase.py"
+    },
+    {
+      "project": "E:\\MWWS\\UEPerformanceFlow",
+      "ok": true,
+      "output": "E:\\MWWS\\UEPerformanceFlow\\.claude\\scripts\\advance_phase.py"
+    }
+  ]
+}

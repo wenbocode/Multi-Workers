@@ -1,0 +1,8 @@
+{
+  "base": "dfc29b360b7b8d702c86f97dd9135d90d4241a7b",
+  "paths": {
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/agentic-scripts.ts": "60a99ce1df4dfc8bbf686a032d52aacf30a738284be5e493fb1f4e819f16def9",
+    "packages/coding-agent/test/extensions/agentic-scripts-plan-gate.test.ts": "b094599de728dd705087de5adfa1d0d8ccfa8247ddddcf89137ffa523f4539b4"
+  },
+  "conflicts": []
+}

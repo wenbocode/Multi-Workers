@@ -1,0 +1,28 @@
+cwd=E:\gitlite\Multi-Workers\packages\coding-agent
+['node', '../../node_modules/vitest/dist/cli.js', '--run', '--cache=false', 'test/extensions/agentic-scripts-plan-gate.test.ts']
+
+ RUN  v4.1.9 E:/gitlite/Multi-Workers/packages/coding-agent
+
+················
+
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+   Start at  21:02:33
+   Duration  199ms (transform 33ms, setup 0ms, import 45ms, tests 34ms, environment 0ms)
+
+cwd=E:\gitlite\Multi-Workers\packages\coding-agent
+['node', '../../node_modules/vitest/dist/cli.js', '--run', '--cache=false', 'test/extensions/agent-team-loop.test.ts', '-t', 'agentic-scripts']
+
+ RUN  v4.1.9 E:/gitlite/Multi-Workers/packages/coding-agent
+
+----------------------·····------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+ Test Files  1 passed (1)
+      Tests  5 passed | 202 skipped (207)
+   Start at  21:02:34
+   Duration  2.72s (transform 1.30s, setup 0ms, import 1.86s, tests 545ms, environment 0ms)
+
+cwd=E:\gitlite\Multi-Workers
+['C:\\Program Files\\Python312\\python.exe', '-X', 'utf8', '-B', '-m', 'pytest', '-q', '-p', 'no:cacheprovider', 'packages/multi-workers/test_plan_closure.py', 'packages/multi-workers/test_scope_review.py']
+...................                                                      [100%]
+19 passed in 3.81s

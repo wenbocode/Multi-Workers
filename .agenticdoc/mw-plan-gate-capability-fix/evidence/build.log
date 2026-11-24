@@ -1,0 +1,9 @@
+[mw build] built + self-check OK (activate) version=0.83.0
+[mw build] bundle: C:\Users\wenbozhou\.local\share\multi-workers\releases\mw-plan-gate-capability-20261124\packages\multi-workers\dist\extensions\agent-team-loop.js
+
+> @earendil-works/pi-coding-agent@0.83.0 build
+> tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js dist/rpc-entry.js && npm run copy-assets
+
+
+> @earendil-works/pi-coding-agent@0.83.0 copy-assets
+> shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/ && shx mkdir -p dist/modes/interactive/assets && shx cp src/modes/interactive/assets/*.png dist/modes/interactive/assets/ && shx mkdir -p dist/core/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html/ && shx cp src/core/export-html/vendor/*.js dist/core/export-html/vendor/

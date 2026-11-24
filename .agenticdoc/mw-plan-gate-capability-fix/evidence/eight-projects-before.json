@@ -1,0 +1,45 @@
+{
+  "module": "C:/Users/wenbozhou/.local/share/multi-workers/releases/mw-remaining-closeout-20261124/packages/coding-agent/dist/extensions/agent-team-loop/shared/agentic-scripts.js",
+  "projects": [
+    {
+      "project": "E:\\gitlite\\Multi-Workers",
+      "ok": false,
+      "output": "AgenticTask PLAN → TASKS gate unavailable in E:\\gitlite\\Multi-Workers\\.claude\\scripts: missing PLAN → TASKS closure registration. Update the installed AgenticTask scripts."
+    },
+    {
+      "project": "E:\\gitlite\\Bearing",
+      "ok": false,
+      "output": "AgenticTask PLAN → TASKS gate unavailable in E:\\gitlite\\Bearing\\.claude\\scripts: missing PLAN → TASKS closure registration. Update the installed AgenticTask scripts."
+    },
+    {
+      "project": "E:\\gitlite\\Overcode",
+      "ok": false,
+      "output": "AgenticTask PLAN → TASKS gate unavailable in E:\\gitlite\\Overcode\\.claude\\scripts: missing PLAN → TASKS closure registration. Update the installed AgenticTask scripts."
+    },
+    {
+      "project": "E:\\MWWS\\AssetsGate",
+      "ok": false,
+      "output": "AgenticTask PLAN → TASKS gate unavailable in E:\\MWWS\\AssetsGate\\.claude\\scripts: missing PLAN → TASKS closure registration. Update the installed AgenticTask scripts."
+    },
+    {
+      "project": "E:\\MWWS\\Gaze",
+      "ok": false,
+      "output": "AgenticTask PLAN → TASKS gate unavailable in E:\\MWWS\\Gaze\\.claude\\scripts: missing PLAN → TASKS closure registration. Update the installed AgenticTask scripts."
+    },
+    {
+      "project": "E:\\MWWS\\RenderPerformance",
+      "ok": false,
+      "output": "AgenticTask PLAN → TASKS gate unavailable in E:\\MWWS\\RenderPerformance\\.claude\\scripts: missing PLAN → TASKS closure registration. Update the installed AgenticTask scripts."
+    },
+    {
+      "project": "E:\\MWWS\\SceneProfiler",
+      "ok": false,
+      "output": "AgenticTask PLAN → TASKS gate unavailable in E:\\MWWS\\SceneProfiler\\.claude\\scripts: missing PLAN → TASKS closure registration. Update the installed AgenticTask scripts."
+    },
+    {
+      "project": "E:\\MWWS\\UEPerformanceFlow",
+      "ok": false,
+      "output": "AgenticTask PLAN → TASKS gate unavailable in E:\\MWWS\\UEPerformanceFlow\\.claude\\scripts: missing PLAN → TASKS closure registration. Update the installed AgenticTask scripts."
+    }
+  ]
+}

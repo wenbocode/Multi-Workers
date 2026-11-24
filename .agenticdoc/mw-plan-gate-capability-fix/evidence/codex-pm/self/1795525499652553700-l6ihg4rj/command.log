@@ -1,0 +1,26 @@
+PLAN → TASKS capability: 8/8 projects
+{
+  "release": "mw-plan-gate-capability-20261124",
+  "commit": "18a2f5b9c5ba7ec5be9a0f5d1c70aba71866e871",
+  "projects_verified": 8,
+  "old_detection_passes": 0,
+  "new_detection_passes": 8,
+  "global": {
+    "entry": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\bin\\mw.cmd",
+    "path": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-plan-gate-capability-20261124\\packages\\multi-workers\\mw.py",
+    "root": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-plan-gate-capability-20261124",
+    "release": "mw-plan-gate-capability-20261124",
+    "commit": "18a2f5b9c5ba7ec5be9a0f5d1c70aba71866e871",
+    "base_commit": "dfc29b360b7b8d702c86f97dd9135d90d4241a7b"
+  },
+  "global_extension": {
+    "path": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-plan-gate-capability-20261124\\packages\\multi-workers\\mw.py",
+    "root": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-plan-gate-capability-20261124",
+    "release": "mw-plan-gate-capability-20261124",
+    "commit": "18a2f5b9c5ba7ec5be9a0f5d1c70aba71866e871",
+    "base_commit": "dfc29b360b7b8d702c86f97dd9135d90d4241a7b",
+    "uses_global_default": true
+  },
+  "backup": "C:\\Users\\wenbozhou\\.local\\share\\multi-workers\\releases\\mw-plan-gate-capability-20261124\\deployment-backup",
+  "python_restart_required": false
+}
