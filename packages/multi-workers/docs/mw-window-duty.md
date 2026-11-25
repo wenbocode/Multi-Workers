@@ -1,25 +1,37 @@
 # MW 窗口过夜值守
 
-一个班次可以绑定多个项目。原 PM 继续认领项目 key，值守窗口处理班前委托的一次性例外和异常。需要 Node 24、已安装本仓依赖，以及同机运行、持有目标 key 的交互式原 PM。
+一个班次可以绑定多个项目。通道仍以文件为准：只读观察只需要 Node 24、已安装本仓依赖和本项目里的一个交互式 pi 窗口，不需要原 PM 在线；完整班次与受限跟进仍由同机运行、持有目标 key 的交互式原 PM 承担委托和身份校验。
 
 ## 指定项目和 key
 
-在新 PowerShell 窗口从受信任的 MW 仓库启动，项目配置会加载值守命令。
+单个窗口即可开始只读观察。在项目目录（pi 的启动目录）打开一个交互式 pi 窗口，项目配置会加载值守命令。
 
 ```powershell
-cd E:\gitlite\Multi-Workers
+cd E:\工作区\项目 A
 pi
 ```
 
-在 pi 内输入以下命令，将引号中的路径和末尾的 key 换成业务项目的实际值。
+在 pi 内用单参数形式 `/duty-on <key>` 指定项目 key（`<key>` 换成业务项目的实际 key）：
 
 ```text
-/duty-on "E:\工作区\项目 A" example
+/duty-on example
 ```
 
-首次接入旧项目时，若原 PM 进程存活但收件端尚未上线，值守窗会显示将更新的项目设置路径。确认后，命令在目标项目的 `.pi/settings.json` 登记本仓的收件和值守扩展，保留已有配置。在受信任的原项目窗口空闲时执行一次 `/reload`。值守窗自动等同一认领者上线后接班，期间不调用模型。`/duty-off` 可取消等待；原进程退出或换主也会终止等待。后续原窗口启动时 pi 会自动加载配置。这一步只接通窗口，班次授权仍由原 PM 按下文登记。
+随后用状态工具查看本窗口的观察状态：
 
-目标就是 pi 的启动目录时可用 `/duty-on . example`。命令按项目和 key 查在线绑定。原 PM 已用 `/duty-report-on <班次文件>` 登记本班授权时，新窗口仅接指定目标，复用原卡预算、范围和截止时间。若尚未登记，立即进入只读观察，持续空闲、worker 丢失、离线等状态变化会在窗口提示，不调用模型或发送方向。要启用班次委托下的自动接续，原 PM 登记班次后，在值守窗执行 `/duty-off`，再执行同一条 `/duty-on`。原卡改动或原 PM 换绑后需要重新核对并登记。原 PM 也可用 `/duty-report-on . example` 重新接入已登记且绑定匹配的班次。
+```text
+mw_duty_status {}
+```
+
+单参数的 project 就是该窗口的启动目录，不需要第二个窗口，也不需要原 PM 在线或事先认领。`<key>` 必须出现在目标项目的 `.agenticdoc/_index.parallel` 中且 `phase` 不是 `DONE`，否则命令明确拒绝并保持 `inactive`：未知 key 报最接近的 key 名，已结案的 key 报 phase。两条拒绝路径都不创建租约、不写通道文件、不发消息。
+
+观察只读：`mw_duty_status {}` 返回 `mode="observation"`，`pinnedTargets` 只有该目标且 claim/binding/session 为空（未固定），`observedStates` 来自每 5 秒一次的有界抽样（worker 队列与选中 worker 的 `run.json`）。整个观察不改 `_index.parallel`、不调用模型、不发送方向、不登记班次。状态变化以 `Duty observation: <project> / <key>: <state> <detail>` 提示。
+
+观察不要求目标 key 处于 `active`、claim 进程存活、原 PM 在线或另开第二个窗口。原 PM 没有心跳时状态仍以 worker 队列与 `run.json` 为准，`detail` 附注 `PM offline`；队列中 `status=running`、心跳超过 90 秒且 pid 已退出的 worker 仍报 `worker-lost`（`detail` 列出 taskKey），不会被 `offline` 遮蔽。持续空闲、worker 丢失、状态不可读等停点沿用稳定 45 秒提示一次、同一停点不重复的规则；`waiting-for-worker` 与 `working` 只更新状态，不产生提示。
+
+跨项目目标仍用两参数形式 `/duty-on "E:\工作区\项目 A" example`；目标就是当前目录时也可写 `/duty-on . example`。命令按项目和 key 查在线绑定：原 PM 已用 `/duty-report-on <班次文件>` 登记本班授权且在线、claim/binding/session 匹配时，新窗口仅接指定目标，复用原卡预算、范围和截止时间；尚未登记或原 PM 不在线时进入上面的只读观察。要启用班次委托下的自动接续，原 PM 登记班次后，在值守窗执行 `/duty-off`，再执行同一条 `/duty-on`。原卡改动或原 PM 换绑后需要重新核对并登记。原 PM 也可用 `/duty-report-on . example` 重新接入已登记且绑定匹配的班次。
+
+首次接入旧项目的登记不再是 `/duty-on` 的一步，而是 `/duty-followup-on` 的显式确认步骤（见下节）。`/duty-on <shift.json>` 的班次模式、`mw_duty_decide`、`/duty-report-on` 以及账本、预算和截止时间规则都不因观察入口放宽而改变（见下文新班次与对账）。工作树里的源码不等于当前窗口已加载的实现：改完源码后必须在本窗口 `/reload`，否则仍按旧实现执行。
 
 ## 显式受限跟进（无班次授权）
 
@@ -29,7 +41,7 @@ pi
 /duty-followup-on "E:\工作区\项目 A" example
 ```
 
-目标原 PM 必须已在线、仍认领未完成的 key，且不是当前监督会话。这个命令不会执行首次接入安装，不接受班次文件，也不会因为目标登记了班次而自动选择完整班次模式。原 PM 的业务范围、门禁、预算和截止时间不变；跟进请求不是新工作授权、Stage grant、DP 决定或批准。
+目标原 PM 必须已在线、处于 `active` 状态、仍认领未完成的 key，claim 存活，且不是当前监督会话；不满足时命令拒绝并保持原模式，通道目录不新增 `.request.json`。单参数 `/duty-followup-on <key>` 同样取当前目录，供观察窗原地升级。首次接线的登记在这一步进行：若原 PM 进程存活但收件端尚未上线，值守窗显示将更新的项目设置路径，确认后在目标项目的 `.pi/settings.json` 登记本仓的收件和值守扩展并保留已有配置，随后在受信任的原项目窗口空闲时执行一次 `/reload`，再重试该命令；拒绝确认则不写文件。只读观察入口本身不登记、不弹确认框。这个命令不接受班次文件，也不会因为目标登记了班次而自动选择完整班次模式。原 PM 的业务范围、门禁、预算和截止时间不变；跟进请求不是新工作授权、Stage grant、DP 决定或批准。
 
 同一实例已观察同一目标时可显式升级，保留自身的 monitor 锁，再取得 send 锁。控制器准备或固定身份检查失败时保留原观察计时器、模式和 monitor 锁，并释放本次新取得的 send 锁；不删除旧 ledger 来绕过失败。重复同目标 `/duty-on` 或 `/duty-followup-on` 只报告实际模式，不重复创建监听器。切换目标、退出完整班次或更换模式前使用 `/duty-off`；不能接管其它窗口持有的目标锁。
 

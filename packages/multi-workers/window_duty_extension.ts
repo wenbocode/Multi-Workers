@@ -19,7 +19,10 @@ import type {
 	ExtensionContext,
 } from "../coding-agent/src/core/extensions/types.ts";
 import { PmChannel } from "../coding-agent/src/extensions/agent-team-loop/pm/codex-channel.ts";
-import { conductorClaimState } from "../coding-agent/src/extensions/agent-team-loop/shared/index-store.ts";
+import {
+	conductorClaimState,
+	normalizeKey,
+} from "../coding-agent/src/extensions/agent-team-loop/shared/index-store.ts";
 import { DutyFollowup, type FollowupNotice, type FollowupTarget } from "./duty_followup.ts";
 import { lockDutyTarget } from "./pm_duty_lease.ts";
 import { StopWatch } from "./pm_watch.ts";
@@ -34,13 +37,55 @@ const FOLLOWUP_CUSTOM_TYPE = "mw:duty-followup";
 const FOLLOWUP_NOTE_MAX_CHARS = 1000;
 const FOLLOWUP_NOTE_MAX_BYTES = 1600;
 
-/** Explicit follow-up target only: a registered shift card must never be selected here. */
-function explicitTarget(args: string, cwd: string) {
-	const match = /^(?:"([^"]+)"|'([^']+)'|(\S+))\s+([a-z0-9][a-z0-9-]{0,79})$/.exec(args.trim());
+const KEY_ARG = /^[a-z0-9][a-z0-9-]{0,79}$/;
+
+function editDistance(a: string, b: string) {
+	let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+	for (let i = 1; i <= a.length; i++) {
+		const current = [i];
+		for (let j = 1; j <= b.length; j++)
+			current[j] = Math.min(
+				previous[j] + 1,
+				current[j - 1] + 1,
+				previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+			);
+		previous = current;
+	}
+	return previous[b.length];
+}
+
+/** The single closest authority key, for a refusal that names the real key. */
+function nearestKeyName(input: string, keys: string[]) {
+	const target = normalizeKey(input);
+	let best: { key: string; distance: number } | undefined;
+	for (const key of keys) {
+		const distance = editDistance(target, normalizeKey(key));
+		if (!best || distance < best.distance) best = { key, distance };
+	}
+	return best?.key;
+}
+
+/** Resolve `/duty-on` and `/duty-followup-on` arguments in one fixed order:
+ *  an existing file first (a shift card is never misread as a key), then a
+ *  single key against this window's cwd, then the explicit `<project path> <key>` form. */
+type TargetArg = { file: string } | { project: string; key: string };
+
+function dutyTarget(args: string, cwd: string): TargetArg | undefined {
+	const input = args.trim();
+	const file = resolve(cwd, unquote(input));
+	if (existsSync(file) && statSync(file).isFile()) return { file };
+	if (KEY_ARG.test(input)) return { project: resolve(cwd), key: input };
+	const match = /^(?:"([^"]+)"|'([^']+)'|(\S+))\s+([a-z0-9][a-z0-9-]{0,79})$/.exec(input);
 	if (!match) return undefined;
 	const project = resolve(cwd, match[1] ?? match[2] ?? match[3]);
 	if (existsSync(project) && statSync(project).isFile()) return undefined;
 	return { project, key: match[4] };
+}
+
+/** Explicit follow-up target only: a registered shift card must never be selected here. */
+function explicitTarget(args: string, cwd: string): { project: string; key: string } | undefined {
+	const target = dutyTarget(args, cwd);
+	return target && "project" in target ? target : undefined;
 }
 
 function followupContent(notice: FollowupNotice, target: FollowupTarget) {
@@ -82,32 +127,75 @@ function statusArrays(detail: unknown) {
 	};
 }
 
-function dutySource(args: string, cwd: string, home?: string, expectedClaim?: string) {
-	const input = args.trim();
-	const file = resolve(cwd, unquote(input));
-	if (!expectedClaim && existsSync(file) && statSync(file).isFile()) return { file };
-	const match = /^(.+)\s+([a-z0-9][a-z0-9-]{0,79})$/.exec(input);
-	if (!match) throw Error("Use <project path> <key> or an existing shift JSON file");
-	const project = resolve(cwd, unquote(match[1].trim()));
-	const key = match[2];
+type DutySource =
+	| { file: string }
+	| { file: string; contents: string; shift: Shift; registration: string; registered: string }
+	| { watch: StopWatch; session: string };
+
+/** Resolve the requested target. A key that is absent from the authority rows is
+ *  refused with the nearest real name, and a DONE key is refused, before any
+ *  lease or state: observation needs no PM heartbeat but it does need a real,
+ *  still-open key. A registration only takes over while its original PM is live. */
+function dutySource(args: string, cwd: string, home?: string): DutySource {
+	const target = dutyTarget(args, cwd);
+	if (!target) throw Error("Use <key>, <project path> <key> or an existing shift JSON file");
+	if ("file" in target) return { file: target.file };
+	const { project, key } = target;
 	const channel = new PmChannel(project, home);
+	const rows = channel.index.readAuthorityRows();
+	const matching = rows.filter((row) => normalizeKey(row.key) === normalizeKey(key));
+	if (matching.length !== 1) {
+		if (matching.length) throw Error(`Ambiguous task key ${key}; the authority rows disagree`);
+		const nearest = nearestKeyName(
+			key,
+			rows.map((row) => row.key),
+		);
+		throw Error(
+			nearest
+				? `Missing task key ${key}; nearest authority key is ${nearest}`
+				: `Missing task key ${key}; _index.parallel has no keys`,
+		);
+	}
 	const live = channel.status(key);
-	if (expectedClaim && live.claim !== expectedClaim) throw Error(`Original PM changed for ${project} / ${key}`);
-	if (!live.connected || typeof live.session !== "string") return { disconnected: { project, key, channel, live } };
 	const registration = join(channel.dir, key, "duty-registration.json");
-	if (!existsSync(registration))
-		return { watch: new StopWatch(project, key, live.claim, live.binding, home), session: live.session };
-	const registered = readFileSync(registration, "utf8");
-	const { file: registeredFile, sha256 } = JSON.parse(registered);
-	if (typeof registeredFile !== "string" || typeof sha256 !== "string") throw Error("Invalid duty registration");
-	const contents = readFileSync(registeredFile, "utf8");
-	if (createHash("sha256").update(contents).digest("hex") !== sha256)
-		throw Error("Registered shift card changed; register it again in the original PM");
-	const shift = parseShift(contents);
-	const target = shift.targets.find((t) => t.key === key && new PmChannel(t.project, home).dir === channel.dir);
-	if (!target || target.claim !== live.claim || target.binding !== live.binding || target.session !== live.session)
-		throw Error("Registered shift binding mismatch; register the current shift in the original PM");
-	return { file: registeredFile, contents, shift: { ...shift, targets: [target] }, registration, registered };
+	if (live.connected && typeof live.session === "string" && existsSync(registration)) {
+		const registered = readFileSync(registration, "utf8");
+		const { file: registeredFile, sha256 } = JSON.parse(registered);
+		if (typeof registeredFile !== "string" || typeof sha256 !== "string") throw Error("Invalid duty registration");
+		const contents = readFileSync(registeredFile, "utf8");
+		if (createHash("sha256").update(contents).digest("hex") !== sha256)
+			throw Error("Registered shift card changed; register it again in the original PM");
+		const shift = parseShift(contents);
+		const registeredTarget = shift.targets.find(
+			(t) => t.key === key && new PmChannel(t.project, home).dir === channel.dir,
+		);
+		if (
+			!registeredTarget ||
+			registeredTarget.claim !== live.claim ||
+			registeredTarget.binding !== live.binding ||
+			registeredTarget.session !== live.session
+		)
+			throw Error("Registered shift binding mismatch; register the current shift in the original PM");
+		return {
+			file: registeredFile,
+			contents,
+			shift: { ...shift, targets: [registeredTarget] },
+			registration,
+			registered,
+		};
+	}
+	if (live.phase === "DONE") throw Error(`Task key ${key} is finished (phase=${live.phase}); nothing to observe`);
+	return {
+		watch: new StopWatch(
+			project,
+			key,
+			typeof live.claim === "string" ? live.claim : "",
+			"",
+			home,
+			{ requirePm: false },
+		),
+		session: "",
+	};
 }
 
 export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
@@ -127,7 +215,7 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 	const warnings = new Map<string, string>();
 	const busy = new Error("Duty window is already processing an event");
 	let emit: (notice: Notice) => void;
-	type DutyMode = "inactive" | "observation" | "followup" | "shift" | "waiting";
+	type DutyMode = "inactive" | "observation" | "followup" | "shift";
 	let mode: DutyMode = "inactive";
 	let observer:
 		| { watch: StopWatch; target: FollowupTarget; directory: string; observe: () => void }
@@ -135,7 +223,6 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 	let followup:
 		| { controller: DutyFollowup; target: FollowupTarget; directory: string; ctx: ExtensionCommandContext }
 		| undefined;
-	let waiting: { project: string; key: string; claim: string; directory: string } | undefined;
 	function close() {
 		generation++;
 		clearInterval(timer);
@@ -148,7 +235,6 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 		mode = "inactive";
 		observer = undefined;
 		followup = undefined;
-		waiting = undefined;
 		for (const server of leases) server.close();
 		leases = [];
 		warnings.clear();
@@ -162,31 +248,57 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 		if (readFileSync(configFile, "utf8") !== original)
 			throw Error("Shift card changed; stop and reconcile before sending.");
 	}
-	/** Pin identity from the live original-PM channel, never from this supervisor window. */
+	/** Pin identity from the live original-PM channel, never from this supervisor window.
+	 *  Follow-up keeps every one of these checks; only read-only observation is exempt. */
 	function connectedTarget(project: string, key: string, ctx: ExtensionCommandContext): FollowupTarget {
-		const live = new PmChannel(project, home).status(key);
-		if (
-			!live.connected ||
-			live.status !== "active" ||
-			live.phase === "DONE" ||
-			typeof live.session !== "string" ||
-			typeof live.binding !== "string" ||
-			!live.binding ||
-			typeof live.claim !== "string"
-		)
-			throw Error(`No connected, unfinished original PM for ${project} / ${key}`);
+		let live: ReturnType<PmChannel["status"]>;
+		try {
+			live = new PmChannel(project, home).status(key);
+		} catch (error) {
+			throw Error(`原 PM 不在线或目标不可用: ${project} / ${key} (${String(error)})`);
+		}
+		if (!live.connected || live.status !== "active" || typeof live.session !== "string" || !live.session)
+			throw Error(`原 PM 不在线或未处于 active 状态: ${project} / ${key} (phase=${live.phase})`);
+		if (live.phase === "DONE") throw Error(`原 PM 已经结案 (phase=${live.phase}): ${project} / ${key}`);
+		if (typeof live.claim !== "string" || !live.claim || typeof live.binding !== "string" || !live.binding)
+			throw Error(`原 PM 不在线或身份不完整: ${project} / ${key}`);
 		if (live.session === ctx.sessionManager.getSessionId())
 			throw Error("Cannot follow up the current PM/session");
 		if (conductorClaimState(live.claim) !== "live") throw Error("Original PM claim is not live");
 		return { project, key: live.key, claim: live.claim, binding: live.binding, session: live.session };
 	}
+	/** First wiring is an explicit consent step of /duty-followup-on, never of
+	 *  read-only /duty-on, and a refusal writes no file. Returns true when handled. */
+	async function offerReceiverSetup(ctx: ExtensionCommandContext, project: string, key: string, version: number) {
+		try {
+			const live = new PmChannel(project, home).status(key);
+			if (
+				live.connected &&
+				live.status === "active" &&
+				live.phase !== "DONE" &&
+				typeof live.session === "string"
+			)
+				return false;
+		} catch {
+			return false;
+		}
+		const setup = receiverSettings(project);
+		if (!setup.needsUpdate) return false;
+		const accepted = await ctx.ui.confirm(
+			"首次接入 MW 值守",
+			`为 ${project} 的 ${key} 在 ${setup.file} 中登记 MW 收件和值守扩展？`,
+		);
+		if (!accepted) return true;
+		if (version !== generation) return true;
+		setup.install();
+		ctx.ui.notify("已登记 MW 收件与值守扩展。请在原 PM 窗口空闲时 /reload 后重试。", "info");
+		return true;
+	}
 	function sameTarget(requested: { project: string; key: string }) {
 		const directory = new PmChannel(requested.project, home).dir;
-		const pin =
-			mode === "followup" ? followup : mode === "observation" ? observer : mode === "waiting" ? waiting : undefined;
+		const pin = mode === "followup" ? followup : mode === "observation" ? observer : undefined;
 		if (!pin || pin.directory !== directory) return false;
-		const pinnedKey = "target" in pin ? pin.target.key : pin.key;
-		return pinnedKey.toLowerCase() === requested.key.toLowerCase();
+		return pin.target.key.toLowerCase() === requested.key.toLowerCase();
 	}
 	function dutyStatus(ctx: ExtensionContext, now = Date.now()) {
 		if (session !== undefined && ctx.sessionManager.getSessionId() !== session) {
@@ -232,8 +344,7 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 						receipts.push({ id: entry.id, state: entry.receipt ?? null });
 					}
 			}
-		} else if (mode === "waiting" && waiting)
-			pinnedTargets.push({ project: waiting.project, key: waiting.key, claim: waiting.claim });
+		}
 		return {
 			mode,
 			supervisorSession: session ?? null,
@@ -296,11 +407,10 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 		handler: async (args, ctx) => {
 			if (ctx.mode !== "tui" || session || opening) throw Error("Requires the original interactive PM");
 			const source = dutySource(args, ctx.cwd, home);
-			if (source.disconnected)
-				throw Error(`No connected original PM for ${source.disconnected.project} / ${source.disconnected.key}`);
-			if (!source.file) throw Error("Register the authorized shift first with /duty-report-on <shift.json>");
-			const contents = source.contents ?? readFileSync(source.file, "utf8");
-			const shift = source.shift ?? parseShift(contents);
+			if (!("file" in source))
+				throw Error("Register the authorized shift first with /duty-report-on <shift.json>");
+			const contents = "contents" in source ? source.contents : readFileSync(source.file, "utf8");
+			const shift = "shift" in source ? source.shift : parseShift(contents);
 			const target = shift.targets.find(
 				(t) => t.claim === `${hostname()}:${process.pid}` && t.session === ctx.sessionManager.getSessionId(),
 			);
@@ -314,7 +424,7 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 				live.session !== target.session
 			)
 				throw Error("Original PM binding mismatch");
-			if (!source.registration) {
+			if (!("registration" in source)) {
 				const pointer = join(channel.dir, target.key, "duty-registration.json");
 				const tmp = `${pointer}.${randomUUID()}.tmp`;
 				try {
@@ -370,10 +480,10 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 		},
 	});
 	pi.registerCommand("duty-on", {
-		description: "Supervise <project path> <key>, or accept a complete <shift.json>",
-		handler: async function acceptDuty(args, ctx, expectedClaim?: string) {
+		description: "Observe <key> in this window's project, <project path> <key>, or accept a complete <shift.json>",
+		handler: async function acceptDuty(args, ctx) {
 			if (reporting || opening || ctx.mode !== "tui" || !args.trim())
-				throw Error("Use a fresh interactive window and /duty-on <project path> <key> or /duty-on <shift.json>");
+				throw Error("Use a fresh interactive window and /duty-on <key>, <project path> <key> or <shift.json>");
 			if (session !== undefined) {
 				if (ctx.sessionManager.getSessionId() !== session)
 					throw Error("Supervisor session changed; run /duty-off and re-enable duty explicitly");
@@ -389,62 +499,9 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 			const version = generation;
 			const acquired: Server[] = [];
 			try {
-				const source = dutySource(args, ctx.cwd, home, expectedClaim);
-				if (source.disconnected) {
-					const { project, key, channel, live } = source.disconnected;
-					if (live.claim === `${hostname()}:${process.pid}`) throw Error("Cannot supervise the current PM");
-					if (expectedClaim || live.status !== "active" || conductorClaimState(live.claim) !== "live")
-						throw Error(`No connected original PM for ${project} / ${key} (claim: ${live.claim})`);
-					if (
-						channel.index
-							.readAuthorityRows()
-							.filter((row) => row.status === "active" && row.claimId === live.claim).length !== 1
-					)
-						throw Error(`Original PM must own one active key to publish a receiver: ${live.claim}`);
-					const setup = receiverSettings(project);
-					if (setup.needsUpdate) {
-						const accepted = await ctx.ui.confirm(
-							"首次接入 MW 值守",
-							`为 ${project} 的 ${key} 在 ${setup.file} 中登记 MW 收件和值守扩展？`,
-						);
-						if (!accepted || version !== generation) return;
-						const latest = channel.status(key);
-						if (latest.status !== "active" || latest.claim !== live.claim)
-							throw Error("Original PM changed during setup");
-						setup.install();
-					}
-					session = ctx.sessionManager.getSessionId();
-					mode = "waiting";
-					waiting = { project, key, claim: live.claim, directory: channel.dir };
-					ctx.ui.notify(
-						`等待 ${project} / ${key} 上线。请在原 PM 窗口空闲时执行 /reload；此窗会自动接班。/duty-off 可取消等待。`,
-						"info",
-					);
-					timer = setInterval(() => {
-						try {
-							const status = channel.status(key);
-							if (
-								status.status !== "active" ||
-								status.claim !== live.claim ||
-								conductorClaimState(live.claim) !== "live"
-							)
-								throw Error(`原 PM 认领或进程已变化，请重新核对 ${project} / ${key}`);
-							if (!status.connected) return;
-							close();
-							void acceptDuty(args, ctx, live.claim).catch((error: unknown) =>
-								ctx.ui.notify(String(error), "error"),
-							);
-						} catch (error) {
-							close();
-							ctx.ui.notify(String(error), "error");
-						}
-					}, 2500);
-					timer.unref();
-					return;
-				}
-				if (source.watch) {
+				const source = dutySource(args, ctx.cwd, home);
+				if ("watch" in source) {
 					const watch = source.watch;
-					if (source.session === ctx.sessionManager.getSessionId()) throw Error("Cannot supervise the current PM");
 					acquired.push(await lockDutyTarget(watch.channel.dir, watch.target.key));
 					if (version !== generation) throw Error("Window changed during handoff");
 					leases = acquired;
@@ -463,9 +520,9 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 						target: {
 							project: watch.target.project,
 							key: watch.target.key,
-							claim: watch.target.claim,
-							binding: watch.target.binding,
-							session: String(source.session),
+							claim: "",
+							binding: "",
+							session: source.session,
 						},
 						directory: watch.channel.dir,
 						observe,
@@ -474,15 +531,15 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 					timer = setInterval(observe, 5000);
 					timer.unref();
 					ctx.ui.notify(
-						`Observing ${watch.target.project} / ${watch.target.key}. For delegated actions, register /duty-report-on <shift.json> in the original PM, then restart duty.`,
+						`Observing ${watch.target.project} / ${watch.target.key} (read-only; no PM heartbeat required). For delegated actions, register /duty-report-on <shift.json> in the original PM, then restart duty.`,
 						"info",
 					);
 					return;
 				}
 				configFile = source.file;
-				original = source.contents ?? readFileSync(configFile, "utf8");
-				const shift = source.shift ?? parseShift(original);
-				registration = source.registration ? { path: source.registration, contents: source.registered } : undefined;
+				original = "contents" in source ? source.contents : readFileSync(configFile, "utf8");
+				const shift = "shift" in source ? source.shift : parseShift(original);
+				registration = "registration" in source ? { path: source.registration, contents: source.registered } : undefined;
 				for (const t of shift.targets) {
 					const channel = new PmChannel(t.project, home);
 					const status = channel.status(t.key);
@@ -552,7 +609,6 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 				session = undefined;
 				mode = "inactive";
 				observer = undefined;
-				waiting = undefined;
 				throw error;
 			} finally {
 				opening = false;
@@ -561,14 +617,14 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 	});
 	pi.registerCommand("duty-followup-on", {
 		description:
-			"Explicitly enable limited follow-up for <project path> <key>. No shift, new budget or new authority is created.",
+			"Explicitly enable limited follow-up for <key> in this project or <project path> <key>. No shift, new budget or new authority is created.",
 		handler: async (args, ctx) => {
 			if (reporting || opening) throw Error("Requires an interactive duty window without active reporting");
 			if (ctx.mode !== "tui") throw Error("Requires an interactive duty window");
 			const requested = explicitTarget(args, ctx.cwd);
 			if (!requested)
 				throw Error(
-					"Use /duty-followup-on <project path> <key>; a registered shift card is not an explicit follow-up target",
+					"Use /duty-followup-on <key> or <project path> <key>; a registered shift card is not an explicit follow-up target",
 				);
 			const directory = new PmChannel(requested.project, home).dir;
 			if (session !== undefined) {
@@ -581,7 +637,8 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 					return;
 				}
 				if (mode !== "observation" || !observer)
-					throw Error("Full shift or waiting mode is active; run /duty-off first");
+					throw Error("Full shift or follow-up mode is active; run /duty-off first");
+				if (await offerReceiverSetup(ctx, requested.project, requested.key, generation)) return;
 				opening = true;
 				const version = generation;
 				const prior = observer;
@@ -592,12 +649,6 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 				let committed = false;
 				try {
 					const live = connectedTarget(requested.project, requested.key, ctx);
-					if (
-						live.claim !== prior.target.claim ||
-						live.binding !== prior.target.binding ||
-						live.session !== prior.target.session
-					)
-						throw Error("Original PM identity changed; /duty-off and re-enable explicitly");
 					const lease = await lockDutyTarget(directory, live.key, "send");
 					sendLease = lease;
 					if (version !== generation) throw Error("Window changed during handoff");
@@ -640,6 +691,7 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 				}
 				return;
 			}
+			if (await offerReceiverSetup(ctx, requested.project, requested.key, generation)) return;
 			opening = true;
 			const version = generation;
 			const acquired: Server[] = [];
@@ -667,7 +719,7 @@ export default function windowDutyExtension(pi: ExtensionAPI, home?: string) {
 		name: "mw_duty_status",
 		label: "Report duty mode and observed state",
 		description:
-			"Report this window's actual duty mode (inactive/observation/followup/shift/waiting), pinned targets, observed states, pending notices and outbox/receipts. Business progress is always unverified here.",
+			"Report this window's actual duty mode (inactive/observation/followup/shift), pinned targets, observed states, pending notices and outbox/receipts. Business progress is always unverified here.",
 		parameters: Type.Object({}),
 		async execute(_id, _params, _signal, _update, ctx) {
 			const status = dutyStatus(ctx);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { type TestContext, test } from "node:test";
 import type { ExtensionAPI } from "../coding-agent/src/core/extensions/types.ts";
 import { PmChannel, registerPmChannel } from "../coding-agent/src/extensions/agent-team-loop/pm/codex-channel.ts";
@@ -278,63 +278,150 @@ test("target lease excludes another owner and releases on departure", async () =
 	next.close();
 });
 
-test("first duty-on prepares a live owner's project and resumes on heartbeat; cancellation and owner changes stop the wait", async (t) => {
+/** Mode of the extension registered on this window, read through its real status tool. */
+async function dutyMode(window: ReturnType<typeof desktop>) {
+	const result = (await window.tool("mw_duty_status", {})) as { details: { mode: string } };
+	return result.details.mode;
+}
+
+test("a single-window entry observes immediately without a heartbeat, setup prompt or messages", async (t) => {
 	t.mock.timers.enable({ apis: ["setInterval"] });
-	const root = mkdtempSync(join(tmpdir(), "mw duty setup-"));
+	const root = mkdtempSync(join(tmpdir(), "mw duty observe-"));
 	const project = join(root, "bearing");
 	const doc = join(project, ".agenticdoc");
 	const settings = join(project, ".pi", "settings.json");
 	const key = "work-memory";
-	const claim = `${hostname()}:${process.ppid}`;
-	const index = (owner: string) =>
-		writeFileSync(join(doc, "_index.parallel"), `| ${key} | active | EXECUTE | ${owner} | | | |\n`);
+	const claim = `${hostname()}:${process.pid}`;
 	mkdirSync(join(doc, key), { recursive: true });
-	index(claim);
+	writeFileSync(join(doc, "_index.parallel"), `| ${key} | active | EXECUTE | ${claim} | | | |\n`);
 	writeFileSync(join(doc, "_workers.parallel"), "");
 	const window = desktop(root);
+	const confirm = t.mock.method(window.ctx.ui, "confirm", async () => true);
 	registerDuty(window.api, root);
 	t.after(async () => {
 		await window.command("duty-off", "");
 		rmSync(root, { recursive: true, force: true });
 	});
 	const args = `"${project}" ${key}`;
+	// No heartbeat, no second session: observation is read-only and takes no PM prerequisite.
 	await window.command("duty-on", args);
-	assert.ok(!existsSync(settings), "declined setup must not write");
-	mkdirSync(dirname(settings), { recursive: true });
-	writeFileSync(settings, JSON.stringify({ theme: "test", extensions: ["./other.ts"] }));
-	const confirm = t.mock.method(window.ctx.ui, "confirm", async () => true);
-	await window.command("duty-on", args);
-	const config = JSON.parse(readFileSync(settings, "utf8"));
-	assert.equal(config.theme, "test");
-	assert.deepEqual(config.extensions.slice(0, 1), ["./other.ts"]);
-	assert.equal(config.extensions.length, 3);
-	assert.ok(config.extensions.slice(1).every((entry: string) => existsSync(entry)));
-	assert.match(window.notices.at(-1)!, /\/reload/);
-	await window.command("duty-off", "");
-	index("other:42");
-	t.mock.timers.tick(2500);
-	assert.equal(window.notices.at(-1), "Duty released");
-	await assert.rejects(async () => window.command("duty-on", args), /No connected/);
-	index(claim);
-	await window.command("duty-on", args);
-	index("other:42");
-	t.mock.timers.tick(2500);
-	assert.match(window.notices.at(-1)!, /认领或进程已变化/);
-	index(claim);
-	await window.command("duty-on", args);
-	assert.equal(confirm.mock.callCount(), 1);
+	assert.equal(confirm.mock.callCount(), 0, "observation must not prompt for receiver setup");
+	assert.ok(!existsSync(settings), "observation must not write settings");
+	assert.equal(window.messages.length, 0, "observation must never send a message");
+	const initial = (await window.tool("mw_duty_status", {})) as {
+		details: {
+			mode: string;
+			pinnedTargets: Array<{ project: string; key: string; claim: string; binding: string; session: string }>;
+			observedStates: Array<{ state: string }>;
+		};
+	};
+	assert.equal(initial.details.mode, "observation");
+	assert.deepEqual(initial.details.pinnedTargets, [
+		{ project: resolve(project), key, claim: "", binding: "", session: "" },
+	]);
+	assert.equal(initial.details.observedStates[0].state, "idle");
 	const channel = new PmChannel(project, root);
 	const directory = join(channel.dir, key);
 	mkdirSync(directory, { recursive: true });
-	const endpoint = join(directory, createHash("sha256").update(claim).digest("hex") + ".json");
 	writeFileSync(
-		endpoint,
-		JSON.stringify({ claim, binding: randomUUID(), session: randomUUID(), at: Date.now(), activity: "idle" }),
+		join(directory, `${createHash("sha256").update(claim).digest("hex")}.json`),
+		JSON.stringify({ claim, binding: randomUUID(), session: randomUUID(), at: Date.now(), activity: "working" }),
 	);
-	t.mock.timers.tick(2500);
-	await new Promise<void>((resolve) => setImmediate(resolve));
-	assert.match(window.notices.at(-1)!, /Observing/);
+	t.mock.timers.tick(5000);
+	const observed = (await window.tool("mw_duty_status", {})) as {
+		details: { mode: string; observedStates: Array<{ state: string }> };
+	};
+	assert.equal(observed.details.mode, "observation");
+	assert.equal(observed.details.observedStates[0].state, "working");
+	assert.equal(window.messages.length, 0, "a heartbeat change must not trigger a message");
+	assert.ok(!existsSync(settings));
+});
+
+test("single key entry observes the window's project and refuses unknown or DONE keys without a lease", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "mw duty entry-"));
+	const project = join(root, "entry");
+	const doc = join(project, ".agenticdoc");
+	const key = "known-key";
+	const claim = `${hostname()}:${process.pid}`;
+	mkdirSync(join(doc, key), { recursive: true });
+	writeFileSync(
+		join(doc, "_index.parallel"),
+		`| ${key} | active | EXECUTE | ${claim} | | | |\n| done-key | active | DONE | ${claim} | | | |\n`,
+	);
+	writeFileSync(join(doc, "_workers.parallel"), "");
+	const window = desktop(project);
+	registerDuty(window.api, root);
+	t.after(async () => {
+		await window.command("duty-off", "");
+		rmSync(root, { recursive: true, force: true });
+	});
+	await window.command("duty-on", key);
+	assert.equal(await dutyMode(window), "observation");
+	const status = (await window.tool("mw_duty_status", {})) as {
+		details: { pinnedTargets: Array<{ project: string; key: string }> };
+	};
+	assert.deepEqual(
+		status.details.pinnedTargets.map((target) => [target.project, target.key]),
+		[[resolve(project), key]],
+	);
 	assert.equal(window.messages.length, 0);
+	await window.command("duty-off", "");
+	await assert.rejects(async () => window.command("duty-on", "known-kye"), /nearest authority key is known-key/);
+	assert.equal(await dutyMode(window), "inactive");
+	await assert.rejects(async () => window.command("duty-on", "done-key"), /phase=DONE/);
+	assert.equal(await dutyMode(window), "inactive");
+	const directory = new PmChannel(project, root).dir;
+	const monitor = await lockDutyTarget(directory, "known-kye");
+	const send = await lockDutyTarget(directory, "known-kye", "send");
+	await new Promise<void>((resolve) => monitor.close(() => resolve()));
+	await new Promise<void>((resolve) => send.close(() => resolve()));
+	assert.ok(!existsSync(join(directory, "known-kye")), "a refusal must create no channel files");
+});
+
+test("a registered connected shift still takes over from the single-key entry", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "mw duty registration-"));
+	const project = join(root, "registered");
+	const doc = join(project, ".agenticdoc");
+	const key = "registered-key";
+	const claim = `${hostname()}:${process.pid}`;
+	mkdirSync(join(doc, key), { recursive: true });
+	writeFileSync(join(doc, "_index.parallel"), `| ${key} | active | EXECUTE | ${claim} | | | |\n`);
+	writeFileSync(join(doc, "_workers.parallel"), "");
+	const original = desktop(project);
+	registerPmChannel(original.api, root);
+	registerDuty(original.api, root);
+	original.events.get("session_start")!({}, original.ctx);
+	const channel = new PmChannel(project, root);
+	const binding = channel.status(key).binding!;
+	const now = Date.now();
+	const shift: Shift = {
+		shift: "registered",
+		start: new Date(now - 1000).toISOString(),
+		end: new Date(now + 3_600_000).toISOString(),
+		targets: [
+			{
+				project,
+				key,
+				claim,
+				binding,
+				session: original.session,
+				minutes: 30,
+				rules: [{ name: "review", scope: "offline fixture", direction: "Review the fixture", limit: 10 }],
+			},
+		],
+	};
+	const file = join(root, "registered.json");
+	writeFileSync(file, JSON.stringify(shift));
+	await original.command("duty-report-on", file);
+	const supervisor = desktop(project);
+	registerDuty(supervisor.api, root);
+	t.after(async () => {
+		await supervisor.command("duty-off", "");
+		await original.command("duty-off", "");
+		rmSync(root, { recursive: true, force: true });
+	});
+	await supervisor.command("duty-on", key);
+	assert.equal(await dutyMode(supervisor), "shift");
 });
 
 test("project and key isolate observation, registration and leases to the selected original PM", async (t) => {
@@ -348,9 +435,12 @@ test("project and key isolate observation, registration and leases to the select
 	const relativeTarget = `"./${target.key}" ${target.key}`;
 	await assert.rejects(
 		async () => supervisor.command("duty-on", `"${other.project}" ${target.key}`),
-		/Missing or ambiguous/,
+		/nearest authority key/,
 	);
-	await assert.rejects(async () => original.command("duty-on", `. ${target.key}`), /current PM/);
+	// Observation is read-only: this window may be the original PM too.
+	await original.command("duty-on", `. ${target.key}`);
+	assert.equal(await dutyMode(original), "observation");
+	await original.command("duty-off", "");
 	writeFileSync(join(target.project, ".agenticdoc", "_workers.parallel"), "");
 	await supervisor.command("duty-on", relativeTarget);
 	// Refresh the real endpoint on either side of a virtual idle interval.

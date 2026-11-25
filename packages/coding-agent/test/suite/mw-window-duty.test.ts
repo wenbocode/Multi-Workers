@@ -1,17 +1,27 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { expect, it, vi } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { publishDutyFact, type Shift } from "../../../multi-workers/window_duty.ts";
 import registerDuty from "../../../multi-workers/window_duty_extension.ts";
 import { loadExtensions } from "../../src/core/extensions/loader.ts";
-import type { ExtensionAPI, ExtensionCommandContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionCommandContext, ToolDefinition } from "../../src/core/extensions/types.ts";
 import { DefaultPackageManager } from "../../src/core/package-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { PmChannel, registerPmChannel } from "../../src/extensions/agent-team-loop/pm/codex-channel.ts";
-import { createHarness } from "./harness.ts";
+import { createHarness, type Harness } from "./harness.ts";
+
+/** The worker-task marker is a process-level switch: a supervisor extension must register in tests. */
+let savedWorkerTask: string | undefined;
+beforeAll(() => {
+	savedWorkerTask = process.env.PI_WORKER_TASK;
+	delete process.env.PI_WORKER_TASK;
+});
+afterAll(() => {
+	if (savedWorkerTask !== undefined) process.env.PI_WORKER_TASK = savedWorkerTask;
+});
 
 it("ordinary pi discovers the duty extension from the trusted MW checkout", async () => {
 	const cwd = resolve(import.meta.dirname, "../../../..");
@@ -40,15 +50,18 @@ it("ordinary pi discovers the duty extension from the trusted MW checkout", asyn
 			join(doc, "_index.parallel"),
 			`| sample | active | EXECUTE | ${hostname()}:${process.ppid} | | | |\n`,
 		);
+		const notify = vi.fn();
 		const ctx = {
 			cwd,
 			mode: "tui",
 			sessionManager: { getSessionId: () => "test-supervisor" },
-			ui: { confirm: async () => true, notify: vi.fn() },
+			ui: { confirm: async () => true, notify },
 		} as unknown as ExtensionCommandContext;
 		const commands = loaded.extensions[0].commands;
 		try {
-			await commands.get("duty-on")!.handler(`"${project}" sample`, ctx);
+			// First wiring is an explicit consent step of the follow-up entry, not of read-only observation.
+			await commands.get("duty-followup-on")!.handler(`"${project}" sample`, ctx);
+			expect(notify.mock.calls.some(([message]) => String(message).includes("/reload"))).toBe(true);
 			const fresh = new DefaultPackageManager({
 				cwd: project,
 				agentDir,
@@ -163,6 +176,78 @@ it("a fresh MW agent session decides a delegated exception and wakes the bound o
 		await original.session.dispose();
 		duty.cleanup();
 		original.cleanup();
+		rmSync(home, { recursive: true, force: true });
+	}
+}, 20000);
+
+it("a single /duty-on <key> observes this window's project without a PM, setup write or message", async () => {
+	const home = mkdtempSync(join(tmpdir(), "mw-duty-single-"));
+	const tools = new Map<string, ToolDefinition>();
+	const extension = (pi: ExtensionAPI) => {
+		const proxy = new Proxy(pi, {
+			get(target, prop, receiver) {
+				if (prop === "registerTool")
+					return (definition: ToolDefinition) => {
+						tools.set(definition.name, definition);
+						return target.registerTool(definition);
+					};
+				const value = Reflect.get(target, prop, receiver);
+				return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+			},
+		});
+		registerDuty(proxy, home);
+	};
+	const duty: Harness = await createHarness({ extensionFactories: [extension] });
+	try {
+		const key = "single-window";
+		const doc = join(duty.tempDir, ".agenticdoc");
+		const settings = join(duty.tempDir, ".pi", "settings.json");
+		mkdirSync(join(doc, key), { recursive: true });
+		writeFileSync(join(doc, "_index.parallel"), `| ${key} | active | EXECUTE | other-host:4242 | | | |\n`);
+		writeFileSync(join(doc, "_workers.parallel"), "");
+		const index = readFileSync(join(doc, "_index.parallel"), "utf8");
+		await duty.session.bindExtensions({ mode: "tui" });
+		await duty.session.prompt(`/duty-on ${key}`);
+		const definition = tools.get("mw_duty_status");
+		expect(definition).toBeDefined();
+		const ctx = {
+			cwd: duty.tempDir,
+			mode: "tui",
+			isIdle: () => true,
+			hasPendingMessages: () => false,
+			sessionManager: duty.sessionManager,
+			ui: { notify: () => {}, confirm: async () => false },
+		} as unknown as ExtensionCommandContext;
+		const result = (await definition!.execute("call", {}, undefined, undefined, ctx)) as {
+			details: {
+				mode: string;
+				pinnedTargets: Array<{ project: string; key: string; claim: string; binding: string; session: string }>;
+				businessProgress: string;
+			};
+		};
+		expect(result.details.mode).toBe("observation");
+		expect(result.details.businessProgress).toBe("unverified");
+		expect(result.details.pinnedTargets).toHaveLength(1);
+		expect(result.details.pinnedTargets[0]).toMatchObject({
+			project: resolve(duty.tempDir),
+			key,
+			claim: "",
+			binding: "",
+			session: "",
+		});
+		expect(readFileSync(join(doc, "_index.parallel"), "utf8")).toBe(index);
+		expect(existsSync(settings)).toBe(false);
+		expect(duty.eventsOfType("agent_start")).toHaveLength(0);
+		expect(duty.faux.state.callCount).toBe(0);
+		expect(duty.session.messages.filter((message) => message.role === "custom")).toHaveLength(0);
+		const channel = new PmChannel(duty.tempDir, home);
+		const requests = existsSync(channel.dir)
+			? readdirSync(channel.dir, { recursive: true }).filter((name) => String(name).endsWith(".request.json"))
+			: [];
+		expect(requests).toHaveLength(0);
+	} finally {
+		await duty.session.dispose();
+		duty.cleanup();
 		rmSync(home, { recursive: true, force: true });
 	}
 }, 20000);

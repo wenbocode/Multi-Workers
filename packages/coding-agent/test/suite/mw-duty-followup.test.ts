@@ -15,6 +15,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { lockDutyTarget } from "../../../multi-workers/pm_duty_lease.ts";
 import registerDuty from "../../../multi-workers/window_duty_extension.ts";
+import { receiverSettings } from "../../../multi-workers/window_duty_setup.ts";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -277,6 +278,8 @@ async function setup(): Promise<Fixture> {
 	writeFileSync(join(doc, "_index.parallel"), `| ${KEY} | active | EXECUTE | ${hostname()}:${process.pid} | | | |\n`);
 	writeFileSync(join(doc, "_workers.parallel"), "");
 	writeFileSync(join(doc, KEY, "pm-state.md"), "- Phase: EXECUTE\n- Next Action: test\n");
+	// Receiver wiring is already in place: these tests exercise activation, not first install.
+	receiverSettings(original.tempDir).install();
 	await original.session.bindExtensions({ mode: "tui" });
 	await duty.session.bindExtensions({ mode: "tui" });
 	const channel = new PmChannel(original.tempDir, home);
@@ -535,12 +538,7 @@ it("a refused observer upgrade preserves its registered observation timer, truth
 		expect(afterFailure.supervisorSession).toBe(before.supervisorSession);
 		expect(
 			(afterFailure.pinnedTargets as Array<{ key: string; claim: string; binding: string; session: string }>)[0],
-		).toMatchObject({
-			key: KEY,
-			claim: `${hostname()}:${process.pid}`,
-			binding: f.binding,
-			session: f.original.sessionManager.getSessionId(),
-		});
+		).toMatchObject({ key: KEY, claim: "", binding: "", session: "" });
 		await expect(f.tool("mw_duty_followup", { id: randomUUID(), note: "Should be refused" })).rejects.toThrow(
 			/not active|requires/i,
 		);
@@ -835,7 +833,7 @@ it("explicit follow-up parsing ignores a registered shift pointer for the same t
 	}
 });
 
-it("status reports waiting for a disconnected original PM", async () => {
+it("observation works without an online original PM and pins no identity", async () => {
 	const f = await setup();
 	try {
 		const claim = `${hostname()}:${process.ppid}`;
@@ -846,14 +844,68 @@ it("status reports waiting for a disconnected original PM", async () => {
 		rmSync(f.channel.windowPath(KEY, `${hostname()}:${process.pid}`));
 		await f.command("duty-on", `"${f.original.tempDir}" ${KEY}`);
 		const status = await f.status();
-		expect(status.mode).toBe("waiting");
-		expect((status.pinnedTargets as Array<{ key: string; claim: string }>)[0]).toMatchObject({
+		expect(status.mode).toBe("observation");
+		expect(status.pinnedTargets).toHaveLength(1);
+		expect(
+			(status.pinnedTargets as Array<{ key: string; claim: string; binding: string; session: string }>)[0],
+		).toMatchObject({
 			key: KEY,
-			claim,
+			claim: "",
+			binding: "",
+			session: "",
 		});
+		expect((status.observedStates as Array<{ state: string }>)[0].state).toBe("idle");
 		expect(status.businessProgress).toBe("unverified");
 		await f.command("duty-off", "");
 		expect((await f.status()).mode).toBe("inactive");
+	} finally {
+		await f.cleanup();
+	}
+});
+
+it("a single-key observation refuses follow-up while offline and creates no request", async () => {
+	const f = await setup();
+	try {
+		const args = { ...f.ctx, cwd: f.original.tempDir } as ExtensionCommandContext;
+		rmSync(f.channel.windowPath(KEY, `${hostname()}:${process.pid}`));
+		await f.command("duty-on", KEY, args);
+		const status = await f.status(args);
+		expect(status.mode).toBe("observation");
+		expect((status.pinnedTargets as Array<{ claim: string; binding: string; session: string }>)[0]).toMatchObject({
+			claim: "",
+			binding: "",
+			session: "",
+		});
+		await expect(f.command("duty-followup-on", KEY, args)).rejects.toThrow(/原 PM 不在线/);
+		expect(requestFiles(f.channel, f.binding)).toHaveLength(0);
+		expect((await f.status(args)).mode).toBe("observation");
+	} finally {
+		await f.cleanup();
+	}
+});
+
+it("the original PM coming online upgrades a single-key observation to follow-up", async () => {
+	const f = await setup();
+	try {
+		const args = { ...f.ctx, cwd: f.original.tempDir } as ExtensionCommandContext;
+		const endpoint = f.channel.windowPath(KEY, `${hostname()}:${process.pid}`);
+		const heartbeat = JSON.parse(readFileSync(endpoint, "utf8"));
+		rmSync(endpoint);
+		await f.command("duty-on", KEY, args);
+		expect((await f.status(args)).mode).toBe("observation");
+		writeFileSync(endpoint, JSON.stringify({ ...heartbeat, at: Date.now(), activity: "idle" }));
+		await f.command("duty-followup-on", KEY, args);
+		const status = await f.status(args);
+		expect(status.mode).toBe("followup");
+		expect(
+			(status.pinnedTargets as Array<{ key: string; claim: string; binding: string; session: string }>)[0],
+		).toMatchObject({
+			key: KEY,
+			claim: `${hostname()}:${process.pid}`,
+			binding: f.binding,
+			session: f.original.sessionManager.getSessionId(),
+		});
+		expect(requestFiles(f.channel, f.binding)).toHaveLength(0);
 	} finally {
 		await f.cleanup();
 	}

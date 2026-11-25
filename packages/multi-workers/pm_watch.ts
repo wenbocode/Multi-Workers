@@ -36,11 +36,42 @@ export class StopWatch {
 	private last?: State;
 	private since = 0;
 	private reported = false;
+	private readonly requirePm: boolean;
 
-	constructor(project: string, key: string, claim: string, binding: string, home?: string) {
+	constructor(project: string, key: string, claim: string, binding: string, home?: string, options?: { requirePm?: boolean }) {
 		this.target = { project: resolve(project), key, claim, binding };
 		this.channel = new PmChannel(project, home);
 		this.workers = new WorkerStore(join(project, ".agenticdoc"));
+		this.requirePm = options?.requirePm ?? true;
+	}
+
+	/** `requirePm=false` (single-window observation): the worker queue is the primary
+	 *  source, so a dead worker is reported as `worker-lost` even when no PM heartbeat
+	 *  is live. A missing/stale heartbeat is a `PM offline` detail, never `offline`.
+	 *  Bounded to the queue file and the targeted workers' run.json, same as the
+	 *  default path; `hasExited()` keeps its 90s + pid ESRCH criterion (GC-3). */
+	private sampleFileFirst(status: ReturnType<PmChannel["status"]>): { state: State; detail?: string } {
+		const { key } = this.target;
+		if (!existsSync(this.workers.queuePath)) return { state: "unobservable", detail: "Worker queue missing" };
+		const queue = this.workers.readQueue();
+		if (queue.version > 2 || queue.unparsable.length) return { state: "unobservable", detail: "Unreadable worker queue" };
+		let pending = false;
+		const exited: string[] = [];
+		for (const worker of queue.rows) {
+			if (normalizeKey(workerOwnerKey(worker)) !== normalizeKey(key)) continue;
+			if (worker.status === "running" && hasExited(worker, this.target.project, key)) exited.push(worker.taskKey);
+			else if (worker.status === "pending" || worker.status === "running") pending = true;
+			else if (!["done", "failed", "needs-clarification", "lost", "cancelled"].includes(worker.status))
+				return { state: "unobservable", detail: "Unknown worker state" };
+		}
+		const state: State = pending ? "waiting-for-worker" : exited.length ? "worker-lost" : "idle";
+		const detail = exited.length ? exited.join(", ") : undefined;
+		if (status.connected && status.activity !== "idle") {
+			if (status.activity === "working" && state === "idle") return { state: "working" };
+			if (status.activity !== "working") return { state: "unobservable", detail: "Unknown PM activity" };
+		}
+		if (status.connected) return detail === undefined ? { state } : { state, detail };
+		return { state, detail: detail === undefined ? "PM offline" : `${detail}, PM offline` };
 	}
 
 	sample(): { state: State; detail?: string } {
@@ -48,6 +79,7 @@ export class StopWatch {
 			const { key, claim, binding } = this.target;
 			const status = this.channel.status(key);
 			if (status.phase === "DONE") return { state: "finished" };
+			if (!this.requirePm) return this.sampleFileFirst(status);
 			if (status.status !== "active" || status.claim !== claim) return { state: "binding-changed" };
 			if (!status.connected) return { state: "offline" };
 			if (status.binding !== binding) return { state: "binding-changed" };
