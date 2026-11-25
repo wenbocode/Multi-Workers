@@ -7089,14 +7089,12 @@ export function formatDp3TraceLine(input: {
 	);
 }
 
-/** Marker opening the persistent coding/repair invariant guardrail. */
-export const CODING_INVARIANT_GUARDRAIL_MARKER = "[mw coding worker] 代码不变量与反粉饰护栏";
+/** Marker opening the persistent coding/repair anti-ornament guardrail. Project-specific
+ * lifecycle lessons live in the project's AGENTS.md, not in this generic worker prompt. */
+export const CODING_INVARIANT_GUARDRAIL_MARKER = "[mw coding worker] 反粉饰护栏";
 
 /** Static suffix injected for code-authoring worker roles (`coding`, `repair`). */
 export const CODING_INVARIANT_GUARDRAIL = [
 	CODING_INVARIANT_GUARDRAIL_MARKER,
-	"1. 非 task.md 或 spec_goal 明确要求的交付物，禁止自写证据一致性或哈希对账脚本；预算用于业务实现与正反例验证，直接运行验收命令。",
-	"2. 异步任务未完成或未排空前，撤销绑定不得提前释放仍在读取的句柄或缓冲。",
-	"3. 失效或析构路径不得解引用旧视图/对象，delegate/track 须成对撤销；锚点复用不得仅按裸地址匹配，须复核窗口或会话归属。",
-	"4. 底层原始数据（如 raw）不可用、为空或部分失败时，summary、计数与日志严禁报 ready。",
+	"非 task.md 或 spec_goal 明确要求的交付物，禁止自写证据一致性或哈希对账脚本；预算用于业务实现与正反例验证，直接运行验收命令。",
 ].join("\n");

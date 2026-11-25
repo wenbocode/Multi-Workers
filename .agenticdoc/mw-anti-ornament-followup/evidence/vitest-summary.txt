@@ -1,0 +1,5 @@
+ FAIL  test/extensions/agent-team-loop.test.ts > dispatch role + model override gate (mw-dispatch-role-escape) > VC-001: dispatch_worker declares type, keeps legacy defaults, refuses an unknown type
+ FAIL  test/extensions/agent-team-loop.test.ts > AC-005 single-source type resolution (T-07) > VC-MWGF-021 / VC-021: the named corpus file review-mw-worker-tree-kill resolves to its header coding
+ FAIL  test/extensions/agent-team-loop.test.ts > T-17/B-1 anchor integrity (VC-MWGF-038 / AC-011) > every spec.md / design.md `file:line` reference is anchored to the current tree
+ Test Files  1 failed | 1 passed (2)
+      Tests  3 failed | 227 passed (230)

@@ -47,8 +47,12 @@ def test_new_project_uses_shipped_guide(project):
     assert "仅供 Codex PM 使用" in codex.read_text(encoding="utf-8")
     assert "Workflow: codex-lite" in installed and "PM mode: mw" in installed
     assert "### Key 和任务卡规模" in installed and "最多 5 条 AC 和 10 张卡" in installed
-    assert "中间 `coding` 卡验编译通过、最小正例与破坏性负例" in installed
+    assert "至少经真实入口调用一次；脚本或测试能触达就不拉真机" in installed
+    assert "中间 `coding` 卡验编译通过、最小正例和必要的破坏性负例" in installed
+    assert "涉及异步、取消、绑定或失败态路径时另派独立评审" in installed
     assert "非 `spec_goal` 产品不自写证据一致性脚本" in installed
+    # Project-specific lifecycle lessons stay out of the generic guide.
+    assert "delegate/track" not in installed and "失效解绑" not in installed and "归属重验" not in installed
     assert "spec → design → plan → tasks → execute → verify → done" in installed
     assert "- Workflow: codex-lite" in codex.read_text(encoding="utf-8")
     assert "- Claim-Id: codex" in codex.read_text(encoding="utf-8")

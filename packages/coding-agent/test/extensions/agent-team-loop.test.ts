@@ -4945,10 +4945,11 @@ describe("pmActivate parallel protocol (mw-parallel-protocol)", () => {
 			expect(first?.systemPrompt).toContain("确需独立调研时用 type: research");
 			expect(first?.systemPrompt).toContain("同一文件同一时刻只允许一个 worker");
 			expect(first?.systemPrompt).toContain("同一轮派出所有同时就绪的卡");
-			expect(first?.systemPrompt).toContain("中间 coding 卡只验编译通过、最小正例与破坏性负例");
+			expect(first?.systemPrompt).toContain("至少经真实入口调用一次");
+			expect(first?.systemPrompt).toContain("中间 coding 卡只验编译通过、最小正例和必要的破坏性负例");
 			expect(first?.systemPrompt).toContain("禁止要求自写证据一致性对账脚本");
-			expect(first?.systemPrompt).toContain("先复核实际 diff 的生命周期与状态诚实性不变量");
-			expect(first?.systemPrompt).toContain("竖切收口跑一次重型真机留证");
+			expect(first?.systemPrompt).toContain("涉及异步、取消、绑定或失败态路径时另派独立评审");
+			expect(first?.systemPrompt).toContain("重型真机留证只在竖切收口做一次");
 			expect(first?.systemPrompt).toContain("type: vision");
 			for (const heading of ["必要功能路径", "保留任务", "闭环覆盖"]) {
 				expect(first?.systemPrompt).toContain(heading);
@@ -4991,12 +4992,11 @@ describe("pmActivate parallel protocol (mw-parallel-protocol)", () => {
 	});
 
 	it("injects CODING_INVARIANT_GUARDRAIL idempotently for coding/repair only", async () => {
-		expect(CODING_INVARIANT_GUARDRAIL.length).toBeLessThanOrEqual(360);
+		expect(CODING_INVARIANT_GUARDRAIL.length).toBeLessThanOrEqual(160);
 		expect(CODING_INVARIANT_GUARDRAIL).toContain("禁止自写证据一致性或哈希对账脚本");
-		expect(CODING_INVARIANT_GUARDRAIL).toContain("撤销绑定不得提前释放仍在读取的句柄或缓冲");
-		expect(CODING_INVARIANT_GUARDRAIL).toContain("delegate/track 须成对撤销");
-		expect(CODING_INVARIANT_GUARDRAIL).toContain("须复核窗口或会话归属");
-		expect(CODING_INVARIANT_GUARDRAIL).toContain("严禁报 ready");
+		// Project-specific lifecycle lessons stay in the project's AGENTS.md.
+		expect(CODING_INVARIANT_GUARDRAIL).not.toContain("delegate/track");
+		expect(CODING_INVARIANT_GUARDRAIL).not.toMatch(/解绑|归属|会话|报 ready/);
 
 		const runChain = async (
 			hooks: Array<(event?: unknown, ctx?: unknown) => Promise<unknown> | unknown>,
