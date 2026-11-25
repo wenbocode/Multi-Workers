@@ -402,6 +402,14 @@ contract:
 
 技能源和截图跟随 MW 源码发布，位于 `packages/multi-workers/skills/dual/`。已有 dual 项目、手工改过 `target.yml` 的项目、升级后的项目，运行 `mw target skills-sync --project <控制根>` 即可同步。同步使用当前解析的工作区配置，包括进程内的目标环境变量覆盖。安装失败时，CLI 显示失败路径，可排除问题后用同一命令重试。
 
+只给控制根的 pi 使用时，在该控制根创建 `.agenticdoc/dual-skills.json`，然后运行 `mw target skills-sync --project .`。同步会移除该控制根拥有且内容未修改的游戏根副本。从游戏根启动的 Worker 将沿用游戏根自身的技能配置。`"both"` 选择双根部署，也是该文件缺失时的默认值。
+
+```json
+{
+  "ue-editor-ui": "control"
+}
+```
+
 关闭、清除或从 dual 切到 partition 会清除当前控制根拥有且内容未修改的副本。换游戏根时同步迁移，项目自行安装或改过的副本会保留。多个控制根共用游戏根时，同一份托管副本由一个控制根管理，其他控制根会收到明确的归属冲突。single、partition 和普通 `mw init` 不安装该技能。
 
 ### 工具链执行纪律（mw ue-toolchain）

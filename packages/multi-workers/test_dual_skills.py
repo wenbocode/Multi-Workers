@@ -64,6 +64,51 @@ def test_target_lifecycle_installs_only_active_roots(roots):
     assert not any((project / dual_skills.SLOT).exists() for project in (control, game))
 
 
+def test_control_scope_removes_existing_game_copy_and_stays_control_only(roots):
+    control, game, _ = roots
+    _cli(control, "target", "set", "--game", game)
+    _assert_payload(game)
+    preferences = control / ".agenticdoc" / "dual-skills.json"
+    preferences.write_text('{"ue-editor-ui": "control"}\n', encoding="utf-8")
+
+    for _ in range(2):
+        _cli(control, "target", "skills-sync")
+        _assert_payload(control)
+        assert not (game / dual_skills.SLOT).exists()
+
+    preferences.write_text('{"ue-editor-ui": "both"}\n', encoding="utf-8")
+    _cli(control, "target", "skills-sync")
+    _assert_payload(game)
+
+    custom = game / dual_skills.SLOT / "SKILL.md"
+    custom.write_text("Project adaptation", encoding="utf-8")
+    preferences.write_text('{"ue-editor-ui": "control"}\n', encoding="utf-8")
+    _cli(control, "target", "skills-sync")
+    assert custom.read_text(encoding="utf-8") == "Project adaptation"
+
+
+def test_invalid_scope_preserves_both_copies(roots):
+    control, game, _ = roots
+    _cli(control, "target", "set", "--game", game)
+    preferences = control / ".agenticdoc" / "dual-skills.json"
+    preferences.write_text('{"ue-editor-ui": "game"}\n', encoding="utf-8")
+    result = _cli(control, "target", "skills-sync", expected=1)
+    assert "must be 'control' or 'both'" in result.stderr
+    for project in (control, game):
+        _assert_payload(project)
+
+
+def test_control_scope_does_not_remove_copy_from_current_engine_root(roots):
+    control, game, new_game = roots
+    _cli(control, "target", "set", "--game", game)
+    preferences = control / ".agenticdoc" / "dual-skills.json"
+    preferences.write_text('{"ue-editor-ui": "control"}\n', encoding="utf-8")
+    result = _cli(control, "target", "set", "--game", new_game, "--engine", game, expected=1)
+    assert "skill slot overlaps the engine root" in result.stderr
+    _assert_payload(game)
+    assert not (new_game / dual_skills.SLOT).exists()
+
+
 def test_retarget_and_switch_to_partition_preserve_project_changes(roots, tmp_path):
     control, game, engine = roots
     _cli(control, "target", "set", "--game", game)

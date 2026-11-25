@@ -174,16 +174,35 @@ def sync(project: Path) -> int:
     return 0
 
 
+def _deployment_scope(project: Path) -> str:
+    path = project / ".agenticdoc" / "dual-skills.json"
+    if not path.exists() and not path.is_symlink():
+        return "both"
+    _safe_location(path)
+    try:
+        preferences = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise ValueError(f"invalid dual skill preferences at {path}: {error}") from error
+    if not isinstance(preferences, dict) or set(preferences) != {"ue-editor-ui"}:
+        raise ValueError(f"{path} must contain only the 'ue-editor-ui' setting")
+    scope = preferences["ue-editor-ui"]
+    if scope not in ("control", "both"):
+        raise ValueError(f"{path}: 'ue-editor-ui' must be 'control' or 'both'")
+    return scope
+
+
 def _sync_locked(project: Path, receipt: Path) -> None:
     config = mw_common.load_target_config(project)
     previous = _recorded_roots(receipt)
     desired = set()
     source = None
     if config["mode"] == "dual":
-        desired = {project, Path(config["game_root"])}
+        desired = {project}
+        if _deployment_scope(project) == "both":
+            desired.add(Path(config["game_root"]))
         if config["engine_root"] is not None:
             engine = Path(config["engine_root"])
-            if any((root / SLOT).is_relative_to(engine) for root in desired):
+            if any((root / SLOT).is_relative_to(engine) for root in previous | desired):
                 raise ValueError(f"dual skill slot overlaps the engine root: {engine}")
         source = _entries(SOURCE)
         if "SKILL.md" not in source:
