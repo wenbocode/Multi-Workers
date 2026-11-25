@@ -9,6 +9,7 @@ import sys
 import pytest
 
 import codex_pm
+import change_set
 import mw_common
 from test_integration import _wait_for, fakebin, proj, start_launcher
 
@@ -32,7 +33,9 @@ def fill(project, key="counter", criteria="- AC-001: Increment returns the next 
 
 def achieved(project, residual="None.", key="counter"):
     (project / ".agenticdoc" / key / "achieved.md").write_text(
-        f"## 系统行为变化\nCounter implemented and independently checked.\n## 遗留\n{residual}\n", encoding="utf-8")
+        f"## 系统行为变化\nCounter implemented and independently checked.\n"
+        f"## 修改面\n- `counter.py`\n- `check.py`\n"
+        f"## 遗留\n{residual}\n", encoding="utf-8")
 
 
 @pytest.fixture()
@@ -65,6 +68,65 @@ def test_direct_lifecycle_keeps_real_index_and_complete_projection(lite):
     invoke(lite, "done", "--summary", "Counter behavior verified")
     assert (lite / ".agenticdoc/_project_log.md").read_text(encoding="utf-8").count("| counter |") == 1
     invoke(lite, "claim", expected=2)
+
+
+@pytest.mark.parametrize("observe_check_file", [False, True])
+def test_completion_requires_write_list_and_records_change_set(lite, observe_check_file):
+    invoke(lite, "check", "--ac", "AC-001", "--", sys.executable, "check.py")
+    invoke(lite, "advance", "--phase", "VERIFY")
+    key_dir = lite / ".agenticdoc/counter"
+    (key_dir / "achieved.md").write_text(
+        "## 系统行为变化\nCounter implemented.\n## 遗留\nNone.\n", encoding="utf-8")
+    refused = invoke(lite, "done", "--summary", "Missing write list", expected=2)
+    assert "修改面" in refused["error"]
+    assert invoke(lite, "status")["phase"] == "VERIFY"
+    achieved(lite)
+    change_set.record(lite, "counter", "edit", "counter.py")
+    if observe_check_file:
+        change_set.record(lite, "counter", "write", "check.py")
+    result = invoke(lite, "done", "--summary", "Counter behavior verified")
+    assert result["phase"] == "DONE"
+    closure = json.loads((key_dir / "evidence/codex-pm/completion.json").read_text(encoding="utf-8"))
+    assert Path(closure["change_set"]["change_set"]).is_file()
+    data = json.loads((key_dir / "change-set.json").read_text(encoding="utf-8"))
+    assert [item["path"] for item in data["files"]] == ["check.py", "counter.py"]
+    assert all(item["sha256"] for item in data["files"])
+    assert data["coverage"]["machine_sources"] == ["pm-tool-result"]
+    assert data["coverage"]["complete"] is observe_check_file
+    assert data["coverage"]["declared_paths_missing_from_machine"] == ([] if observe_check_file else ["check.py"])
+    assert (key_dir / "change-set.md").is_file()
+    assert "修改面" in (key_dir / "achieved.md").read_text(encoding="utf-8")
+
+
+def test_change_set_flags_machine_writes_missing_from_write_list(lite):
+    # Any new file outside .agenticdoc must exist before `check`, whose
+    # source_sha256 pins the whole source tree.
+    (lite / "extra.py").write_text("x = 1\n", encoding="utf-8")
+    invoke(lite, "check", "--ac", "AC-001", "--", sys.executable, "check.py")
+    invoke(lite, "advance", "--phase", "VERIFY")
+    key_dir = lite / ".agenticdoc/counter"
+    change_set.record(lite, "counter", "write", "extra.py")
+    achieved(lite)
+    invoke(lite, "done", "--summary", "Counter behavior verified")
+    data = json.loads((key_dir / "change-set.json").read_text(encoding="utf-8"))
+    assert data["coverage"]["machine_paths_missing_from_declared"] == ["extra.py"]
+    assert "extra.py" in [item["path"] for item in data["files"]]
+    assert data["coverage"]["complete"] is False
+
+
+def test_completion_excludes_agenticdoc_from_change_set(lite):
+    invoke(lite, "check", "--ac", "AC-001", "--", sys.executable, "check.py")
+    invoke(lite, "advance", "--phase", "VERIFY")
+    key_dir = lite / ".agenticdoc/counter"
+    change_set.record(lite, "counter", "write", ".agenticdoc/counter/evidence/x.md")
+    (key_dir / "achieved.md").write_text(
+        "## 系统行为变化\nCounter implemented.\n## 修改面\n无改动。\n## 遗留\nNone.\n",
+        encoding="utf-8")
+    invoke(lite, "done", "--summary", "Counter behavior verified")
+    data = json.loads((key_dir / "change-set.json").read_text(encoding="utf-8"))
+    assert all(not item["path"].startswith(".agenticdoc/") for item in data["files"])
+    assert data["files"] == []
+    assert data["coverage"]["declared_no_write_acknowledged"] is True
 
 
 def test_scaffold_requires_real_contract_before_execution(proj):

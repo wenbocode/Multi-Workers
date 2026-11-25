@@ -12,6 +12,8 @@
 
 ### Added
 
+- Added per-key change-set finalization (`change_set.py`): successful pi PM writes and existing worker `[WRITE_FILE]` trace events are saved as write events, then `done` writes `.agenticdoc/<key>/change-set.json` / `change-set.md` with deduplicated paths, sources, write times, closing sha256 and coverage. All of `.agenticdoc/` is excluded; no git, baseline, repository comparison or patch is involved. Codex-lite `done` now requires an explicit `## 修改面` write list in `achieved.md` and records a `change_set` pointer in `completion.json`. See the [Codex PM guide](docs/codex-pm.md).
+
 - Added `/mw ue-continue-develop-frame install` for dual projects. The installer stays within the Game `Plugins` directory and automatically checks the installed package. Failures include a log excerpt and the full log path.
 
 - Added explicit limited PM follow-up via `/duty-followup-on <project> <key>`, `mw_duty_status` and `mw_duty_followup`: persisted stop/outbox IDs, busy-safe supervisor wake and original-PM identity checks, without creating shift, stage or budget authority. Receipts and activity remain unverified business progress. See the [window duty guide](docs/mw-window-duty.md).
@@ -169,6 +171,8 @@
 - Added single-window read-only duty observation: `/duty-on <key>` in a project directory pins that directory as the project and starts observing without a second window, a live original-PM claim or a live PM heartbeat. `mw_duty_status {}` reports `mode="observation"` with only the project and key pinned (claim/binding/session unset) and samples the worker queue plus the targeted `run.json` every 5s, without calling a model, sending a direction or writing `_index.parallel`; a missing heartbeat is reported as a `PM offline` detail instead of masking `worker-lost`, unknown keys are refused with the nearest key name and `phase=DONE` keys with their phase. `/duty-followup-on <key>` still requires an online active original PM and keeps every claim/binding/session check, with the first-wiring registration moved to that command; `/duty-on <project path> <key>` and `/duty-on <shift.json>` are unchanged. See the [window duty guide](docs/mw-window-duty.md).
 
 - Added the project-scoped `ue-editor-ui` skill for dual workspaces. Target activation deploys the skill and screenshot reference to the control and game roots, and `mw target skills-sync` refreshes release-managed copies while preserving project edits.
+
+- Added a per-project `ue-editor-ui` deployment scope in `.agenticdoc/dual-skills.json`. The `control` option deploys the skill to the control root and removes the previous managed game-root copy.
 
 ### Changed
 

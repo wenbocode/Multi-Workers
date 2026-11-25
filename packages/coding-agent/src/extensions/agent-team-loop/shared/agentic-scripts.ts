@@ -35,6 +35,42 @@ export interface AgenticScriptResult {
 	output: string;
 }
 
+export interface ChangeSetResult {
+	ok: boolean;
+	output: string;
+}
+
+/** After a successful `done`, fold the key's write journal into
+ * `.agenticdoc/<key>/change-set.json`. `change_set.py` ships next to mw.py, so
+ * this works for both the global installation and a repo checkout. A missing
+ * finalizer is loud: a closed key without a change set is exactly the gap this
+ * record exists to close. */
+export function finalizeChangeSet(projectDir: string, key: string): ChangeSetResult {
+	const mw = findMwPy();
+	if (!mw) return { ok: false, output: "CHANGE-SET UNAVAILABLE: mw.py not found (set MW_PY)" };
+	const script = path.join(path.dirname(mw), "change_set.py");
+	if (!fs.existsSync(script)) {
+		return { ok: false, output: `CHANGE-SET UNAVAILABLE: ${script} is missing` };
+	}
+	const result = spawnSync(PYTHON_EXE, ["-X", "utf8", script, "finalize", "--project", projectDir, "--key", key], {
+		cwd: projectDir,
+		encoding: "utf8",
+		timeout: 30_000,
+		windowsHide: true,
+	});
+	if (result.error) return { ok: false, output: `CHANGE-SET FAILED: ${result.error.message}` };
+	const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+	if (result.status !== 0) return { ok: false, output: `CHANGE-SET FAILED (exit ${result.status}): ${output}` };
+	let pointer = "";
+	try {
+		const parsed = JSON.parse(result.stdout ?? "") as { change_set?: unknown };
+		if (typeof parsed.change_set === "string") pointer = parsed.change_set;
+	} catch {
+		// The CLI still succeeded; surface its raw output.
+	}
+	return { ok: true, output: pointer ? `CHANGE-SET: ${pointer}` : `CHANGE-SET: ${output || "written"}` };
+}
+
 /** Done may need a read-only attestation from this PM process while the
  * native script is running. Leave the event loop available to answer it. */
 export async function runAgenticDone(

@@ -16,6 +16,7 @@ import time
 import tempfile
 
 import mw_common
+import change_set
 import decision_signoff_result
 from autopilot import active_projection, config, contract_guard, gates, roadmap
 
@@ -545,6 +546,14 @@ def completion_checks(project: Path, key_dir: Path) -> list[dict]:
             raise ValueError("Reviewed closure requires a nonempty 结案遗留 section in codex_doc.md")
     elif not section(achieved, "系统行为变化") or not residual:
         raise ValueError("achieved.md requires nonempty 系统行为变化 and 遗留 sections")
+    # A closure the PM authored must name the code paths it wrote. The reviewed
+    # v4 sign-off branch above binds achieved.md byte-for-byte, so it cannot
+    # require an extra section; its change set still records the coverage gap.
+    if signoff is None or signoff.record_version != 4:
+        declared, acknowledged = change_set.declared_paths(achieved)
+        if change_set.section(achieved, "修改面") is None or (not declared and not acknowledged):
+            raise ValueError("achieved.md requires a nonempty 修改面 section listing written code paths"
+                             " (or an explicit no-write statement)")
     workers = [row for row in queue(project) if mw_common.worker_owner_key(row) == key_dir.name]
     if any(row["status"] not in {"done", "failed", "needs-clarification", "lost", "cancelled"} for row in workers):
         raise ValueError("Completion blocked by in-flight workers")
@@ -589,7 +598,12 @@ def complete(project: Path, key_dir: Path, summary: str) -> dict:
     else:
         key_state(project, key_dir.name, "codex")
         checks = completion_checks(project, key_dir)
+        # The change set is generated from the key's own write events, never a
+        # repository comparison. It is written before the closure snapshot so
+        # completion.json can point at a record that already exists.
+        written = change_set.finalize(project, key_dir.name)
         atomic_text(closure_file, json.dumps({"key": key_dir.name, "summary": summary, "checks": checks,
+                                             "change_set": written,
                                              "verified_at": datetime.datetime.now(datetime.UTC).isoformat()}, indent=2))
         result = lite_transition(project, key_dir.name, "done")
     # The log is a cross-key retrieval index, not another process document.

@@ -211,6 +211,13 @@ If the user's instructions conflict with any rule in this document, ask for expl
 - Worker 按卡片实施和验证，在本次运行目录用 `output.md` 交付改动、验证结果和遗留。Worker 无需创建 PM 过程文档；派出单项工作后，当前 Codex PM 继续负责整个 key。
 - PM 阅读实际改动和报告，再用派发时的验收命令执行 `verify --card <卡名> --claim-id codex -- <程序及参数>`，将结果记回主记录。失败时明确修复项和已有证据，再派新卡。
 
+### 结案修改面留底
+
+- 每个 key 的写入由宿主留痕：pi PM 窗口成功的 `write`/`edit`/可静态解析的 `bash` 写入追加到 `.agenticdoc/<key>/write-journal.jsonl`；Worker 沿用 `workers/<task>/trace.log` 的 `[WRITE_FILE]` / `[WRITE_UNRESOLVED]`。整个 `.agenticdoc/` 是过程状态，不计入修改面。
+- 两种 done 入口都生成 `change-set.json` 与 `change-set.md`（实际写入路径、来源、结案时 sha256、coverage）；codex-lite 的 `completion.json` 带 `change_set` 指针。记录来自写事件本身，不做仓库对比、不依赖 git、不生成补丁。
+- codex-lite 的 `achieved.md` 必须有 `## 修改面`，逐条列出本 key 写入的代码路径；没有写入时明确写“无改动”。`done` 缺段或路径无效时拒绝结案。PM 在 Codex CLI/桌面直写时这份声明是唯一来源，`coverage.complete` 不会伪装完整；机器记录里有而未声明的路径会被点名。
+- 不为每次写或每轮新增模型调用的记录工具；宿主在工具层观察。复核时先打开 `change-set.md`，再看 `coverage` 与对应卡片的 `output.md`。
+
 项目的构建、测试、代码风格和提交授权沿用已有约定。
 
 <!-- mw:agent-collaboration -->

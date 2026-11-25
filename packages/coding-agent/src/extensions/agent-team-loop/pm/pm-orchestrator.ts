@@ -57,6 +57,7 @@ import {
 import { SPEC_GOAL_GUIDANCE } from "../shared/spec-goal-prompt.ts";
 import { readTaskHeaderScalar, readTaskType } from "../shared/task-frontmatter.ts";
 import { type WorkerEntry, type WorkerStatus, WorkerStore, workerOwnerKey } from "../shared/worker-store.ts";
+import { registerPmWriteJournal } from "../shared/write-journal.ts";
 import {
 	type BoundPmIdentity,
 	type DecisionFollowupIntent,
@@ -3458,6 +3459,9 @@ export function pmActivate(
 	// widget are scoped to it — replacing the old global active-keys matching
 	// that made every window notify about every active key.
 	const watch: PmWatchState = { key: undefined };
+	// Every successful PM-window write is journaled for the key's change set.
+	// Registration is PM-only: worker windows keep their own trace.log records.
+	registerPmWriteJournal(pi, projectDir, () => watch.key);
 	const ui: PmUiHolder = { ctx: undefined };
 	const refreshWatch = (ctx: ExtensionContext): void => {
 		if (!watch.key) {

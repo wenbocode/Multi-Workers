@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "..
 import type { ModelRegistry } from "../../../core/model-registry.ts";
 import { validateRagEnabled } from "../rag/tools.ts";
 import type { AckStore } from "../shared/ack-store.ts";
-import { runAgenticDone, runAgenticScript } from "../shared/agentic-scripts.ts";
+import { finalizeChangeSet, runAgenticDone, runAgenticScript } from "../shared/agentic-scripts.ts";
 import { cardDigest } from "../shared/card-digest.ts";
 import { runProxyCommand } from "../shared/codex-local.ts";
 import { readConcurrencySnapshot, taskQueueStatus } from "../shared/concurrency-view.ts";
@@ -4103,7 +4103,13 @@ export function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: string, i
 				target === "done"
 					? await runAgenticDone(projectDir, args, _signal)
 					: runAgenticScript(projectDir, "advance_phase.py", args);
-			return { content: [{ type: "text", text: result.output }], details: undefined };
+			let text = result.output;
+			if (target === "done" && result.ok) {
+				// The phase is already DONE; a failed finalizer must be loud in
+				// the tool result so the PM cannot close without a change set.
+				text += `\n${finalizeChangeSet(projectDir, trimmedKey).output}`;
+			}
+			return { content: [{ type: "text", text }], details: undefined };
 		},
 	});
 }

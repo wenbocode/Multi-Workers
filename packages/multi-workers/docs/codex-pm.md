@@ -134,6 +134,7 @@ python $pm verify --project $project --key $key --claim-id codex --card $card --
 逐条检查验收标准和实际证据，确认在途任务已收尾，在 `achieved.md` 记录：
 
 - 系统行为变化、改动触达面和关键决定。
+- `## 修改面`：逐条列出本 key 实际写入的代码路径（见第 5 节）；没有写入时明确写“无改动”。
 - 对应验收证据，区分自验与独立复核。
 - 遗留项及明确去向；没有遗留也写明。
 
@@ -145,3 +146,11 @@ python $pm status --project $project --key $key
 结案接口验证验收覆盖、Worker 状态、结案记录和当前归属，把 key 设为 `DONE / idle`、ClaimId 清为 `—`，从完整 `active_keys` 投影中移除，再更新项目回溯记录。缺少验证或仍有未完成工作时保留任务状态，并在接续须知明确下一步。
 
 项目回溯记录的 Codex 写入有独立锁，但与 AgenticTask 原写入器没有跨流程原子保证。状态已完成而回溯记录写入失败时，命令会报告 `PARTIAL WRITE`；检查实际状态和日志后恢复，不能把部分写入当作完整成功。
+
+## 5. 结案修改面留底
+
+pi PM 窗口每次成功的 `write` / `edit` / 可静态解析的 `bash` 写入由宿主追加到 `.agenticdoc/<key>/write-journal.jsonl`。追加前在索引锁内确认当前窗口仍持有该 key 的有效认领。MW Worker 沿用 `workers/<task>/trace.log` 的 `[WRITE_FILE]` / `[WRITE_UNRESOLVED]`。Codex CLI/桌面 PM 的 `apply_patch` 不经过 pi 工具层，因此 `achieved.md` 的 `## 修改面` 是这一分支的显式写入声明。
+
+两种 done 入口都调用 `change_set.py` 生成 `change-set.json` 与 `change-set.md`，并在 `completion.json` 写入 `change_set` 指针。记录内容：去重后的实际写入路径、每条路径的 `sources`（`worker-trace` / `pm-tool-result` / `pm-declared`）、首末写时间、工具、卡、结案时 `sha256` 和 `coverage`。整个 `.agenticdoc/` 是过程状态，全部排除；记录来自写事件本身，不做仓库对比、不依赖 git、不生成补丁。
+
+`done` 缺 `## 修改面` 或该段没有有效路径时 exit 2 拒绝结案。带空格的路径用反引号括起来。文件存在时记录结案哈希。机器记录里有而声明里没有的路径列在 `coverage.machine_paths_missing_from_declared`，声明中缺少机器记录的路径列在 `coverage.declared_paths_missing_from_machine`。任一列表有路径时 `coverage.complete=false`。复核时先打开 `change-set.md`，再看 `coverage` 与对应卡片的 `output.md`。
