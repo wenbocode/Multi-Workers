@@ -1,9 +1,9 @@
 # mini-spec: mw-anti-ornament-followup
 
 > Key: mw-anti-ornament-followup（pm mini 快速通道）
-> 来源: 2026-11-24 用户“按你建议，你来改”
+> 来源: 2026-11-24 用户“按你建议，你来改”；2026-11-25 用户“提交并 mw build --install”
 > 前身: key `mw-anti-ornament-guardrails`。本单只修订其交付物的措辞和测试断言，不改逻辑。
-> 状态: 已实施并自验，改动已提交；发布记录见文末。
+> 状态: 已实施、自验、提交，并以冻结版 `mw-anti-ornament-followup-9ac9847a5` 全局发布。
 
 ## 目标
 
@@ -32,7 +32,7 @@
 
 ## 证据
 
-- `evidence/npm-check.log`：`npm run check` 完整输出，rc=0，前后 `git status` 无变化。
+- `evidence/npm-check.txt`：`npm run check` 完整输出，rc=0，前后 `git status` 无变化。
 - `evidence/vitest-summary.txt`：`agent-team-loop.test.ts` + `agent-team-loop-checkpoint-wiring.test.ts`，227 passed / 3 failed。3 个失败与改动前基线相同，均非本单引入：
   - `dispatch_worker declares type, keeps legacy defaults…`（自 90ace0f6f 起就红，无归属）
   - `VC-MWGF-021` 语料文件 `review-mw-worker-tree-kill` 缺失（环境绑定）
@@ -46,6 +46,25 @@
 - Gaze 没有 `_pitfalls.md`，也不是 git 仓库，所以三条教训放进 `AGENTS.md` 顶部的新节；写入前已备份。
 - 保留标识符 `CODING_INVARIANT_GUARDRAIL`，只改了注释和标记文本。
 
+## 提交与发布
+
+- MW 提交：`9ac9847a5` `fix(coding-agent,multi-workers): scope the coding guardrail to generic rules and restore per-card real entry`
+- AgenticTask 克隆提交：`1828e98` `docs: make FLOW logs on-demand in code-gen and structured logging`（未推送）
+- 冻结版 `mw-anti-ornament-followup-9ac9847a5`：在 `mw-anti-ornament-a575737ba` 上叠加本次提交的 7 个文件，pi 0.83.0。
+- 已切换用户级 `mw.cmd`、`pi.cmd`、扩展 bundle 和两个 sidecar；`mw version` 的 terminal、global、global_extension 都指向新冻结版，`uses_global_default: true`。
+- 没有直接跑仓库里的 `mw build --install`：它只替换扩展 bundle 并把 `.mw-py-path` 改指工作树，`mw.cmd` 留在旧发布版，修正后的 `templates/AGENTS.md` 也到不了 `mw init`。
+- 回滚副本：`<global>/releases/mw-anti-ornament-followup-9ac9847a5/deployment-backup/`（旧 shims、sidecar、bundle）。
+- 发布版内复核：`test_init_agents_guide.py` 19 passed；`agent-team-loop.test.ts` 的护栏用例和协议用例各 1 passed。
+- bundle 标记：三条新措辞存在，三条被移除的措辞不存在（`evidence/bundle-markers.json`）。
+- 发布证据：`evidence/candidate.json`、`evidence/installed.json`、`evidence/source-inputs.json`、`evidence/tools/followup-release.py`。
+
+## 仍待处理
+
+- 未推送：MW 与 AgenticTask 克隆各 1 个提交。
+- 运行中的进程仍是旧发布版，重启后才生效：MW 后端 `mw-remaining-closeout-20261124`（pid 71188）和 4 个已注册窗口。
+- 外部项目的 `AGENTS.md` 未同步（Gaze 仍是 v2 文本）；`mw init` 现在会安装修正后的指南。
+- AgenticTask 的 `[FLOW]` 改动要等克隆推送、各项目拉取后才到其它项目。
+
 ## 不做
 
-不提交、不推送、不构建发布、不重启后端或 PM 窗口；不改 `dual-toolchain-practice-guide.md`（UE 专有指南，保留 UE 词汇）；不改 `mw-anti-ornament-guardrails` 的 Codex 记录。
+不推送、不重启后端或 PM 窗口；不改 `dual-toolchain-practice-guide.md`（UE 专有指南，保留 UE 词汇）；不改 `mw-anti-ornament-guardrails` 的 Codex 记录。

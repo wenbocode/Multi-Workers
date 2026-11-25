@@ -1,0 +1,13 @@
+{
+  "base": "fdc74d386cae44aac12ba3fcd3562934d091d3ca",
+  "paths": {
+    "AGENTS.md": "96533ac471b2b4aa63fc0518db22e650ff98d608d35e1d8e41319be9a6375617",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts": "f92b1ce98cb167b4176a7050cca05d8b2a9c7837c10819ff554beef2430b2789",
+    "packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts": "ce2e5b475559a9e892c76037c01ffebe9adb4966f531107fd7ceb850f76390e8",
+    "packages/coding-agent/test/extensions/agent-team-loop.test.ts": "0a6e8943ae593cceab1c7737e311750825d24e0efbb01b3d0c0c65a46dc1004a",
+    "packages/multi-workers/templates/AGENTS.md": "42129fb9a78212180ba34a99037ccde174a476ed38f33c28c6414b6b1ea5a5dd",
+    "packages/multi-workers/test_init_agents_guide.py": "18aca781fb8b1fdad506fb5c207d9e84cf863960fdb3fa8cc00a9ec0c26fb826",
+    "packages/multi-workers/docs/plan-closure.md": "67e08ae91fdef5d9c33bfbb7149d526b1f1879a807a72f6ebfc408f2c8e57362"
+  },
+  "conflicts": []
+}
