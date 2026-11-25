@@ -13,9 +13,9 @@
 执行协议：
 
 1. 沿用本key；读取模块AGENTS.md与agent/GUIDE.md；Ask0→1理解目标和设计，Ask2定位术语/用例/门禁，需要历史才Ask3。
-2. 写明需求落地后的设计与影响面；保存修改前baseline；核对实际调用者后再实现。
-3. 在授权范围完成代码、DESIGN和catalog.json更新。运行catalog.py预览/--write/--check；有新增或变更确认项时交PM/用户审阅，不能自行批准。
-4. `python agent/gates/regression.py --impact <IDs> --plan`核对；带baseline及必要宿主参数执行。普通开发不默认--full。
-5. 只汇报摘要；失败按next分页展开，定位修复后重跑关联项。完整日志留在任务证据目录。
+2. 保存修改前 baseline，推演设计与影响面，核对实际调用者后再实现。
+3. 实现后用 `python agent/gates/design_gate.py --refresh-plan --baseline <baseline.json>` 获取变更路径，按实际实现刷新 DESIGN 与受影响的 catalog.json，再用 catalog.py 预览并生成目录。
+4. 登记本轮工程记录，运行 `python agent/gates/package_gate.py --baseline <baseline.json>`。新增或变更的确认项交 PM 或用户审阅。
+5. `python agent/gates/regression.py --impact <IDs> --plan` 核对选集，带 baseline 及必要宿主参数执行。失败按 next 分页展开，修复后重跑关联项。完整日志留在任务证据目录。
 
-output.md须包含：最终行为与设计差异、实际修改文件、选集和选择依据、summary.json绝对路径、每项结果及未执行项、待人审定内容/阻塞。禁止把plan、目录生成或审批当成真实运行结果。
+output.md 记录最终行为与设计差异、实际修改文件、事后设计校验结果、回归选集和依据、summary.json 绝对路径、实际结果和未执行项，以及待审内容。

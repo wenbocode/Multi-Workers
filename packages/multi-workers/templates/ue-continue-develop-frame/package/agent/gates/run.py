@@ -30,15 +30,16 @@ def main():
             raise ValueError("Runner arguments cannot override the approved gate action")
         if runner == "agent/gates/package_gate.py" and extra:
             raise ValueError("Package gate takes no runtime arguments")
-        argv = [sys.executable, "-B", str(ask.local_path(ROOT, runner)), *json.loads(fixed), *extra]
+        fixed_args = json.loads(fixed)
+        argv = [sys.executable, "-B", str(ask.local_path(ROOT, runner)), *fixed_args, *extra]
         if args.plan:
             print(json.dumps({"gate": args.gate, "status": rows[0]["status"], "argv": argv,
                               "item_sha256": ask.item_digest(rows, ROOT)}, ensure_ascii=False, indent=2))
             return 0
         if rows[0]["status"] != "accepted":
             raise ValueError("Gate requires individual human confirmation: " + args.gate)
-        if args.gate == "G-DESIGN" and "--baseline" not in extra:
-            raise ValueError("DESIGN update gate requires a pre-change --baseline")
+        if args.gate == "G-DESIGN" and (fixed_args or len(extra) != 2 or extra[0] != "--baseline"):
+            raise ValueError("DESIGN update gate takes only --baseline <pre-change snapshot>")
         return subprocess.run(argv, cwd=ROOT).returncode
     except (ValueError, OSError) as error:
         print(json.dumps({"status": "failed", "error": str(error)}, ensure_ascii=False))

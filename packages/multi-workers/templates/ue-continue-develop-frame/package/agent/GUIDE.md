@@ -33,13 +33,26 @@ discover仅列真实源码符号和已注册的UE AutomationTest，供选择；�
 
 ## 设计与最小回归
 
+修改前在模块根目录保存基线，推演需求对流程、接口、状态和调用者的影响。
+
 ```text
 python agent/gates/design_gate.py --snapshot <修改前的新baseline.json>
+python agent/gates/design_gate.py --refresh-plan --baseline <baseline.json>
+```
+
+第二条命令在实现后运行，返回只读 JSON。 `source_changes` 列出新增、修改、删除的源码路径，`source_changed`、`design_changed` 和 `implementation_changed` 报告各类摘要是否变化。旧基线没有文件摘要时，`source_changes` 为 `null`，用实际源码差异核对变更路径。
+
+沿变更源码及调用者回读，更新 `DESIGN.md` 中受影响的行为、流程图、状态、边界和 `[N:qualified]` 引用。源码变化且设计行为无变化时，在设计中记录核对过的范围和理由。按需更新 `catalog.json`，执行 `catalog.py --write`，登记本轮工程记录并运行事后校验。模板默认 draft，业务设计完成后才能标记 ready。
+
+```text
+python agent/gates/package_gate.py --baseline <baseline.json>
 python agent/gates/regression.py --impact T-... --plan
 python agent/gates/regression.py --impact T-... --baseline <baseline.json> --report-root <证据目录>
 ```
 
-在DESIGN写明新行为、影响面、流程图及[N:qualified]节点，再落实源码。模板默认draft，必须完成真实业务设计再改为ready。影响面由Agent根据设计和调用者核对；执行选always加所有关联conditional并去重，不另存一份“极简测试集”。未指定/未知术语拒绝执行。脚本只运行已确认门禁。新模块没有业务用例时，基础门禁通过不代表业务覆盖充分，必须补已实现的测试及人审判据。
+带基线的规范包校验检查目录复现、设计章节及源码引用，拒绝源码已变而设计未更新、缺少本轮记录或记录绑定已失效的变更。Agent 或人仍需审阅业务语义。校验可在门禁待审时运行，UE 回归另按确认状态执行。省略基线的规范包校验用于安装复核，已就绪模块会检查设计结构和引用。
+
+回归执行选择 always 与影响面关联的 conditional 并去重。未指定或未知术语时拒绝执行。脚本只运行已确认门禁。新模块应补已实现的业务用例及人审判据。
 
 UE测试另传--editor与--project；配置profile=scene的用例传--scene-project，map由module.json配置。用例排序需遵守fixture依赖；脚本门禁先执行，其余保留catalog.json中的顺序；有依赖的用例须按执行顺序列出。源码、DLL、地图和RHI需满足testcase前置条件，不因极简输出放宽。
 

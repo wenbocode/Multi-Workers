@@ -3,7 +3,9 @@
 
 仅使用本模块根目录上下文，先读 `agent/GUIDE.md`。通过 `agent/ask.py` 依次读取目标（level 0）、设计（1）、术语及testcase/gates（2），需要时才查工程日志（3）。术语必须来自源码AST，设计包含流程图与源码节点引用。
 
-修改前保存 `agent/gates/design_gate.py --snapshot <新证据文件>`。推演新设计与影响面后再实现；更新DESIGN、catalog.json，执行 `agent/catalog.py --write`。默认用 `agent/gates/regression.py --impact T-... --plan` 核对选集，再传baseline及运行参数执行。成功只报摘要，失败分页展开；全量仅显式--full。未确认的新/变更门禁由人审定，不伪造批准。
+修改前保存 `python agent/gates/design_gate.py --snapshot <baseline.json>`，推演设计与影响面。实现后运行 `python agent/gates/design_gate.py --refresh-plan --baseline <baseline.json>`，沿变更源码和调用者复核实际行为，刷新 `DESIGN.md` 与受影响的目录定义。生成目录并按 GUIDE 登记本轮工程记录后，必须通过 `python agent/gates/package_gate.py --baseline <baseline.json>` 才能报告设计事后校验通过。后续修改源码、设计或目录定义后重新登记并复验。
+
+默认用 `agent/gates/regression.py --impact T-... --plan` 核对选集，再传 baseline 及运行参数执行。成功只报摘要，失败分页展开。全量仅显式 `--full`。新门禁和变更门禁由人审定。
 
 ## 版本控制边界（框架自身不入库）
 

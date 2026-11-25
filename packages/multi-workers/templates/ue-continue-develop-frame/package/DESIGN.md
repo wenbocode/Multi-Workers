@@ -49,6 +49,6 @@ stateDiagram-v2
 
 ## 设计更新规则
 
-修改前保存设计基线；先推演需求后的设计和调用影响面，再实现。更新受影响流程、接口和术语说明，运行catalog.py查看差异再--write。新/变更testcase或gate退回proposed，待人确认。默认按影响面最小回归，仅摘要输出；失败后展开，完整证据落盘。不得把配置检查当成业务测试已运行。
+修改前保存快照，推演设计及调用影响面。实现后根据 `design_gate.py --refresh-plan --baseline` 的源码变更路径，回读最终实现和调用者，更新受影响的流程、接口和术语说明。运行 catalog.py 预览后再 `--write`。新用例、门禁和变更项进入 proposed，由人逐项确认。默认按影响面执行最小回归。
 
-更新规则：新增真实 UE 测试必须进入 testcase 和对应影响面 gate；修改前保存 v2 基线，修改后用 agent/change_record.py 登记绑定基线及当前输入的工程记录。旧日志不能替代本轮证据，新增或改变判据须逐项人工确认。
+新增真实 UE 测试必须进入 testcase 和对应影响面 gate。最后一批编辑后，用 `agent/change_record.py` 登记绑定改前基线及当前输入的记录，再用 `agent/gates/package_gate.py --baseline` 验证。业务设计语义由 Agent 或人审阅，UE 回归结果单独记录。

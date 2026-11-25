@@ -53,7 +53,8 @@ class TemplateTests(unittest.TestCase):
         config['design_status'] = 'ready'
         self.write('module.json', config)
         design = self.root / 'DESIGN.md'
-        design.write_text(design.read_text(encoding='utf-8').replace('## 主要 Flow', '[T-EXEC]\n\n## 主要 Flow')
+        design.write_text(design.read_text(encoding='utf-8').replace('（草稿）', '')
+                          .replace('## 主要 Flow', '[T-EXEC]\n\n## 主要 Flow')
                           .replace('## 生命周期', '[N:execute]\n\n## 生命周期')
                           .replace('## 持久化', '[N:execute]\n\n## 持久化'), encoding='utf-8')
         self.catalog('--write')
@@ -119,6 +120,11 @@ with (root/'agent/records.csv').open('a',encoding='utf-8',newline='') as f: csv.
         self.assertEqual(summary['passed'], 3)
         self.assertLess(len(result.stdout), 1000)
         self.assertEqual(self.read('module.json')['module'], 'IndependentModule')
+        for action in ('--refresh-plan', '--refresh', '--help'):
+            with self.subTest(action=action):
+                rejected = self.call(self.root / 'agent/gates/run.py', '--gate', 'G-DESIGN',
+                                     '--', '--baseline', baseline, action, success=False)
+                self.assertIn('takes only --baseline', rejected.stdout)
 
     def test_source_fact_failure_preserves_catalogs(self):
         original = (self.root / 'agent/terms.csv').read_bytes()

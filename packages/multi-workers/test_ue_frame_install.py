@@ -150,6 +150,76 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("terms", verified.stdout)
         self.assertIn("REVIEW.md", verified.stdout)
 
+    def test_verify_checks_ready_design_structure(self):
+        module = ("--module", "Plugins/MyPlugin")
+        installed = self.run_mw("install", *module)
+        self.assertEqual(installed.returncode, 3, installed.stdout + installed.stderr)
+        self.generate_plugin_spec()
+        design = self.plugin / "DESIGN.md"
+        design.write_text(design.read_text(encoding="utf-8").replace("## 生命周期", "## Other"), encoding="utf-8")
+        result = self.run_mw("verify", *module)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Missing DESIGN section: 生命周期", result.stdout)
+
+    def test_agent_refresh_and_post_change_validation(self):
+        legacy = self.plugin / "Source/Legacy.h"
+        legacy.write_text("int Legacy();\n", encoding="utf-8")
+        installed = self.run_mw("install", "--module", "Plugins/MyPlugin")
+        self.assertEqual(installed.returncode, 3, installed.stdout + installed.stderr)
+        self.generate_plugin_spec()
+
+        baseline = self.control / "baseline.json"
+        gate = "agent/gates/design_gate.py"
+        package_gate = "agent/gates/package_gate.py"
+        self.run_agent(gate, "--snapshot", baseline)
+
+        logic = self.plugin / "Source/Logic.cpp"
+        logic.write_text(UE_CPP.replace("Value + 1", "Value + 2"), encoding="utf-8")
+        legacy.unlink()
+        (self.plugin / "Source/Extra.h").write_text("int Extra();\n", encoding="utf-8")
+        planned = self.run_agent(gate, "--refresh-plan", "--baseline", baseline)
+        plan = json.loads(planned.stdout)
+        self.assertEqual(plan["status"], "planned")
+        self.assertTrue(plan["source_changed"])
+        self.assertFalse(plan["design_changed"])
+        self.assertEqual(plan["source_changes"], {
+            "added": ["Source/Extra.h"],
+            "modified": ["Source/Logic.cpp"],
+            "removed": ["Source/Legacy.h"],
+        })
+        stale_catalog = self.run_agent(package_gate, "--baseline", baseline, expected=1)
+        self.assertNotIn('"baseline_checked": true', stale_catalog.stdout)
+
+        self.run_agent("agent/catalog.py", "--write")
+        stale_design = self.run_agent(package_gate, "--baseline", baseline, expected=1)
+        self.assertIn("Source changed; DESIGN requires review", stale_design.stdout)
+
+        design = self.plugin / "DESIGN.md"
+        design.write_text(design.read_text(encoding="utf-8") + "\nExecute now adds 2. [N:Execute]\n", encoding="utf-8")
+        missing_record = self.run_agent(package_gate, "--baseline", baseline, expected=1)
+        self.assertIn("Missing current engineering record", missing_record.stdout)
+        self.run_agent("agent/change_record.py", "--baseline", baseline, "--id", "R-EXEC-V2", "--term", "T-EXEC",
+                       "--summary", "Execute now adds 2", "--validation", "Source and design reviewed")
+        verified = self.run_agent(package_gate, "--baseline", baseline)
+        self.assertIn('"baseline_checked": true', verified.stdout)
+        self.assertIn('"R-EXEC-V2"', verified.stdout)
+
+        invalid_baseline = self.control / "invalid-baseline.json"
+        invalid_baseline.write_text("{}", encoding="utf-8")
+        invalid = self.run_agent(package_gate, "--baseline", invalid_baseline, expected=1)
+        self.assertIn("Use a pre-change v2 snapshot", invalid.stdout)
+        design.write_text(design.read_text(encoding="utf-8") + "\nResult is returned to the caller.\n", encoding="utf-8")
+        stale_record = self.run_agent(package_gate, "--baseline", baseline, expected=1)
+        self.assertIn("Missing current engineering record", stale_record.stdout)
+
+    def run_agent(self, script, *args, expected=0):
+        result = subprocess.run(
+            [sys.executable, "-X", "utf8", "-B", str(self.plugin / script), *map(str, args)],
+            capture_output=True, encoding="utf-8", cwd=self.plugin,
+        )
+        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+        return result
+
     def generate_plugin_spec(self):
         catalog_path = self.plugin / "agent/catalog.json"
         catalog = json.loads(catalog_path.read_text(encoding="utf-8-sig"))
@@ -172,10 +242,9 @@ class CliContractTests(unittest.TestCase):
         design = design_path.read_text(encoding="utf-8")
         design = design.replace("（草稿）", "").replace("## 主要 Flow", "[T-EXEC] [N:Execute]\n\n## 主要 Flow")
         design = design.replace("## 生命周期", "[N:Execute]\n\n## 生命周期")
+        design = design.replace("## 持久化", "[N:Execute]\n\n## 持久化")
         design_path.write_text(design, encoding="utf-8")
-        written = subprocess.run([sys.executable, "-B", str(self.plugin / "agent/catalog.py"), "--write"],
-                                 capture_output=True, encoding="utf-8", cwd=str(self.plugin))
-        self.assertEqual(written.returncode, 0, written.stdout + written.stderr)
+        self.run_agent("agent/catalog.py", "--write")
 
 
 if __name__ == "__main__":
