@@ -338,7 +338,7 @@ dual 的目录关系：
 ```
 
 - Worker 进程 **cwd = game root**（相对路径、工具链锚定目标项目）
-- 一切**协调写入**（trace.log / output.md / phase docs / goal check）通过 `PI_WORKER_TASK` 反推 control root，写回控制工作区——**目标树零框架文件**
+- 一切**协调写入**（trace.log / output.md / phase docs / goal check）通过 `PI_WORKER_TASK` 反推 control root，写回控制工作区。dual 项目技能部署见下文。
 - `read_scope` 相对条目按 game root 展开，`ignore.deny_globs` 作为上下文防火墙（deny 优先于 allow）
 - 派发时把 toolchain / 防火墙清单 / contract 注入 task.md，Worker 无需感知 target.yml 的存在
 - 配置坏时 fail-closed：拒绝派发，不静默下发未注入的 task.md
@@ -395,6 +395,14 @@ contract:
     项目约定，注入每个 task.md
   docs: [docs/api.md]
 ```
+
+### dual 项目技能
+
+`mw target set` 和 `mw target on` 启用 dual 时，将 [ue-editor-ui](skills/dual/ue-editor-ui/SKILL.md) 部署到控制根和游戏根各自的 `.agents/skills/ue-editor-ui/`。同一个技能可供 pi 的不同模型路由使用。pi 按既有项目可信设置加载，在未信任的根目录先打开交互窗口并按需信任该目录。已打开的窗口用 `/reload` 刷新，新 Worker 在启动时加载。
+
+技能源和截图跟随 MW 源码发布，位于 `packages/multi-workers/skills/dual/`。已有 dual 项目、手工改过 `target.yml` 的项目、升级后的项目，运行 `mw target skills-sync --project <控制根>` 即可同步。同步使用当前解析的工作区配置，包括进程内的目标环境变量覆盖。安装失败时，CLI 显示失败路径，可排除问题后用同一命令重试。
+
+关闭、清除或从 dual 切到 partition 会清除当前控制根拥有且内容未修改的副本。换游戏根时同步迁移，项目自行安装或改过的副本会保留。多个控制根共用游戏根时，同一份托管副本由一个控制根管理，其他控制根会收到明确的归属冲突。single、partition 和普通 `mw init` 不安装该技能。
 
 ### 工具链执行纪律（mw ue-toolchain）
 

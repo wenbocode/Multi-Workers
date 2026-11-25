@@ -2,9 +2,9 @@
 test_mw_target.py — `mw target set/clear/show` + doctor target section tests
 (mw-dual-workspace Task 003, AC-005, VC-010).
 
-VC-010 observable: set→resolve(game), clear→resolve(single); write scope is
-target.yml only (full-tree snapshot before/after); the repo's coding-agent
-dist bundle mtimes are untouched (no rebuild on mode switch).
+VC-010 observable: set→resolve(game), clear→resolve(single). Only target.yml
+and the managed dual skill deployment are written, and coding-agent dist
+bundle mtimes are untouched (no rebuild on mode switch).
 """
 import argparse
 import os
@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
+import dual_skills
 import mw
 import mw_common
 from mw_common import (
@@ -133,9 +134,8 @@ def test_clear_returns_single(tmp_path: pathlib.Path) -> None:
     print("[VERIFY] VC-010: single-root=control")
 
 
-def test_write_scope_is_target_yml_only(tmp_path: pathlib.Path) -> None:
-    """VC-010: set/clear touch nothing but .agenticdoc/target.yml, and the
-    coding-agent dist bundle mtimes are unchanged (no rebuild on switch)."""
+def test_write_scope_is_target_yml_and_dual_skill(tmp_path: pathlib.Path) -> None:
+    """VC-010: target switching stays within its config and managed skill paths."""
     project, game = tmp_path / "control", tmp_path / "game"
     project.mkdir()
     game.mkdir()
@@ -151,19 +151,27 @@ def test_write_scope_is_target_yml_only(tmp_path: pathlib.Path) -> None:
     tree_after_set = _snapshot(project)
     changed, added, removed = _diff_snapshots(tree_before, tree_after_set)
     assert changed == set() and removed == set()
-    assert added == {".agenticdoc/target.yml"}, f"unexpected writes: {added}"
+    skill_files = {
+        (dual_skills.SLOT / p.relative_to(dual_skills.SOURCE)).as_posix()
+        for p in dual_skills.SOURCE.rglob("*")
+        if p.is_file()
+    } | {(dual_skills.SLOT / dual_skills.MARKER).as_posix()}
+    deployment_files = skill_files | {".agenticdoc/target.yml", ".mw/dual-skills.json"}
+    assert added == deployment_files
+    assert set(_snapshot(game)) == skill_files
 
     assert mw.cmd_target(_action_args(project, "clear")) == 0
     tree_after_clear = _snapshot(project)
     changed, added, removed = _diff_snapshots(tree_after_set, tree_after_clear)
     assert changed == set() and added == set()
-    assert removed == {".agenticdoc/target.yml"}, f"unexpected deletions: {removed}"
+    assert removed == deployment_files
+    assert not _snapshot(game)
 
     if dist_before is not None:
         assert _snapshot(_DIST_DIR) == dist_before
-        print("[VERIFY] VC-010: write-scope=target-yml-only dist-mtime-unchanged=true")
+        print("[VERIFY] VC-010: write-scope=target-yml-and-dual-skill dist-mtime-unchanged=true")
     else:
-        print("[VERIFY] VC-010: write-scope=target-yml-only dist-mtime-unchanged=skipped(no dist)")
+        print("[VERIFY] VC-010: write-scope=target-yml-and-dual-skill dist-mtime-unchanged=skipped(no dist)")
 
 
 def test_set_missing_game_fails_closed(tmp_path: pathlib.Path) -> None:

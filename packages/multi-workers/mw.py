@@ -63,6 +63,7 @@ import decision_prepare
 import decision_receipts
 import decision_signoff_result
 import decision_wire
+import dual_skills
 import mw_common
 import operator_authority
 import operator_host
@@ -8721,15 +8722,17 @@ def cmd_target(args: argparse.Namespace) -> int:
     resolved view (mw-dual-workspace AC-005, D-011) + on/off mode switching
     (mw-target-partition AC-023)."""
     project_dir = pathlib.Path(args.project).resolve()
-    if args.target_action == "set":
-        return _target_set(project_dir, args)
-    if args.target_action == "clear":
-        return _target_clear(project_dir)
-    if args.target_action == "on":
-        return _target_on(project_dir)
-    if args.target_action == "off":
-        return _target_off(project_dir)
-    return _target_show(project_dir)
+    action = args.target_action
+    if action == "show":
+        return _target_show(project_dir)
+    if action == "skills-sync":
+        return dual_skills.sync(project_dir)
+    if action == "set":
+        result = _target_set(project_dir, args)
+    else:
+        handlers = {"clear": _target_clear, "on": _target_on, "off": _target_off}
+        result = handlers[action](project_dir)
+    return result or dual_skills.sync(project_dir)
 
 
 # ── Subcommand: toolchain (dual-mode discipline, practice guide) ───────────
@@ -11203,11 +11206,11 @@ def cmd_partition(args: argparse.Namespace) -> int:
     migration + partition block write) / show / clear / on / off."""
     project_dir = pathlib.Path(args.project).resolve()
     if args.partition_action == "set":
-        return _partition_set(project_dir, args)
+        return _partition_set(project_dir, args) or dual_skills.sync(project_dir)
     if args.partition_action == "clear":
         return _partition_clear(project_dir)
     if args.partition_action == "on":
-        return _partition_on(project_dir)
+        return _partition_on(project_dir) or dual_skills.sync(project_dir)
     if args.partition_action == "off":
         return _partition_off(project_dir)
     return _partition_show(project_dir)
@@ -15480,6 +15483,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         )
         p = target_sub.add_parser(action, help=help_text)
         p.add_argument("--project", required=True, help="Control workspace directory")
+
+    target_skills_p = target_sub.add_parser("skills-sync", help="Sync the active dual project's skill copies")
+    target_skills_p.add_argument("--project", required=True, help="Control workspace directory")
 
     partition_p = sub.add_parser(
         "partition",
