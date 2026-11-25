@@ -309,7 +309,7 @@ def ensure_mw(global_ext, pkg):
         (_GLOBAL_EXT / 'agent-team-loop.js').write_text('// offline dummy\n', encoding='utf-8')
         mw._check_bundle = lambda: True
         mw._global_ext_dir = lambda: _GLOBAL_EXT
-        mw._install_project_agent_guide = lambda pd: pd / 'AGENTS.md'
+        mw._install_project_agent_guide = lambda pd: (pd / 'AGENTS.md', '')
     return _MW
 
 

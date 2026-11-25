@@ -1,5 +1,6 @@
 """Exercise project guide installation through the same CLI used by auto-init."""
 
+import hashlib
 import pathlib
 import subprocess
 import sys
@@ -9,6 +10,8 @@ import pytest
 
 PACKAGE = pathlib.Path(__file__).resolve().parent
 MARKER = "<!-- mw:agent-collaboration-version: 3 -->"
+DIGEST_MARKER = "<!-- mw:agent-collaboration-digest: "
+LEGACY_GUIDE = PACKAGE / "test" / "fixtures" / "AGENTS_guide_v3_legacy.md"
 
 
 @pytest.fixture
@@ -40,7 +43,9 @@ def test_new_project_uses_shipped_guide(project):
     (framework / "install.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
     result = init(project, "--sync-agentictask", str(framework))
     installed = (project / "AGENTS.md").read_text(encoding="utf-8")
-    assert installed == (PACKAGE / "templates" / "AGENTS.md").read_text(encoding="utf-8")
+    assert installed.startswith(
+        (PACKAGE / "templates" / "AGENTS.md").read_text(encoding="utf-8").rstrip("\n") + "\n" + DIGEST_MARKER
+    )
     assert MARKER in installed and "CLAUDE.md" in installed
     codex = project / ".agenticdoc" / "templates" / "codex_doc.md"
     assert codex.read_text(encoding="utf-8") == (PACKAGE / "templates" / "codex_doc.md").read_text(encoding="utf-8")
@@ -68,6 +73,70 @@ def test_new_project_uses_shipped_guide(project):
     assert str(project / ".agenticdoc" / "target.yml") in result.stdout
     assert not (project / ".agenticdoc" / "target.yml").exists()
     assert not (project.parent / "AGENTS.md").exists()
+    installed_bytes = (project / "AGENTS.md").read_bytes()
+    again = init(project, "--no-framework")
+    assert (project / "AGENTS.md").read_bytes() == installed_bytes
+    assert "MW collaboration section" not in again.stdout
+
+
+@pytest.mark.parametrize(("encoding", "bom"), [
+    ("utf-8", b""), ("utf-8", b"\xef\xbb\xbf"), ("utf-16-le", b"\xff\xfe"),
+])
+@pytest.mark.parametrize("after", ["", "\r\n", "\r\n## 项目自己的章节\r\n标记之后的文字。\r\n"])
+def test_pristine_legacy_section_is_refreshed_in_place(project, encoding, bom, after):
+    # A section installed verbatim from an earlier shipped template (before the
+    # digest marker existed) is swapped for the current one. Everything around
+    # it survives byte-for-byte in the file's own encoding and line ending.
+    legacy = LEGACY_GUIDE.read_text(encoding="utf-8").replace("\n", "\r\n")
+    if not after:
+        legacy = legacy.rstrip("\r\n")
+    assert "每张卡写明一条真实使用路径" in legacy and "至少经真实入口调用一次" not in legacy
+    prose = "# 项目规则\r\n保留。\r\n\r\n"
+    guide = project / "AGENTS.md"
+    guide.write_bytes(bom + (prose + legacy + after).encode(encoding))
+    result = init(project, "--no-framework")
+    updated = guide.read_bytes()
+    assert updated.startswith(bom + prose.encode(encoding))
+    text = updated[len(bom):].decode(encoding)
+    assert "至少经真实入口调用一次" in text and "每张卡写明一条真实使用路径" not in text
+    assert text.count(MARKER) == 1 and text.count(DIGEST_MARKER) == 1
+    assert "\n" not in text.replace("\r\n", "")
+    assert updated.endswith(after.encode(encoding)) if after else text.endswith("-->")
+    assert str(guide) in result.stdout and "unedited shipped section updated" in result.stdout
+    quiet = init(project, "--no-framework")
+    assert guide.read_bytes() == updated
+    assert "MW collaboration section" not in quiet.stdout
+
+
+def test_digest_marker_pristine_section_is_refreshed(project):
+    # The digest marker vouches for a section from any release, including ones
+    # that never appear in the legacy list: an unedited body is refreshed.
+    body = "## Multi-Workers 协作约定\r\n\r\n未来某个发布版的正文。\r\n"
+    recorded = hashlib.sha256(body.replace("\r\n", "\n").rstrip().encode("utf-8")).hexdigest()
+    guide = project / "AGENTS.md"
+    head = "# 规则\n\n"
+    guide.write_bytes((head + body + f"<!-- mw:agent-collaboration -->\r\n{MARKER}\r\n"
+                       + f"{DIGEST_MARKER}{recorded} -->\r\n").encode("utf-8"))
+    result = init(project, "--no-framework")
+    updated = guide.read_bytes()
+    assert updated.startswith(head.encode("utf-8"))
+    text = updated.decode("utf-8")
+    assert "未来某个发布版的正文" not in text and "至少经真实入口调用一次" in text
+    assert text.count(DIGEST_MARKER) == 1 and recorded not in text
+    assert "\n" not in text[len(head):].replace("\r\n", "")
+    assert "unedited shipped section updated" in result.stdout
+
+
+def test_customized_section_is_kept_and_reported(project):
+    shipped = (PACKAGE / "templates" / "AGENTS.md").read_text(encoding="utf-8")
+    edited = shipped.replace("每个 key 选择一个 PM", "项目定制的 PM 选择")
+    assert edited != shipped
+    guide = project / "AGENTS.md"
+    original = ("# 规则\n\n" + edited).encode("utf-8")
+    guide.write_bytes(original)
+    result = init(project, "--no-framework")
+    assert guide.read_bytes() == original
+    assert "has project edits; left as-is" in result.stdout and str(guide) in result.stdout
 
 
 @pytest.mark.parametrize(("encoding", "bom"), [

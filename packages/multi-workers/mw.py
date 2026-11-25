@@ -299,6 +299,21 @@ def _conductor_supervise_step(
 
 # ── Subcommand: serve ────────────────────────────────────────────────────────
 
+def _agent_guide_startup_note(project_dir: pathlib.Path) -> str:
+    """One log line for serve start: the guide refresh `mw init` performs, so a
+    backend restarted on a new MW release also brings the project's AGENTS.md
+    up to date without a manual init. Never fatal."""
+    try:
+        guide, status = _install_project_agent_guide(project_dir)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return f"[mw serve] Warning: project agent guide not refreshed: {exc}"
+    if status == "refreshed":
+        return f"[mw serve] project agent guide updated to the shipped template: {guide}"
+    if status == "kept":
+        return f"[mw serve] project agent guide has project edits; left as-is: {guide}"
+    return ""
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import threading
 
@@ -339,6 +354,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
     wrote_pid = False
 
     try:
+        guide_note = _agent_guide_startup_note(project_dir)
+        if guide_note:
+            print(guide_note, flush=True)
+
         # ── Route precheck (design D-002 / AC-002, AC-003) ──
         # Runs BEFORE the PID file is written, so "PID file exists" implies
         # "service actually started" (the PM stable-window relies on it).
@@ -13262,7 +13281,79 @@ def _install_framework(
     return True, f"framework installed from {source}"
 
 
-def _install_project_agent_guide(project_dir: pathlib.Path) -> pathlib.Path:
+# The MW collaboration guide is the one managed section of a project's
+# AGENTS.md: it starts at its heading and ends with its marker lines. The
+# digest marker records the shipped template a section was installed from, so
+# a later release can tell "never edited here" (safe to refresh in place)
+# from "carries project edits" (never rewritten).
+_AGENT_GUIDE_HEADING = "## Multi-Workers 协作约定"
+_AGENT_GUIDE_VERSION = "<!-- mw:agent-collaboration-version: 3 -->"
+_AGENT_GUIDE_MARKER_RE = re.compile(r"^<!-- mw:agent-collaboration.*? -->$")
+_AGENT_GUIDE_DIGEST_RE = re.compile(r"^<!-- mw:agent-collaboration-digest: ([0-9a-f]{64}) -->$")
+# Bodies (see `_agent_guide_body`) of every v3 guide shipped before the digest
+# marker existed. A section matching one of them was installed verbatim.
+_LEGACY_SHIPPED_GUIDE_DIGESTS = frozenset({
+    "efc5271d5d2905a1dfbc29f6d95e3e188ca3952263d6492ed9cb62436ed5a320",
+    "9e08f4acfb4bf2ec3d0c49173f4d59d1c8aea3dd9ef74eabead134bd2c064c17",
+    "4423237c2277c85397c3814317899cde621bf58f13b0d51b2ac4416524c33b59",
+    "1e05b9b9315c44a0c5aaa010cf9729a0cf6c18be2151b2f88db874181ecb58d0",
+    "b294d7646d6320f2bf9dcd3b4c689db05f09f646d2ecc4fc0e6d82ff7a4a8ef4",
+})
+
+
+def _agent_guide_body(text: str) -> str:
+    """Guide text up to its first marker line, LF-normalized, trailing blanks dropped."""
+    lines = []
+    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        if line.startswith("<!-- mw:agent-collaboration"):
+            break
+        lines.append(line)
+    return "\n".join(lines).rstrip()
+
+
+def _agent_guide_digest(text: str) -> str:
+    return hashlib.sha256(_agent_guide_body(text).encode("utf-8")).hexdigest()
+
+
+def _render_agent_guide(template: str, digest: str, eol: str) -> str:
+    """The shipped guide followed by its digest marker, in the file's line ending."""
+    text = template.rstrip("\n") + f"\n<!-- mw:agent-collaboration-digest: {digest} -->\n"
+    return text.replace("\n", eol)
+
+
+def _locate_agent_guide(text: str) -> tuple[int, int, str | None] | None:
+    """Span `[start, end)` of the installed v3 guide in
+    `text.splitlines(keepends=True)`, plus the digest recorded by its marker
+    (None for sections installed before the marker existed). None when there
+    is no v3 guide: nothing installed yet, or an older version whose section
+    stays and gets the current one appended after it."""
+    bare = [line.rstrip("\r\n") for line in text.splitlines(keepends=True)]
+    start = next((i for i in range(len(bare) - 1, -1, -1) if bare[i] == _AGENT_GUIDE_HEADING), None)
+    if start is None:
+        return None
+    end = start + 1
+    while end < len(bare) and not _AGENT_GUIDE_MARKER_RE.match(bare[end]):
+        end += 1
+    if end >= len(bare):
+        return None
+    first_marker, digest = end, None
+    while end < len(bare) and _AGENT_GUIDE_MARKER_RE.match(bare[end]):
+        match = _AGENT_GUIDE_DIGEST_RE.match(bare[end])
+        if match:
+            digest = match.group(1)
+        end += 1
+    if _AGENT_GUIDE_VERSION not in bare[first_marker:end]:
+        return None
+    return start, end, digest
+
+
+def _install_project_agent_guide(project_dir: pathlib.Path) -> tuple[pathlib.Path, str]:
+    """Install or refresh the MW collaboration guide in the project's AGENTS.md.
+
+    Returns `(guide, status)`: "" when nothing needed doing, "appended" when
+    the guide was added, "refreshed" when an unedited shipped section was
+    replaced with the current template, "kept" when the section carries
+    project edits (or cannot be re-encoded byte-for-byte) and was left alone."""
     template = (_SCRIPT_DIR / "templates" / "AGENTS.md").read_text(encoding="utf-8")
     codex_template = (_SCRIPT_DIR / "templates" / "codex_doc.md").read_text(encoding="utf-8")
     guide = project_dir / "AGENTS.md"
@@ -13286,25 +13377,56 @@ def _install_project_agent_guide(project_dir: pathlib.Path) -> pathlib.Path:
             _atomic_write_yml(codex_dst, codex_template)
         if not guide.resolve().is_relative_to(project_dir):
             raise ValueError(f"project guide points outside the project: {guide}")
-        # Append in the existing encoding without rewriting project-owned bytes.
-        # The marker survives edits to the installed section.
         original = guide.read_bytes() if guide.exists() else b""
-        encoding = "utf-8"
+        encoding, bom = "utf-8", b""
         if original.startswith(b"\xff\xfe"):
-            encoding = "utf-16-le"
+            encoding, bom = "utf-16-le", b"\xff\xfe"
         elif original.startswith(b"\xfe\xff"):
-            encoding = "utf-16-be"
+            encoding, bom = "utf-16-be", b"\xfe\xff"
+        elif original.startswith(b"\xef\xbb\xbf"):
+            bom = b"\xef\xbb\xbf"
         existing = original.decode(encoding).removeprefix("\ufeff")
-        if "<!-- mw:agent-collaboration-version: 3 -->" not in existing.splitlines():
+        digest = _agent_guide_digest(template)
+        lines = existing.splitlines(keepends=True)
+        span = _locate_agent_guide(existing)
+        if span is None:
+            # Append in the existing encoding without rewriting project-owned
+            # bytes. The marker survives edits to the installed section, and a
+            # guide from an older version stays where it is.
             eol = _dominant_ending(existing)
             separator = ""
             if existing and not existing.endswith(eol * 2):
                 separator = eol if existing.endswith(eol) else eol * 2
             with guide.open("ab") as stream:
-                stream.write((separator + template.replace("\n", eol)).encode(encoding))
+                stream.write((separator + _render_agent_guide(template, digest, eol)).encode(encoding))
+            return guide, "appended"
+        start, end, recorded = span
+        section = "".join(lines[start:end])
+        if _agent_guide_digest(section) == digest and recorded is not None:
+            return guide, ""
+        if _agent_guide_digest(section) not in (digest, recorded, *_LEGACY_SHIPPED_GUIDE_DIGESTS):
+            return guide, "kept"
+        eol = _dominant_ending(section)
+        rendered = _render_agent_guide(template, digest, eol)
+        if not section.endswith(("\n", "\r\n")):
+            rendered = rendered[: -len(eol)]
+        head, tail = "".join(lines[:start]), "".join(lines[end:])
+        if bom + (head + section + tail).encode(encoding) != original:
+            return guide, "kept"
+        # Temp file + os.replace: a crash mid-write never truncates the guide.
+        tmp = guide.with_name(guide.name + f".tmp{os.getpid()}")
+        try:
+            with open(tmp, "wb") as stream:
+                stream.write(bom + (head + rendered + tail).encode(encoding))
+            os.replace(tmp, guide)
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        return guide, "refreshed"
     finally:
         mw_common.release_lock(lock)
-    return guide
 
 
 
@@ -13424,11 +13546,15 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"[mw init] {msg}" if ok else f"[mw init] Warning: {msg}", file=sys.stderr if not ok else None)
 
     try:
-        guide = _install_project_agent_guide(project_dir)
+        guide, guide_status = _install_project_agent_guide(project_dir)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"[mw init] Error installing project agent guide: {exc}", file=sys.stderr)
         return 1
     print(f"[mw init] Project agent guide: {guide}")
+    if guide_status == "refreshed":
+        print("[mw init] MW collaboration section: unedited shipped section updated to the current template")
+    elif guide_status == "kept":
+        print("[mw init] MW collaboration section has project edits; left as-is (current template not applied)")
     if projection_incomplete:
         return 1
     print(f"[mw init] Project initialized: {project_dir}")

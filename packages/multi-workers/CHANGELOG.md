@@ -271,6 +271,8 @@
 
 - Fixed Codex local proxy port collisions between projects. `/mw proxy start` allocates an available loopback port for each new project and recovers when another project's relay occupies its saved port.
 
+- Fixed the project collaboration guide never following a template change (mw-agents-guide-rollout): `mw init` only appended `templates/AGENTS.md` while a project's `AGENTS.md` lacked the version marker, so a template edit that kept the marker (`9ac9847a5`) could not reach any initialized project. `mw init` and `mw serve` startup now replace the installed section in place while it is still byte-for-byte a shipped template - vouched for by the new `mw:agent-collaboration-digest` marker, or by the digest of one of the five earlier v3 templates for sections installed before it - and leave a section carrying project edits untouched, with a note saying so. Everything outside the section keeps its bytes, encoding, BOM and line ending; the write is atomic. Tests: `test_init_agents_guide.py` (+12 cases).
+
 ### Removed
 
 - Removed the human and caller-supplied sign-off faces from `mw decide sign` (mw-signoff-decide-only): `--conclusion`, `--human-confirmed`, the `signed_via: auto-llm` caller-LLM fallback and the `cli`/`tui` write faces are gone, along with the agent-session refusal on the sign path (`write_signoff` no longer rejects `PI_CODING_AGENT`/`AI_AGENT`/`PI_WORKER_TASK`; `mw decide dp apply` keeps its own guard because it flips authority). The write-side `signed_via` vocabulary shrinks to `("auto-decide",)` while the read side (`decision_history.py`) keeps accepting the legacy `auto-llm`/`cli`/`tui` values, so existing signed files keep their source classification. `decision-scope.md` is no longer read anywhere as a sign-off switch.

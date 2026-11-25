@@ -443,7 +443,7 @@ def _run_init(project: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mw, "_check_bundle", lambda: True)
     monkeypatch.setattr(mw, "_global_ext_dir", lambda: global_dir)
     monkeypatch.setattr(
-        mw, "_install_project_agent_guide", lambda project_dir: project_dir / "AGENTS.md"
+        mw, "_install_project_agent_guide", lambda project_dir: (project_dir / "AGENTS.md", "")
     )
     args = argparse.Namespace(
         project=str(project), no_framework=True, codex_scope="project", sync_agentictask=None
@@ -709,7 +709,7 @@ _T09_INIT_CHILD = textwrap.dedent(r'''
         (global_dir / 'agent-team-loop.js').write_text('// offline dummy' + chr(10), encoding='utf-8')
         mw._check_bundle = lambda: True
         mw._global_ext_dir = lambda: global_dir
-        mw._install_project_agent_guide = lambda project_dir: project_dir / 'AGENTS.md'
+        mw._install_project_agent_guide = lambda project_dir: (project_dir / 'AGENTS.md', '')
         args = argparse.Namespace(
             project=str(root), no_framework=True, codex_scope='project',
             sync_agentictask=None,
